@@ -226,15 +226,15 @@ def copy_stl(
     if name is None or name == original_name:
         shutil.copy2(src, dst)
     else:
-        # Stream lines directly, preserving exact CAD vertex representations
+        # Stream lines directly, preserving exact CAD vertex representations.
+        # Every solid/endsolid line is rewritten so that multi-body CAD exports
+        # are merged under the single solid name snappyHexMesh expects.
         with open(src, "r", encoding="utf-8", errors="replace") as fin, \
              open(dst, "w", encoding="utf-8", newline="\n") as fout:
-            header_replaced = False
             for line in fin:
                 stripped = line.strip()
-                if not header_replaced and stripped.startswith("solid"):
+                if stripped.startswith("solid"):
                     fout.write(f"solid {name}\n")
-                    header_replaced = True
                 elif stripped.startswith("endsolid"):
                     fout.write(f"endsolid {name}\n")
                 else:

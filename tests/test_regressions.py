@@ -392,6 +392,56 @@ class ProjectTest(unittest.TestCase):
         run_sh = (case / "run.sh").read_text()
         self.assertIn("checkMesh -allGeometry -allTopology -noFunctionObjects -parallel", run_sh)
 
+    def test_classic_force_layout_sums_pressure_and_viscous(self):
+        path = self.root / "classic.dat"
+        path.write_text(
+            "# Time forces(pressure) forces(viscous) moments(pressure) moments(viscous)\n"
+            "1 (0 -50 -100) (0 -1 -30) (0 0 0) (0 0 0)\n"
+        )
+        times, drags, downforces = read_forces([path], 2, -1, 1, -1)
+        self.assertEqual(times, [1.0])
+        self.assertEqual(drags, [130.0])
+        self.assertEqual(downforces, [51.0])
+
+    def test_esi_force_layout_uses_total_without_double_counting(self):
+        path = self.root / "esi.dat"
+        path.write_text(
+            "# Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z\n"
+            "1 0 -50 -130 0 -50 -100 0 0 -30\n"
+        )
+        _, drags, downforces = read_forces([path], 2, -1, 1, -1)
+        self.assertEqual(drags, [130.0])
+        self.assertEqual(downforces, [50.0])
+
+    def test_multi_solid_stl_rename_merges_all_solids(self):
+        src = self.root / "stl/multi.stl"
+        dst = self.root / "stl/merged.stl"
+        src.write_text(
+            "solid a\n  facet normal 0 0 1\n    outer loop\n      vertex 0 0 0\n"
+            "      vertex 1 0 0\n      vertex 0 1 0\n    endloop\n  endfacet\nendsolid a\n"
+            "solid b\n  facet normal 0 0 1\n    outer loop\n      vertex 0 0 0\n"
+            "      vertex 1 0 0\n      vertex 0 1 0\n    endloop\n  endfacet\nendsolid b\n"
+        )
+        self.assertEqual(copy_stl(src, dst, "merged"), 2)
+        lines = dst.read_text().splitlines()
+        self.assertEqual([ln for ln in lines if ln.startswith("solid")], ["solid merged", "solid merged"])
+        self.assertEqual([ln for ln in lines if ln.startswith("endsolid")], ["endsolid merged", "endsolid merged"])
+
+    def test_symmetry_plane_null_falls_back_to_centerline(self):
+        cfg = load_config(self.config(symmetry_plane=None, centerline=0.25))
+        box = compute_domain_box(cfg, ((0.25, 0, 0), (1, 1, 3)))
+        self.assertEqual(box["min"][0], 0.25)
+
+    def test_pitch_axis_default_convention_is_positive_x(self):
+        from rapidfoam.writers.solver import write_control_dict
+
+        cfg = load_config(self.config())
+        cfg["stl_names"] = ["body"]
+        case = self.root / "pitchcase"
+        (case / "system").mkdir(parents=True)
+        write_control_dict(cfg, case)
+        self.assertIn("pitchAxis       (1 0 0);", (case / "system/controlDict").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

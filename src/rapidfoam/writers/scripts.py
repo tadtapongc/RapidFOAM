@@ -53,6 +53,7 @@ def _clean_force_helpers() -> str:
         inspect.getsource(func)
         for func in (
             forces._dir_time,
+            forces.force_layout_from_header,
             forces.find_force_files,
             forces.read_forces,
             forces.check_convergence,

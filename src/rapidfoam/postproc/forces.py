@@ -90,6 +90,23 @@ def _dir_time(p: Path) -> float:
         return 0.0
 
 
+def force_layout_from_header(line: str) -> bool | None:
+    """Infer the force.dat vector layout from a header/comment line.
+
+    Returns:
+        True  if the first force vector is already the total force (ESI format).
+        False if the file stores pressure then viscous vectors separately
+              (classic OpenFOAM Foundation format), so the total is their sum.
+        None  if the line carries no layout information.
+    """
+    text = str(line).lower()
+    if "total_x" in text or "total_y" in text or "total_z" in text:
+        return True
+    if "pressure" in text and "viscous" in text:
+        return False
+    return None
+
+
 def find_force_files(base_dir: str | Path | None = None) -> list[Path]:
     """Find force.dat files across time directories."""
     base = Path(base_dir) if base_dir else Path(".")
@@ -140,11 +157,19 @@ def read_forces(
 
     for path in files:
         segment_started = False
+        # Default to the total-first (ESI) layout; only switch when a header
+        # explicitly identifies the classic pressure/viscous layout.
+        columnar_total = True
         try:
             with open(path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.strip()
-                    if not line or line.startswith("#"):
+                    if not line:
+                        continue
+                    if line.startswith("#"):
+                        layout = force_layout_from_header(line)
+                        if layout is not None:
+                            columnar_total = layout
                         continue
                     parts = line.replace("(", "").replace(")", "").split()
                     if len(parts) < 10:
@@ -162,10 +187,16 @@ def read_forces(
                         # including old future samples it has not reached yet.
                         samples = {key: sample for key, sample in samples.items() if key < t_key}
                         segment_started = True
+                    if columnar_total:
+                        drag_value = values[1 + drag_idx]
+                        df_value = values[1 + df_idx]
+                    else:
+                        # Classic layout: sum pressure + viscous components.
+                        drag_value = values[1 + drag_idx] + values[4 + drag_idx]
+                        df_value = values[1 + df_idx] + values[4 + df_idx]
                     # Files arrive in restart order; newer valid rows replace overlaps.
                     samples[t_key] = (
-                        t, values[1 + drag_idx] * drag_sign,
-                        values[1 + df_idx] * df_sign,
+                        t, drag_value * drag_sign, df_value * df_sign,
                     )
         except OSError:
             pass

@@ -227,11 +227,26 @@ class TelemetryCharts {
     });
   }
 
-  updateForces(series) {
+  updateForces(series, dragAxis = null, downforceAxis = null) {
     if (!this.forcesChart || !series) return;
     const iters = series.iterations || [];
     const downforces = series.downforce || [];
     const drags = series.drag || [];
+
+    if (dragAxis || downforceAxis) {
+      const dfLabel = downforceAxis || '-y';
+      const dragLabel = dragAxis || '-z';
+      this.forcesChart.data.datasets[0].label = `Downforce (${dfLabel})`;
+      this.forcesChart.data.datasets[1].label = `Downforce (${dfLabel}) (Smoothed)`;
+      this.forcesChart.data.datasets[2].label = `Drag (${dragLabel})`;
+      this.forcesChart.data.datasets[3].label = `Drag (${dragLabel}) (Smoothed)`;
+      if (this.forcesChart.options.scales.y.title) {
+        this.forcesChart.options.scales.y.title.text = `Downforce (${dfLabel}) [N]`;
+      }
+      if (this.forcesChart.options.scales.y1.title) {
+        this.forcesChart.options.scales.y1.title.text = `Drag (${dragLabel}) [N]`;
+      }
+    }
 
     const smoothedDf = this.computeRollingAverage(downforces);
     const smoothedDrag = this.computeRollingAverage(drags);

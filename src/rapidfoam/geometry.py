@@ -190,7 +190,9 @@ def compute_domain_box(cfg: dict[str, Any], combined_bounds: BBox) -> dict[str, 
     is_symmetry = "symmetry" in domain_faces.get(lateral_min_key, "").lower()
 
     # Centerline / symmetry plane coordinate (supports planes not at 0)
-    sym_coord = cfg.get("symmetry_plane", cfg.get("centerline"))
+    sym_coord = cfg.get("symmetry_plane")
+    if sym_coord is None:
+        sym_coord = cfg.get("centerline")
 
     if is_symmetry:
         if sym_coord is not None:
@@ -233,6 +235,10 @@ def compute_domain_box(cfg: dict[str, Any], combined_bounds: BBox) -> dict[str, 
 FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
     "fast": {
         # Quick turnaround for iterative design (~5-10 min on 16-32 cores, ~2-4M cells)
+        "desc": "Quick iterative design turnaround",
+        "cell_estimate": "~2-4M cells",
+        "n_cells_target": 3000000,
+        "runtime_estimate": "~5-10 min",
         "base_cell_size": 0.15,        # m — coarse background
         "surface_level": [3, 4],       # 18.75mm - 9.38mm surface cells
         "edge_level": 5,               # 4.69mm at edges
@@ -259,6 +265,10 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
     },
     "standard": {
         # Balanced — optimal for FSAE aero (~30-60 min on 32 cores, sweet spot: ~6-9M cells)
+        "desc": "Balanced accuracy and speed for FSAE aero",
+        "cell_estimate": "~6-9M cells",
+        "n_cells_target": 7500000,
+        "runtime_estimate": "~30-60 min",
         "base_cell_size": 0.10,        # 100mm background
         "surface_level": [4, 5],       # 6.25mm bodywork, 3.125mm fine features
         "edge_level": 6,               # 1.56mm at sharp aero edges (wings/gurneys)
@@ -285,6 +295,10 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
     },
     "fine": {
         # High resolution validation (~2-4 hours, ~12-16M cells)
+        "desc": "High-resolution validation quality",
+        "cell_estimate": "~12-16M cells",
+        "n_cells_target": 14000000,
+        "runtime_estimate": "~2-4 hrs",
         "base_cell_size": 0.08,        # 80mm background
         "surface_level": [5, 6],       # 2.5mm - 1.25mm surface cells
         "edge_level": 7,               # 0.625mm at edges
@@ -389,7 +403,9 @@ def compute_mesh_params(cfg: dict[str, Any], combined_bounds: BBox) -> dict[str,
     lateral_min_key = f"-{'xyz'[lateral_idx]}"
     is_symmetry = "symmetry" in domain_faces.get(lateral_min_key, "").lower()
 
-    sym_coord = cfg.get("symmetry_plane", cfg.get("centerline"))
+    sym_coord = cfg.get("symmetry_plane")
+    if sym_coord is None:
+        sym_coord = cfg.get("centerline")
     if sym_coord is not None:
         sym_x = float(sym_coord)
     elif "domain_box" in cfg and isinstance(cfg["domain_box"], dict) and "min" in cfg["domain_box"]:

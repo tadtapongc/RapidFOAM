@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import base64
+import functools
 import io
 import json
 import logging
 import os
 import re
 import shlex
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -22,12 +24,28 @@ except ImportError:
     paramiko = None  # type: ignore
 
 
+def _synchronized(method):
+    """Serialize access to the shared Paramiko session.
+
+    Paramiko's SSHClient/SFTPClient are not thread-safe, but the FastAPI
+    server dispatches cluster calls through the default thread pool.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class ClusterSSHClient:
     """Manages an SSH/SFTP session to the OpenFOAM compute cluster."""
 
     def __init__(self) -> None:
         self._client: Optional[Any] = None
         self._sftp: Optional[Any] = None
+        self._lock = threading.RLock()
         self.host: str = ""
         self.port: int = 22
         self.username: str = ""
@@ -41,6 +59,7 @@ class ClusterSSHClient:
         transport = self._client.get_transport()
         return transport is not None and transport.is_active()
 
+    @_synchronized
     def connect(
         self,
         host: str,
@@ -112,6 +131,7 @@ class ClusterSSHClient:
 
         return self.test_connection()
 
+    @_synchronized
     def disconnect(self) -> None:
         """Close SFTP and SSH connections."""
         if self._sftp:
@@ -128,6 +148,7 @@ class ClusterSSHClient:
                 pass
             self._client = None
 
+    @_synchronized
     def get_sftp(self) -> Any:
         """Get or create SFTP client."""
         if not self.is_connected:
@@ -136,6 +157,7 @@ class ClusterSSHClient:
             self._sftp = self._client.open_sftp()
         return self._sftp
 
+    @_synchronized
     def run_command(self, command: str, timeout: Optional[float] = 60.0) -> tuple[int, str, str]:
         """Execute command on the remote cluster."""
         if not self.is_connected:
@@ -147,6 +169,7 @@ class ClusterSSHClient:
         err_str = stderr.read().decode("utf-8", errors="replace")
         return exit_code, out_str, err_str
 
+    @_synchronized
     def test_connection(self) -> dict[str, Any]:
         """Test SSH connection and check environment on cluster."""
         if not self.is_connected:
@@ -178,6 +201,7 @@ class ClusterSSHClient:
             "raw_test_output": out.strip(),
         }
 
+    @_synchronized
     def ensure_remote_dir(self, remote_dir: str) -> None:
         """Recursively create remote directory if it doesn't exist."""
         sftp = self.get_sftp()
@@ -196,6 +220,7 @@ class ClusterSSHClient:
                 except IOError:
                     pass
 
+    @_synchronized
     def upload_file(self, local_path: str | Path, remote_path: str) -> None:
         """Upload a local file to remote cluster via SFTP."""
         local_p = Path(local_path)
@@ -208,6 +233,7 @@ class ClusterSSHClient:
         sftp = self.get_sftp()
         sftp.put(str(local_p), remote_path.replace("\\", "/"))
 
+    @_synchronized
     def upload_text(self, text_content: str, remote_path: str) -> None:
         """Upload a string content directly as a remote file."""
         remote_dir = os.path.dirname(remote_path.replace("\\", "/"))
@@ -217,6 +243,7 @@ class ClusterSSHClient:
         bio = io.BytesIO(text_content.encode("utf-8"))
         sftp.putfo(bio, remote_path.replace("\\", "/"))
 
+    @_synchronized
     def read_remote_text(self, remote_path: str, max_lines: Optional[int] = None) -> str:
         """Read a remote text file via SFTP or tail command."""
         if max_lines is not None:
@@ -237,6 +264,7 @@ class ClusterSSHClient:
             log.warning("Could not read remote file %s: %s", remote_path, exc)
             return ""
 
+    @_synchronized
     def get_slurm_queue(self, username: Optional[str] = None) -> list[dict[str, str]]:
         """Query SLURM squeue for user jobs."""
         user = username or self.username
@@ -268,6 +296,7 @@ class ClusterSSHClient:
                 })
         return jobs
 
+    @_synchronized
     def remote_file_exists(self, remote_path: str) -> bool:
         """Check if a remote file or directory exists via SFTP."""
         if not self.is_connected:
@@ -279,6 +308,7 @@ class ClusterSSHClient:
         except (IOError, OSError):
             return False
 
+    @_synchronized
     def is_case_running(self, case_name: str) -> bool:
         """Check if a case currently has an active (RUNNING or PENDING) SLURM job."""
         if not self.is_connected:
@@ -286,9 +316,12 @@ class ClusterSSHClient:
         try:
             jobs = self.get_slurm_queue()
             for job in jobs:
-                # Job name or case_name matching
+                # Match the exact job name (optionally with the cfd_ prefix), or
+                # a scheduler-truncated prefix of at least 8 characters. Plain
+                # substring matching produced false positives (e.g. "R" vs "RP14").
                 jname = job.get("name", "")
-                if jname == case_name or jname == f"cfd_{case_name}" or case_name in jname:
+                truncated = len(jname) >= 8 and case_name.startswith(jname)
+                if jname == case_name or jname == f"cfd_{case_name}" or truncated:
                     state = job.get("state", "").upper()
                     if state in ("R", "RUNNING", "PD", "PENDING", "CF", "CONFIGURING"):
                         return True
@@ -296,6 +329,7 @@ class ClusterSSHClient:
             pass
         return False
 
+    @_synchronized
     def submit_job(self, case_name: str) -> dict[str, Any]:
         """Submit sbatch run.sh for a case on the cluster."""
         if not re.match(r"^[A-Za-z0-9_-]+$", case_name):
@@ -322,6 +356,7 @@ class ClusterSSHClient:
             "case_dir": remote_case_dir,
         }
 
+    @_synchronized
     def cancel_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a SLURM job."""
         job_id_str = str(job_id).strip()
@@ -336,6 +371,7 @@ class ClusterSSHClient:
             "error": err if code != 0 else None,
         }
 
+    @_synchronized
     def list_remote_cases(self) -> list[dict[str, Any]]:
         """List cases in cases/ folder on the cluster."""
         cases_dir = f"{self.remote_repo_path}/cases"
@@ -363,6 +399,7 @@ class ClusterSSHClient:
                 })
         return cases
 
+    @_synchronized
     def list_remote_cases_detailed(self) -> list[dict[str, Any]]:
         """Extract detailed metadata, simulation status, and aerodynamic forces for all remote cases."""
         if not self.is_connected:
@@ -454,18 +491,30 @@ if cases_dir.is_dir():
         if force_files:
             samples = {}
             for ff in force_files:
+                columnar_total = True
                 try:
                     with open(str(ff), encoding="utf-8", errors="replace") as f:
                         for line in f:
                             line = line.strip()
-                            if not line or line.startswith("#"):
+                            if not line:
+                                continue
+                            if line.startswith("#"):
+                                low = line.lower()
+                                if "total_x" in low or "total_y" in low or "total_z" in low:
+                                    columnar_total = True
+                                elif "pressure" in low and "viscous" in low:
+                                    columnar_total = False
                                 continue
                             parts = line.replace("(", " ").replace(")", " ").split()
                             if len(parts) >= 10:
                                 try:
                                     t = float(parts[0])
-                                    drg = float(parts[1 + drag_idx]) * drag_sign * sym_scale
-                                    df = float(parts[1 + df_idx]) * df_sign * sym_scale
+                                    if columnar_total:
+                                        drg = float(parts[1 + drag_idx]) * drag_sign * sym_scale
+                                        df = float(parts[1 + df_idx]) * df_sign * sym_scale
+                                    else:
+                                        drg = (float(parts[1 + drag_idx]) + float(parts[4 + drag_idx])) * drag_sign * sym_scale
+                                        df = (float(parts[1 + df_idx]) + float(parts[4 + df_idx])) * df_sign * sym_scale
                                     samples[t] = (t, drg, df)
                                 except ValueError:
                                     continue
@@ -528,6 +577,20 @@ if cases_dir.is_dir():
             status = "Meshed"
 
         is_running_loc = (d / ".running_location").is_file()
+
+        # Use the newest activity timestamp (directory or log files) so the
+        # server can reliably distinguish an actively running case from a
+        # stalled one even though the directory mtime does not change while
+        # an existing log file is being appended to.
+        activity = st.st_mtime
+        for lf in (d / "log.simpleFoam", d / "log.snappyHexMesh"):
+            try:
+                if lf.is_file():
+                    activity = max(activity, lf.stat().st_mtime)
+            except OSError:
+                pass
+        mtime = activity
+        mtime_str = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
 
         results.append({
             "name": cname,

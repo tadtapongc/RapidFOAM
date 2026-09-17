@@ -818,6 +818,16 @@ class TestWebAPI(unittest.TestCase):
                     # Must transition to Completed rather than being stuck on Solving
                     self.assertEqual(matched["status"], "Completed")
 
+    def test_is_case_running_rejects_short_substring_match(self):
+        """A short case name must not match an unrelated longer SLURM job name."""
+        c = ClusterSSHClient()
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(c, "get_slurm_queue", return_value=[{"name": "RP14", "state": "RUNNING"}]):
+                self.assertFalse(c.is_case_running("R"))
+                self.assertTrue(c.is_case_running("RP14"))
+            with patch.object(c, "get_slurm_queue", return_value=[{"name": "cfd_RP14", "state": "PENDING"}]):
+                self.assertTrue(c.is_case_running("RP14"))
+
 
 if __name__ == "__main__":
     unittest.main()

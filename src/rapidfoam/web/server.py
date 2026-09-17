@@ -33,6 +33,7 @@ from rapidfoam.geometry import (
 from rapidfoam.postproc.forces import (
     check_convergence,
     find_force_files,
+    force_layout_from_header,
     is_symmetry_case,
     load_axis_config,
     read_forces,
@@ -95,6 +96,27 @@ def get_saved_cluster_config() -> dict[str, Any]:
     }
 
 
+def _restrict_file_access(path: Path) -> None:
+    """Best-effort restriction of a credential file to the current user."""
+    try:
+        path.chmod(0o600)
+    except Exception:
+        pass
+    if os.name == "nt":
+        try:
+            import getpass
+            import subprocess
+
+            user = getpass.getuser()
+            subprocess.run(
+                ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+                capture_output=True,
+                check=False,
+            )
+        except Exception:
+            pass
+
+
 def save_cluster_config(cfg: dict[str, Any]) -> None:
     """Save cluster credentials safely on user machine."""
     try:
@@ -103,10 +125,7 @@ def save_cluster_config(cfg: dict[str, Any]) -> None:
         if not to_save.get("save_password"):
             to_save.pop("password", None)
         CREDENTIALS_FILE.write_text(json.dumps(to_save, indent=2), encoding="utf-8")
-        try:
-            CREDENTIALS_FILE.chmod(0o600)
-        except Exception:
-            pass
+        _restrict_file_access(CREDENTIALS_FILE)
     except Exception as exc:
         log.warning("Could not persist cluster credentials: %s", exc)
 
@@ -364,7 +383,7 @@ async def api_stl_list() -> list[dict[str, Any]]:
                 continue
             seen_paths.add(resolved)
             try:
-                fmt, n_facets, bounds = stl_info(p)
+                solid_name, n_facets, bounds = stl_info(p)
                 (xmin, ymin, zmin), (xmax, ymax, zmax) = bounds
                 dx = xmax - xmin
                 dy = ymax - ymin
@@ -373,7 +392,8 @@ async def api_stl_list() -> list[dict[str, Any]]:
                 stls.append({
                     "filename": p.name,
                     "size_bytes": p.stat().st_size,
-                    "format": fmt,
+                    "format": "ASCII STL",
+                    "solid_name": solid_name,
                     "triangles": n_facets,
                     "bounds": {"min": [xmin, ymin, zmin], "max": [xmax, ymax, zmax]},
                     "dimensions": [dx, dy, dz],
@@ -473,14 +493,15 @@ async def api_stl_upload(
     dest.write_bytes(content)
 
     try:
-        fmt, n_facets, bounds = stl_info(dest)
+        solid_name, n_facets, bounds = stl_info(dest)
         (xmin, ymin, zmin), (xmax, ymax, zmax) = bounds
         dx, dy, dz = xmax - xmin, ymax - ymin, zmax - zmin
         return {
             "success": True,
             "filename": safe_name,
             "size_bytes": len(content),
-            "format": fmt,
+            "format": "ASCII STL",
+            "solid_name": solid_name,
             "triangles": n_facets,
             "bounds": {"min": [xmin, ymin, zmin], "max": [xmax, ymax, zmax]},
             "dimensions": [dx, dy, dz],
@@ -622,7 +643,7 @@ async def api_telemetry_forces(case_name: str) -> dict[str, Any]:
     local_cfg = PROJECT_ROOT / "configs" / f"{case_name}.json"
     cfg_to_use = str(local_cfg) if local_cfg.is_file() else None
 
-    drag_idx, drag_sign, df_idx, df_sign, _, _ = load_axis_config(
+    drag_idx, drag_sign, df_idx, df_sign, drag_axis_name, df_axis_name = load_axis_config(
         config_path=cfg_to_use,
         case_dir=local_case if local_case.is_dir() else None,
     )
@@ -655,9 +676,15 @@ async def api_telemetry_forces(case_name: str) -> dict[str, Any]:
                 samples: dict[float, tuple[float, float, float]] = {}
                 for fc in all_content:
                     segment_started = False
+                    columnar_total = True
                     for line in fc.splitlines():
                         line = line.strip()
-                        if not line or line.startswith("#"):
+                        if not line:
+                            continue
+                        if line.startswith("#"):
+                            layout = force_layout_from_header(line)
+                            if layout is not None:
+                                columnar_total = layout
                             continue
                         parts = line.replace("(", " ").replace(")", " ").split()
                         if len(parts) >= 10:
@@ -670,10 +697,16 @@ async def api_telemetry_forces(case_name: str) -> dict[str, Any]:
                                 if not segment_started:
                                     samples = {k: s for k, s in samples.items() if k < t_key}
                                     segment_started = True
+                                if columnar_total:
+                                    drag_value = vals[1 + drag_idx]
+                                    df_value = vals[1 + df_idx]
+                                else:
+                                    drag_value = vals[1 + drag_idx] + vals[4 + drag_idx]
+                                    df_value = vals[1 + df_idx] + vals[4 + df_idx]
                                 samples[t_key] = (
                                     t,
-                                    vals[1 + drag_idx] * drag_sign * sym_scale,
-                                    vals[1 + df_idx] * df_sign * sym_scale,
+                                    drag_value * drag_sign * sym_scale,
+                                    df_value * df_sign * sym_scale,
                                 )
                             except ValueError:
                                 continue
@@ -719,7 +752,7 @@ async def api_telemetry_forces(case_name: str) -> dict[str, Any]:
         }
 
     converged, d_pct, f_pct, d_avg, f_avg = check_convergence(drags, downforces)
-    ld_ratio = (f_avg / d_avg) if abs(d_avg) > 1e-3 else 0.0
+    ld_ratio = abs(f_avg / d_avg) if abs(d_avg) > 1e-3 else 0.0
 
     max_pts = 400
     if len(times) > max_pts:
@@ -739,6 +772,8 @@ async def api_telemetry_forces(case_name: str) -> dict[str, Any]:
         "has_data": True,
         "case_name": case_name,
         "is_symmetry": is_sym,
+        "drag_axis": drag_axis_name,
+        "downforce_axis": df_axis_name,
         "total_iterations": len(times),
         "latest_iteration": times[-1] if times else 0,
         "converged": converged,
@@ -1096,13 +1131,17 @@ async def api_list_cases() -> list[dict[str, Any]]:
             if log_simple.is_file():
                 has_residuals = True
                 tail = read_file_tail(log_simple)
+                try:
+                    log_mtime = log_simple.stat().st_mtime
+                except OSError:
+                    log_mtime = st.st_mtime
                 if "End" in tail or "Finalising parallel run" in tail:
                     status = "Converged" if converged else "Completed"
                 elif any(err in tail for err in ["FOAM FATAL", "Fatal error", "FOAM aborting", "sigFpe", "SIGFPE", "Floating point exception"]):
                     status = "Failed"
                 elif status != "Converged":
-                    # If modified in the last 3 minutes, it's actively solving; otherwise terminated
-                    if (datetime.now().timestamp() - st.st_mtime) < 180:
+                    # If the log was modified in the last 3 minutes, it's actively solving
+                    if (datetime.now().timestamp() - log_mtime) < 180:
                         status = "Solving"
                     else:
                         status = "Completed" if (latest_iter and latest_iter > 0) else "Failed"
@@ -1112,11 +1151,15 @@ async def api_list_cases() -> list[dict[str, Any]]:
                 log_snappy = d / "log.snappyHexMesh"
                 if log_snappy.is_file():
                     tail = read_file_tail(log_snappy)
+                    try:
+                        snappy_mtime = log_snappy.stat().st_mtime
+                    except OSError:
+                        snappy_mtime = st.st_mtime
                     if "End" in tail or "Finalising parallel run" in tail:
                         status = "Meshed"
                     elif any(err in tail for err in ["FOAM FATAL", "Fatal error", "FOAM aborting", "sigFpe", "SIGFPE"]):
                         status = "Failed"
-                    elif (datetime.now().timestamp() - st.st_mtime) < 180:
+                    elif (datetime.now().timestamp() - snappy_mtime) < 180:
                         status = "Meshing"
                     else:
                         status = "Failed"
@@ -1262,8 +1305,9 @@ async def api_case_delete(case_name: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Invalid case_name")
 
     target_dir = PROJECT_ROOT / "cases" / case_name
+    cases_root = (PROJECT_ROOT / "cases").resolve()
     deleted = False
-    if target_dir.is_dir() and target_dir.resolve().is_relative_to(PROJECT_ROOT / "cases"):
+    if target_dir.is_dir() and target_dir.resolve().is_relative_to(cases_root):
         shutil.rmtree(target_dir)
         deleted = True
 
@@ -1358,7 +1402,18 @@ def main() -> None:
         except Exception:
             pass
 
-        if is_cfd_studio:
+        if is_cfd_studio and not args.restart:
+            # An existing studio is already serving this port: reuse it.
+            url = f"http://{args.host}:{target_port}"
+            print(f"[*] RapidFOAM Studio is already running on {url}. Use --restart to force a restart.")
+            if not args.no_browser:
+                try:
+                    webbrowser.open(url)
+                except Exception:
+                    pass
+            return
+
+        if is_cfd_studio and args.restart:
             old_pid = get_pid_on_port(target_port)
             print(f"[*] Found existing RapidFOAM Studio running on port {target_port} (PID {old_pid or 'unknown'}).")
             print("[*] Restarting server to ensure latest code is active...")

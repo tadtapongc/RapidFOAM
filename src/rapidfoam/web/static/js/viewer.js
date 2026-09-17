@@ -501,7 +501,26 @@ class STLViewer {
     }
   }
 
-  updateDomainBox(domainMin, domainMax, symPlane = null, flowDirection = '-z') {
+  orientPlaneToNormal(mesh, normalIdx) {
+    // PlaneGeometry lies in local XY with normal +Z; rotate it onto a world axis.
+    if (normalIdx === 0) {
+      mesh.rotation.set(0, Math.PI / 2, 0);
+    } else if (normalIdx === 1) {
+      mesh.rotation.set(-Math.PI / 2, 0, 0);
+    } else {
+      mesh.rotation.set(0, 0, 0);
+    }
+  }
+
+  planeExtentsForNormal(normalIdx) {
+    // Returns [widthAxisIndex, heightAxisIndex] so a PlaneGeometry spans the
+    // two in-plane world axes after orientPlaneToNormal() is applied.
+    if (normalIdx === 0) return [2, 1];
+    if (normalIdx === 1) return [0, 2];
+    return [0, 1];
+  }
+
+  updateDomainBox(domainMin, domainMax, symPlane = null, flowDirection = '-z', upAxis = 'y', lateralAxis = 'x') {
     if (this.domainBoxGroup) {
       this.scene.remove(this.domainBoxGroup);
       this.disposeGroup(this.domainBoxGroup);
@@ -514,6 +533,14 @@ class STLViewer {
     this.domainMax = domainMax;
     this.symPlaneCoord = symPlane;
     this.flowDirection = flowDirection || '-z';
+
+    const axisToIdx = { x: 0, y: 1, z: 2 };
+    const flowIdx = axisToIdx[(this.flowDirection || '-z').replace(/^[+-]/, '').toLowerCase()] ?? 2;
+    const upIdx = axisToIdx[(upAxis || 'y').replace(/^[+-]/, '').toLowerCase()] ?? 1;
+    let latIdx = axisToIdx[(lateralAxis || 'x').replace(/^[+-]/, '').toLowerCase()];
+    if (latIdx === undefined || latIdx === flowIdx || latIdx === upIdx) {
+      latIdx = [0, 1, 2].find((i) => i !== flowIdx && i !== upIdx) ?? 0;
+    }
 
     this.domainBoxGroup = new THREE.Group();
 
@@ -637,8 +664,9 @@ class STLViewer {
     else if (flowAxis === 'y') outletBadge.position.y += (flowSign < 0 ? -0.2 : 0.2);
     this.domainBoxGroup.add(outletBadge);
 
-    // 6. Ground Face (Dark road surface at domainMin.y)
-    const groundPlaneGeo = new THREE.PlaneGeometry(size.x, size.z);
+    // 6. Ground Face (Dark road surface on the domain's up axis)
+    const [groundW, groundH] = this.planeExtentsForNormal(upIdx);
+    const groundPlaneGeo = new THREE.PlaneGeometry(size['xyz'[groundW]], size['xyz'[groundH]]);
     const groundMat = new THREE.MeshBasicMaterial({
       color: 0x0f172a,
       transparent: true,
@@ -647,18 +675,24 @@ class STLViewer {
       depthWrite: false,
     });
     const groundMesh = new THREE.Mesh(groundPlaneGeo, groundMat);
-    groundMesh.rotation.x = -Math.PI / 2;
-    groundMesh.position.set(center.x, minVec.y, center.z);
+    this.orientPlaneToNormal(groundMesh, upIdx);
+    const groundPos = center.clone();
+    groundPos['xyz'[upIdx]] = minVec['xyz'[upIdx]];
+    groundMesh.position.copy(groundPos);
     this.domainBoxGroup.add(groundMesh);
 
-    // Update ground grid position to sit flush with wind tunnel floor
+    // Update ground grid position and orientation to sit flush with the floor
     if (this.groundGrid) {
-      this.groundGrid.position.set(center.x, minVec.y, center.z);
+      this.groundGrid.rotation.set(0, 0, 0);
+      if (upIdx === 0) this.groundGrid.rotation.set(0, 0, -Math.PI / 2);
+      else if (upIdx === 2) this.groundGrid.rotation.set(Math.PI / 2, 0, 0);
+      this.groundGrid.position.copy(groundPos);
     }
 
-    // 7. Symmetry Plane Indicator
+    // 7. Symmetry Plane Indicator (plane normal to the lateral axis)
     if (symPlane !== null && symPlane !== undefined && isFinite(symPlane)) {
-      const symGeo = new THREE.PlaneGeometry(size.z, size.y);
+      const [symW, symH] = this.planeExtentsForNormal(latIdx);
+      const symGeo = new THREE.PlaneGeometry(size['xyz'[symW]], size['xyz'[symH]]);
       const symMat = new THREE.MeshBasicMaterial({
         color: 0x06b6d4,
         transparent: true,
@@ -667,12 +701,17 @@ class STLViewer {
         depthWrite: false,
       });
       const symMesh = new THREE.Mesh(symGeo, symMat);
-      symMesh.rotation.y = Math.PI / 2;
-      symMesh.position.set(symPlane, center.y, center.z);
+      this.orientPlaneToNormal(symMesh, latIdx);
+      const symPos = center.clone();
+      symPos['xyz'[latIdx]] = symPlane;
+      symMesh.position.copy(symPos);
       this.domainBoxGroup.add(symMesh);
 
       const symBadge = this.createCanvasTextSprite(`SYMMETRY (${symPlane}m)`, '#38bdf8', 'rgba(15, 23, 42, 0.85)');
-      symBadge.position.set(symPlane, maxVec.y - 0.4, center.z);
+      const symBadgePos = center.clone();
+      symBadgePos['xyz'[latIdx]] = symPlane;
+      symBadgePos['xyz'[upIdx]] = maxVec['xyz'[upIdx]] - 0.4;
+      symBadge.position.copy(symBadgePos);
       this.domainBoxGroup.add(symBadge);
     }
 
@@ -685,11 +724,14 @@ class STLViewer {
     this.domainBoxGroup.visible = this.showDomain;
     this.scene.add(this.domainBoxGroup);
 
-    // Update Dimensions in UI
+    // Update Dimensions in UI (W = lateral, H = up, L = flow)
     const dimsBadge = document.getElementById('viewer-domain-badge');
     const dimsText = document.getElementById('domain-dims-text');
     if (dimsBadge && dimsText) {
-      dimsText.textContent = `${size.x.toFixed(2)}m (W) × ${size.y.toFixed(2)}m (H) × ${size.z.toFixed(2)}m (L)`;
+      const latSize = size['xyz'[latIdx]];
+      const upSize = size['xyz'[upIdx]];
+      const flowSize = size['xyz'[flowIdx]];
+      dimsText.textContent = `${latSize.toFixed(2)}m (W) × ${upSize.toFixed(2)}m (H) × ${flowSize.toFixed(2)}m (L)`;
       dimsBadge.style.display = 'flex';
     }
   }

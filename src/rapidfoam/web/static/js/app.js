@@ -546,8 +546,9 @@ class CFDApp {
       "-z": this.getVal('cfg-face-neg-z'),
     };
 
-    // Parallel
+    // Parallel (preserve untouched keys such as the decomposition method)
     cfg.parallel = {
+      ...(this.activeConfig.parallel || {}),
       n_procs: parseInt(this.getVal('cfg-parallel-procs'), 10) || 32,
     };
 
@@ -555,10 +556,12 @@ class CFDApp {
     const modStr = this.getVal('cfg-slurm-modules');
     const modules = modStr ? modStr.split(',').map((s) => s.trim()).filter(Boolean) : null;
 
+    const prevSlurm = this.activeConfig.slurm || {};
     cfg.slurm = {
+      ...prevSlurm,
       qos: this.getVal('cfg-slurm-qos'),
       partition: this.getVal('cfg-slurm-partition'),
-      nodes: 1,
+      nodes: prevSlurm.nodes !== undefined ? prevSlurm.nodes : 1,
       time: this.getVal('cfg-slurm-time'),
       mem_per_cpu: this.getVal('cfg-slurm-mem'),
       openfoam_module: modules,
@@ -1024,7 +1027,10 @@ class CFDApp {
           ? Number(this.activeConfig.symmetry_plane)
           : null;
         const flowDir = this.activeConfig.flow?.direction || '-z';
-        this.viewer.updateDomainBox(data.domain_box.min, data.domain_box.max, sym, flowDir);
+        const upAxis = (this.activeConfig.outputs?.downforce_axis || '-y').replace(/^[+-]/, '').toLowerCase();
+        const flowAxisName = flowDir.replace(/^[+-]/, '').toLowerCase();
+        const latAxis = ['x', 'y', 'z'].find((a) => a !== flowAxisName && a !== upAxis) || 'x';
+        this.viewer.updateDomainBox(data.domain_box.min, data.domain_box.max, sym, flowDir, upAxis, latAxis);
         if (autoFit) {
           this.viewer.fitView('domain');
           const btnFitDomain = document.getElementById('btn-fit-domain');
@@ -1927,7 +1933,7 @@ class CFDApp {
         if (pill) {
           if (data.converged) {
             pill.className = 'convergence-status-pill converged';
-            pill.querySelector('.pill-text').textContent = 'CONVERGED (±1.5%)';
+            pill.querySelector('.pill-text').textContent = 'CONVERGED (±0.5%)';
           } else {
             pill.className = 'convergence-status-pill running';
             pill.querySelector('.pill-text').textContent = `Solving (Iter ${data.latest_iteration})`;
@@ -1935,7 +1941,7 @@ class CFDApp {
         }
 
         if (this.charts && data.series) {
-          this.charts.updateForces(data.series);
+          this.charts.updateForces(data.series, data.drag_axis, data.downforce_axis);
         }
       } else {
         // No forces data yet (case generated or meshed but simpleFoam not executed)

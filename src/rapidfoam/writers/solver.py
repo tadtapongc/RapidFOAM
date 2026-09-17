@@ -30,11 +30,13 @@ def write_control_dict(cfg: dict[str, Any], case_dir: Path) -> None:
     drag_dir = f"({drag_vec[0]} {drag_vec[1]} {drag_vec[2]})"
     lift_dir = f"({df_vec[0]} {df_vec[1]} {df_vec[2]})"
 
-    # Pitch axis = cross product of drag and lift
+    # Pitch axis = liftDir x dragDir. For the default FSAE convention
+    # (drag=-Z, downforce=-Y) this gives +X, matching the standard
+    # right-handed pitch axis (nose-up positive).
     pitch = (
-        drag_vec[1] * df_vec[2] - drag_vec[2] * df_vec[1],
-        drag_vec[2] * df_vec[0] - drag_vec[0] * df_vec[2],
-        drag_vec[0] * df_vec[1] - drag_vec[1] * df_vec[0],
+        df_vec[1] * drag_vec[2] - df_vec[2] * drag_vec[1],
+        df_vec[2] * drag_vec[0] - df_vec[0] * drag_vec[2],
+        df_vec[0] * drag_vec[1] - df_vec[1] * drag_vec[0],
     )
     pitch_dir = f"({pitch[0]} {pitch[1]} {pitch[2]})"
 
