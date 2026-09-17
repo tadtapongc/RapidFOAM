@@ -246,13 +246,40 @@ class ClusterSSHClient:
         bio = io.BytesIO(text_content.encode("utf-8"))
         sftp.putfo(bio, remote_path.replace("\\", "/"))
 
-    def download_directory(self, remote_dir: str, local_dir: str | Path) -> dict[str, Any]:
+    @_synchronized
+    def _remote_dir_size(self, remote_dir: str) -> int:
+        """Best-effort apparent size in bytes of a remote directory."""
+        quoted = shlex.quote(remote_dir)
+        code, out, _ = self.run_command(f"du -sb {quoted} 2>/dev/null", timeout=20)
+        if code != 0 or not out.strip():
+            code, out, _ = self.run_command(f"du -sk {quoted} 2>/dev/null", timeout=20)
+            if code != 0 or not out.strip():
+                return 0
+            try:
+                return int(out.split()[0]) * 1024
+            except (ValueError, IndexError):
+                return 0
+        try:
+            return int(out.split()[0])
+        except (ValueError, IndexError):
+            return 0
+
+    def download_directory(
+        self,
+        remote_dir: str,
+        local_dir: str | Path,
+        progress: Any = None,
+    ) -> dict[str, Any]:
         """Recursively download a remote directory by streaming a remote tar.
 
         Runs ``tar -C <dir> -cf - .`` over the SSH exec channel and extracts the
         stream locally. This is much faster than per-file SFTP because it avoids
         the 32 KiB SFTP request/response round trips; it approaches raw SSH
         throughput.
+
+        ``progress``, when provided, is called with a stats snapshot
+        (``files``, ``dirs``, ``bytes``, ``total_bytes``) at the start and
+        periodically during extraction.
 
         Deliberately not decorated with ``@_synchronized``: the stream can take
         a long time and must not hold the shared session lock. Only the initial
@@ -266,11 +293,15 @@ class ClusterSSHClient:
         local_root.mkdir(parents=True, exist_ok=True)
         resolved_root = local_root.resolve()
 
+        total_bytes = self._remote_dir_size(remote_root)
+        stats = {"files": 0, "dirs": 0, "bytes": 0, "total_bytes": total_bytes}
+        if progress is not None:
+            progress(dict(stats))
+
         cmd = f"tar -C {shlex.quote(remote_root)} -cf - ."
         with self._lock:
             _stdin, stdout, stderr = self._client.exec_command(cmd)
 
-        stats = {"files": 0, "dirs": 0, "bytes": 0}
         exit_code: Optional[int] = None
         err_text = ""
         try:
@@ -293,6 +324,8 @@ class ClusterSSHClient:
                             shutil.copyfileobj(src, out, length=1024 * 1024)
                         stats["files"] += 1
                         stats["bytes"] += member.size
+                        if progress is not None and stats["files"] % 100 == 0:
+                            progress(dict(stats))
                     # Symlinks and special files are skipped to avoid loops.
         finally:
             try:
@@ -309,6 +342,8 @@ class ClusterSSHClient:
                 except Exception:
                     pass
 
+        if progress is not None:
+            progress(dict(stats))
         if exit_code not in (0, None):
             raise RuntimeError(err_text or f"remote tar failed (exit {exit_code})")
         return stats

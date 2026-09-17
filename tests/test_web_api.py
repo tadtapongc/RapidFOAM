@@ -970,13 +970,16 @@ class TestWebAPI(unittest.TestCase):
         client = FakeClient(make_tar())
         c = ClusterSSHClient()
         c._client = client
+        snapshots = []
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
-                stats = c.download_directory("/repo/cases/c1", tmp)
-            self.assertIn("tar -C", client.commands[0])
+                stats = c.download_directory("/repo/cases/c1", tmp, lambda s: snapshots.append(dict(s)))
+            self.assertTrue(any("tar -C" in cmd for cmd in client.commands))
             self.assertEqual(stats["files"], 2)
             self.assertEqual(stats["dirs"], 1)
             self.assertEqual(stats["bytes"], 8)
+            self.assertEqual(snapshots[0]["files"], 0)
+            self.assertEqual(snapshots[-1]["files"], 2)
             self.assertEqual((Path(tmp) / "log.simpleFoam").read_bytes(), b"hello")
             self.assertEqual((Path(tmp) / "system" / "controlDict").read_bytes(), b"abc")
 
@@ -1001,6 +1004,19 @@ class TestWebAPI(unittest.TestCase):
             with self.assertRaises(HTTPException) as ctx:
                 asyncio.run(api_case_download(CaseDownloadRequest(case_name="remote_case_zzz")))
             self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_download_progress_endpoint(self):
+        """The progress endpoint reports live stats and defaults to inactive."""
+        from rapidfoam.web.server import _set_download_progress, api_case_download_progress
+
+        _set_download_progress("progress_probe", active=True, files=5, dirs=2, bytes=1000, total_bytes=2000)
+        res = asyncio.run(api_case_download_progress("progress_probe"))
+        self.assertTrue(res["active"])
+        self.assertEqual(res["files"], 5)
+        self.assertEqual(res["total_bytes"], 2000)
+
+        res_unknown = asyncio.run(api_case_download_progress("no_such_progress_case"))
+        self.assertFalse(res_unknown["active"])
 
 
 if __name__ == "__main__":

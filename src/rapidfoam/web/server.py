@@ -12,6 +12,7 @@ import re
 import shlex
 import shutil
 import sys
+import threading
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -78,6 +79,20 @@ ALLOWED_LOG_TYPES = {
     "renumberMesh",
     "potentialFoam",
 }
+
+# In-memory progress for case downloads (case_name -> snapshot)
+_download_progress: dict[str, dict[str, Any]] = {}
+_download_progress_lock = threading.Lock()
+
+
+def _set_download_progress(case_name: str, **fields: Any) -> None:
+    with _download_progress_lock:
+        _download_progress.setdefault(case_name, {}).update(fields)
+
+
+def _get_download_progress(case_name: str) -> dict[str, Any]:
+    with _download_progress_lock:
+        return dict(_download_progress.get(case_name, {"active": False}))
 
 
 def get_saved_cluster_config() -> dict[str, Any]:
@@ -651,11 +666,38 @@ async def api_case_download(req: CaseDownloadRequest) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Case '{req.case_name}' not found on cluster")
 
     local_dir = PROJECT_ROOT / "cases" / req.case_name
+
+    def _progress(snapshot: dict[str, Any]) -> None:
+        _set_download_progress(
+            req.case_name,
+            active=True,
+            done=False,
+            error=None,
+            files=snapshot.get("files", 0),
+            dirs=snapshot.get("dirs", 0),
+            bytes=snapshot.get("bytes", 0),
+            total_bytes=snapshot.get("total_bytes", 0),
+        )
+
+    _progress({"files": 0, "dirs": 0, "bytes": 0, "total_bytes": 0})
     try:
-        stats = await asyncio.to_thread(ssh_client.download_directory, remote_case, local_dir)
+        stats = await asyncio.to_thread(
+            ssh_client.download_directory, remote_case, local_dir, _progress
+        )
     except Exception as exc:
+        _set_download_progress(req.case_name, active=False, done=True, error=str(exc))
         raise HTTPException(status_code=500, detail=f"Download failed: {exc}")
 
+    _set_download_progress(
+        req.case_name,
+        active=False,
+        done=True,
+        error=None,
+        files=stats.get("files", 0),
+        dirs=stats.get("dirs", 0),
+        bytes=stats.get("bytes", 0),
+        total_bytes=stats.get("total_bytes", 0),
+    )
     return {
         "success": True,
         "case_name": req.case_name,
@@ -663,7 +705,16 @@ async def api_case_download(req: CaseDownloadRequest) -> dict[str, Any]:
         "files": stats.get("files", 0),
         "dirs": stats.get("dirs", 0),
         "bytes": stats.get("bytes", 0),
+        "total_bytes": stats.get("total_bytes", 0),
     }
+
+
+@app.get("/api/case/download/progress")
+async def api_case_download_progress(case_name: str) -> dict[str, Any]:
+    """Return live progress for an in-flight case download."""
+    if not CASE_NAME_REGEX.match(case_name):
+        raise HTTPException(status_code=400, detail="Invalid case_name")
+    return _get_download_progress(case_name)
 
 
 @app.get("/api/telemetry/forces")

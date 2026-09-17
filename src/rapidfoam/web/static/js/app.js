@@ -14,6 +14,7 @@ class CFDApp {
     this.archiveSearchTerm = '';
     this.isSyncingFromJson = false;
     this.currentSTLName = null;
+    this.downloadProgressTimer = null;
 
     this.activeConfig = {
       case_name: "my_case",
@@ -1866,6 +1867,59 @@ class CFDApp {
     }
   }
 
+  startDownloadProgress(caseName) {
+    const overlay = document.getElementById('download-progress-overlay');
+    const fill = document.getElementById('download-progress-fill');
+    const stats = document.getElementById('download-progress-stats');
+    const title = document.getElementById('download-progress-title');
+
+    if (title) title.textContent = `Downloading ${caseName} from cluster…`;
+    if (overlay) overlay.style.display = 'flex';
+    if (fill) {
+      fill.classList.remove('indeterminate');
+      fill.style.width = '0%';
+    }
+    if (stats) stats.textContent = 'Starting…';
+
+    if (this.downloadProgressTimer) clearInterval(this.downloadProgressTimer);
+    this.downloadProgressTimer = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/case/download/progress?case_name=${encodeURIComponent(caseName)}`);
+        if (!r.ok) return;
+        const p = await r.json();
+        if (!p || !p.active) return;
+        const bytes = p.bytes || 0;
+        const total = p.total_bytes || 0;
+        if (total > 0) {
+          const pct = Math.min(100, (bytes / total) * 100);
+          if (fill) {
+            fill.classList.remove('indeterminate');
+            fill.style.width = `${pct.toFixed(1)}%`;
+          }
+          if (stats) {
+            stats.textContent = `${pct.toFixed(1)}% — ${(bytes / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB (${p.files || 0} files)`;
+          }
+        } else {
+          if (fill) fill.classList.add('indeterminate');
+          if (stats) {
+            stats.textContent = `${(bytes / 1e6).toFixed(1)} MB (${p.files || 0} files)`;
+          }
+        }
+      } catch (e) {
+        /* transient polling error; keep the overlay up */
+      }
+    }, 500);
+  }
+
+  stopDownloadProgress() {
+    if (this.downloadProgressTimer) {
+      clearInterval(this.downloadProgressTimer);
+      this.downloadProgressTimer = null;
+    }
+    const overlay = document.getElementById('download-progress-overlay');
+    if (overlay) overlay.style.display = 'none';
+  }
+
   async downloadCase(caseName) {
     const proceed = confirm(
       `Download case "${caseName}" from the cluster to local cases/${caseName}/?\n\n` +
@@ -1873,7 +1927,7 @@ class CFDApp {
       `and may take a while for large cases.`
     );
     if (!proceed) return;
-    this.showToast(`Downloading ${caseName} from cluster...`, 'info');
+    this.startDownloadProgress(caseName);
     try {
       const res = await fetch('/api/case/download', {
         method: 'POST',
@@ -1882,10 +1936,12 @@ class CFDApp {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Download failed');
+      this.stopDownloadProgress();
       const mb = (data.bytes / 1e6).toFixed(1);
       this.showToast(`Downloaded ${caseName}: ${data.files} files (${mb} MB)`, 'success');
       await this.loadCasesArchive();
     } catch (err) {
+      this.stopDownloadProgress();
       this.showToast(`Download error: ${err.message}`, 'error');
     }
   }
