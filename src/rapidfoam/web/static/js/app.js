@@ -14,7 +14,8 @@ class CFDApp {
     this.archiveSearchTerm = '';
     this.isSyncingFromJson = false;
     this.currentSTLName = null;
-    this.downloadProgressTimer = null;
+    this.downloadStates = new Map();
+    this.downloadPollTimer = null;
 
     this.activeConfig = {
       case_name: "my_case",
@@ -1868,76 +1869,115 @@ class CFDApp {
     }
   }
 
-  showDownloadProgress(caseName) {
-    const overlay = document.getElementById('download-progress-overlay');
-    const fill = document.getElementById('download-progress-fill');
-    const stats = document.getElementById('download-progress-stats');
-    const title = document.getElementById('download-progress-title');
-    if (title) title.textContent = `Downloading ${caseName} from cluster…`;
-    if (overlay) overlay.style.display = 'flex';
-    if (fill) {
-      fill.classList.remove('indeterminate');
-      fill.style.width = '0%';
-    }
-    if (stats) stats.textContent = 'Starting…';
+  trackDownload(caseName, seed = null) {
+    // Register (or refresh) one concurrent download and make sure the shared
+    // poller is running. Multiple downloads are shown as separate rows.
+    const existing = this.downloadStates.get(caseName) || {};
+    this.downloadStates.set(caseName, {
+      case_name: caseName,
+      active: true,
+      done: false,
+      error: null,
+      files: 0,
+      dirs: 0,
+      bytes: 0,
+      total_bytes: 0,
+      ...existing,
+      ...(seed || {}),
+    });
+    this.renderDownloads();
+    this.ensureDownloadPoll();
+    this.pollDownloads();
   }
 
-  updateDownloadProgress(p) {
-    if (!p) return;
-    const fill = document.getElementById('download-progress-fill');
-    const stats = document.getElementById('download-progress-stats');
-    const bytes = p.bytes || 0;
-    const total = p.total_bytes || 0;
-    if (total > 0) {
-      const pct = Math.min(100, (bytes / total) * 100);
-      if (fill) {
-        fill.classList.remove('indeterminate');
-        fill.style.width = `${pct.toFixed(1)}%`;
-      }
-      if (stats) {
-        stats.textContent = `${pct.toFixed(1)}% — ${(bytes / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB (${p.files || 0} files)`;
-      }
-    } else {
-      if (fill) fill.classList.add('indeterminate');
-      if (stats) stats.textContent = `${(bytes / 1e6).toFixed(1)} MB (${p.files || 0} files)`;
+  ensureDownloadPoll() {
+    if (this.downloadPollTimer) return;
+    this.downloadPollTimer = setInterval(() => this.pollDownloads(), 500);
+  }
+
+  stopDownloadPoll() {
+    if (this.downloadPollTimer) {
+      clearInterval(this.downloadPollTimer);
+      this.downloadPollTimer = null;
     }
   }
 
-  hideDownloadProgress() {
-    if (this.downloadProgressTimer) {
-      clearInterval(this.downloadProgressTimer);
-      this.downloadProgressTimer = null;
+  async pollDownloads() {
+    if (this.downloadStates.size === 0) {
+      this.stopDownloadPoll();
+      this.renderDownloads();
+      return;
     }
-    const overlay = document.getElementById('download-progress-overlay');
-    if (overlay) overlay.style.display = 'none';
-  }
-
-  watchDownload(caseName) {
-    if (this.downloadProgressTimer) clearInterval(this.downloadProgressTimer);
-    const poll = async () => {
+    for (const caseName of Array.from(this.downloadStates.keys())) {
+      const state = this.downloadStates.get(caseName);
+      if (state && state.done) continue;
       try {
         const r = await fetch(`/api/case/download/progress?case_name=${encodeURIComponent(caseName)}`);
-        if (!r.ok) return;
+        if (!r.ok) continue;
         const p = await r.json();
-        this.updateDownloadProgress(p);
+        const merged = { ...(state || {}), ...p, case_name: caseName };
         if (p && !p.active) {
-          clearInterval(this.downloadProgressTimer);
-          this.downloadProgressTimer = null;
-          setTimeout(() => this.hideDownloadProgress(), 700);
+          merged.done = true;
+          this.downloadStates.set(caseName, merged);
           if (p.error) {
-            this.showToast(`Download failed: ${p.error}`, 'error');
+            this.showToast(`Download failed (${caseName}): ${p.error}`, 'error');
           } else {
             const mb = ((p.bytes || 0) / 1e6).toFixed(1);
             this.showToast(`Downloaded ${caseName}: ${p.files || 0} files (${mb} MB)`, 'success');
             this.loadCasesArchive();
           }
+          setTimeout(() => {
+            this.downloadStates.delete(caseName);
+            this.renderDownloads();
+            if (this.downloadStates.size === 0) this.stopDownloadPoll();
+          }, 1500);
+        } else {
+          this.downloadStates.set(caseName, merged);
         }
       } catch (e) {
         /* transient polling error; keep going */
       }
-    };
-    poll();
-    this.downloadProgressTimer = setInterval(poll, 500);
+    }
+    this.renderDownloads();
+  }
+
+  renderDownloads() {
+    const overlay = document.getElementById('download-progress-overlay');
+    const list = document.getElementById('download-progress-list');
+    if (!overlay || !list) return;
+
+    const states = Array.from(this.downloadStates.values());
+    if (states.length === 0) {
+      overlay.style.display = 'none';
+      return;
+    }
+
+    overlay.style.display = 'flex';
+    list.innerHTML = '';
+
+    states.forEach((p) => {
+      const bytes = p.bytes || 0;
+      const total = p.total_bytes || 0;
+      let pct = null;
+      let statsText;
+      if (p.error) {
+        statsText = 'failed';
+      } else if (total > 0) {
+        pct = Math.min(100, (bytes / total) * 100);
+        statsText = `${pct.toFixed(1)}% · ${(bytes / 1e6).toFixed(1)}/${(total / 1e6).toFixed(1)} MB`;
+      } else {
+        statsText = `${(bytes / 1e6).toFixed(1)} MB`;
+      }
+
+      const row = document.createElement('div');
+      row.className = 'download-row';
+      row.innerHTML = `
+        <span class="download-row-name" title="${p.case_name}">${p.case_name}</span>
+        <span class="download-row-track"><span class="download-row-fill${pct === null ? ' indeterminate' : ''}" style="width:${pct === null ? 100 : pct}%"></span></span>
+        <span class="download-row-stats">${statsText}</span>
+      `;
+      list.appendChild(row);
+    });
   }
 
   async resumeActiveDownloads() {
@@ -1945,12 +1985,7 @@ class CFDApp {
       const res = await fetch('/api/case/download/active');
       if (!res.ok) return;
       const data = await res.json();
-      const downloads = data.downloads || [];
-      if (downloads.length > 0) {
-        const name = downloads[0].case_name;
-        this.showDownloadProgress(name);
-        this.watchDownload(name);
-      }
+      (data.downloads || []).forEach((d) => this.trackDownload(d.case_name, d));
     } catch (e) {
       /* ignore */
     }
@@ -1971,10 +2006,8 @@ class CFDApp {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Download failed');
-      this.showDownloadProgress(caseName);
-      this.watchDownload(caseName);
+      this.trackDownload(caseName);
     } catch (err) {
-      this.hideDownloadProgress();
       this.showToast(`Download error: ${err.message}`, 'error');
     }
   }
@@ -2376,10 +2409,17 @@ class CFDApp {
         : `<span class="text-muted small">0 iter</span>`;
 
       // Location & Date
-      const isCluster = c.location && c.location.includes('Cluster');
-      const locBadge = isCluster
-        ? '<span class="badge badge-hpc">Cluster</span>'
-        : '<span class="badge badge-local">Local</span>';
+      const hasLocal = (c.location || '').includes('Local');
+      const hasCluster = (c.location || '').includes('Cluster');
+      const isClusterOnly = c.location === 'Cluster';
+      let locBadge;
+      if (hasLocal && hasCluster) {
+        locBadge = '<span class="badge badge-local">Local</span> <span class="badge badge-hpc">Cluster</span>';
+      } else if (hasCluster) {
+        locBadge = '<span class="badge badge-hpc">Cluster</span>';
+      } else {
+        locBadge = '<span class="badge badge-local">Local</span>';
+      }
       const locDateHtml = `
         <div class="loc-date-cell">
           <div>${locBadge}</div>
@@ -2411,7 +2451,7 @@ class CFDApp {
         <td>
           <div class="action-btn-group">
             <button class="btn btn-outline btn-xs btn-inspect-case" data-name="${c.name}" title="Inspect Live Telemetry">📊 Live Telemetry</button>
-            ${isCluster ? `<button class="btn btn-outline btn-xs btn-download-case" data-name="${c.name}" title="Download case from cluster to local cases/">⬇ Download</button>` : ''}
+            ${isClusterOnly ? `<button class="btn btn-outline btn-xs btn-download-case" data-name="${c.name}" title="Download case from cluster to local cases/">⬇ Download</button>` : ''}
           </div>
         </td>
       `;

@@ -1012,6 +1012,41 @@ class TestWebAPI(unittest.TestCase):
                 asyncio.run(api_case_download(CaseDownloadRequest(case_name="remote_case_zzz")))
             self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_download_case_rejects_existing_local(self):
+        """Re-downloading a case that already exists locally is rejected (409)."""
+        from rapidfoam.web.server import CaseDownloadRequest, api_case_download
+
+        case_name = "already_local_probe"
+        case_dir = Path("cases") / case_name
+        case_dir.mkdir(parents=True, exist_ok=True)
+        (case_dir / "marker").write_text("x")
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(ssh_client, "remote_file_exists", return_value=True):
+                with self.assertRaises(HTTPException) as ctx:
+                    asyncio.run(api_case_download(CaseDownloadRequest(case_name=case_name)))
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_download_case_overwrite_allows_redownload(self):
+        """overwrite=true permits re-downloading an existing local case."""
+        from rapidfoam.web.server import CaseDownloadRequest, api_case_download
+
+        case_name = "already_local_overwrite_probe"
+        case_dir = Path("cases") / case_name
+        case_dir.mkdir(parents=True, exist_ok=True)
+        (case_dir / "marker").write_text("x")
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(ssh_client, "remote_file_exists", return_value=True):
+                with patch.object(ssh_client, "download_directory",
+                                  return_value={"files": 0, "dirs": 0, "bytes": 0, "total_bytes": 0}):
+                    res = asyncio.run(api_case_download(
+                        CaseDownloadRequest(case_name=case_name, overwrite=True)
+                    ))
+        self.assertTrue(res["started"])
+
     def test_download_progress_endpoint(self):
         """The progress endpoint reports live stats and defaults to inactive."""
         from rapidfoam.web.server import _set_download_progress, api_case_download_progress

@@ -192,6 +192,7 @@ class JobCancelRequest(BaseModel):
 
 class CaseDownloadRequest(BaseModel):
     case_name: str
+    overwrite: bool = False
 
 
 class DomainBoxRequest(BaseModel):
@@ -719,6 +720,12 @@ async def api_case_download(req: CaseDownloadRequest) -> dict[str, Any]:
         return {"success": True, "already_running": True, "case_name": req.case_name}
 
     local_dir = PROJECT_ROOT / "cases" / req.case_name
+    if not req.overwrite and local_dir.is_dir() and any(local_dir.iterdir()):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Case '{req.case_name}' already exists locally. Set overwrite to re-download.",
+        )
+
     _set_download_progress(
         req.case_name,
         active=True, done=False, error=None,

@@ -2135,54 +2135,16 @@ body.dark-theme {
   color: #f87171;
 }
 
-/* Download progress overlay */
-.progress-overlay {
+/* Non-blocking download progress (per-case rows) */
+.download-progress {
   position: fixed;
-  inset: 0;
-  z-index: 3000;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 4000;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(2, 6, 16, 0.72);
-  backdrop-filter: blur(3px);
-}
-
-.progress-dialog {
-  width: min(460px, 90vw);
-  background: var(--bg-surface-raised, #0f172a);
-  border: 1px solid var(--border-subtle, #1e293b);
-  border-radius: 12px;
-  padding: 22px 24px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
-}
-
-.progress-title {
-  color: var(--text-primary, #e2e8f0);
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 14px;
-}
-
-.progress-bar-track {
-  height: 10px;
-  width: 100%;
-  background: #1e293b;
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.progress-bar-fill {
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #0284c7, #00f0ff);
-  transition: width 0.3s ease;
-}
-
-.progress-bar-fill.indeterminate {
-  width: 100% !important;
-  background: repeating-linear-gradient(90deg, #0284c7 0 12px, #00f0ff 12px 24px);
-  background-size: 24px 100%;
-  animation: progress-stripes 0.8s linear infinite;
+  flex-direction: column;
+  pointer-events: none;
 }
 
 @keyframes progress-stripes {
@@ -2190,11 +2152,63 @@ body.dark-theme {
   to { background-position: 24px 0; }
 }
 
-.progress-stats {
-  margin-top: 10px;
-  font-family: 'JetBrains Mono', monospace;
+.download-progress-list {
+  align-self: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 12px 0 0;
+  max-width: min(520px, 80vw);
+}
+
+.download-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid var(--border-subtle, #1e293b);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   font-size: 12px;
+  color: #e2e8f0;
+}
+
+.download-row-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-row-track {
+  height: 6px;
+  width: 120px;
+  background: #1e293b;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.download-row-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #0284c7, #00f0ff);
+  transition: width 0.3s ease;
+}
+
+.download-row-fill.indeterminate {
+  width: 100% !important;
+  background: repeating-linear-gradient(90deg, #0284c7 0 12px, #00f0ff 12px 24px);
+  background-size: 24px 100%;
+  animation: progress-stripes 0.8s linear infinite;
+}
+
+.download-row-stats {
+  font-family: 'JetBrains Mono', monospace;
   color: #94a3b8;
+  white-space: nowrap;
 }
 
 
