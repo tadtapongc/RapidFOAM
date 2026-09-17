@@ -45,7 +45,7 @@ from rapidfoam.web.ssh_client import ClusterSSHClient
 
 log = logging.getLogger("rapidfoam.web")
 
-app = FastAPI(title="RapidFOAM Studio", version="1.0.0")
+app = FastAPI(title="RapidFOAM Studio", version="1.1.0")
 
 # Restrict CORS to local origins only to protect credentials and SSH operations
 app.add_middleware(

@@ -5,6 +5,18 @@ All notable changes to RapidFOAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-17
+
+### Added
+- **Cluster Case Download**: Download finished cases from a remote SLURM cluster to the local machine, streamed as a remote `tar` archive.
+- **Live Download Progress**: Per-case progress reporting with a live progress bar in the Web Studio, plus a guard against re-downloading completed cases.
+- **Graceful Job Cancel**: Cancel remote jobs with an automatic write-and-reconstruct step so partial parallel results are preserved.
+
+### Fixed
+- Force coefficient parsing, cluster safety checks, and axis handling.
+- Prevented progress regression during downloads and repaired Web Studio UI controls.
+- 3D viewer now displays the real `geometry.stl` geometry.
+
 ## [1.0.0] - 2026-09-10
 
 ### Initial Public Release
