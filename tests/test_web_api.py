@@ -984,17 +984,24 @@ class TestWebAPI(unittest.TestCase):
             self.assertEqual((Path(tmp) / "system" / "controlDict").read_bytes(), b"abc")
 
     def test_download_case_endpoint(self):
-        """The download endpoint returns transfer stats for a cluster case."""
-        from rapidfoam.web.server import CaseDownloadRequest, api_case_download
+        """Starting a download returns immediately and progress is tracked."""
+        from rapidfoam.web.server import (
+            CaseDownloadRequest,
+            api_case_download,
+            api_case_download_progress,
+        )
 
         with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
             with patch.object(ssh_client, "remote_file_exists", return_value=True):
                 with patch.object(ssh_client, "download_directory",
-                                  return_value={"files": 3, "dirs": 1, "bytes": 42}):
+                                  return_value={"files": 3, "dirs": 1, "bytes": 42, "total_bytes": 42}):
                     res = asyncio.run(api_case_download(CaseDownloadRequest(case_name="remote_case_zzz")))
+                    prog = asyncio.run(api_case_download_progress("remote_case_zzz"))
         self.assertTrue(res["success"])
-        self.assertEqual(res["files"], 3)
-        self.assertEqual(res["bytes"], 42)
+        self.assertTrue(res["started"])
+        self.assertFalse(prog["active"])
+        self.assertEqual(prog["files"], 3)
+        self.assertEqual(prog["bytes"], 42)
 
     def test_download_case_requires_connection(self):
         """Downloading without an SSH session is rejected."""
@@ -1017,6 +1024,15 @@ class TestWebAPI(unittest.TestCase):
 
         res_unknown = asyncio.run(api_case_download_progress("no_such_progress_case"))
         self.assertFalse(res_unknown["active"])
+
+    def test_download_active_endpoint(self):
+        """The active endpoint lists in-progress downloads for UI restore."""
+        from rapidfoam.web.server import _set_download_progress, api_case_download_active
+
+        _set_download_progress("active_probe", active=True, files=1, bytes=2, total_bytes=4)
+        res = asyncio.run(api_case_download_active())
+        names = [d["case_name"] for d in res["downloads"]]
+        self.assertIn("active_probe", names)
 
 
 if __name__ == "__main__":

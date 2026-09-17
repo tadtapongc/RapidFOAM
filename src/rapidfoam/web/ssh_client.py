@@ -10,7 +10,6 @@ import logging
 import os
 import re
 import shlex
-import shutil
 import tarfile
 import threading
 import time
@@ -320,11 +319,19 @@ class ClusterSSHClient:
                         src = tar.extractfile(member)
                         if src is None:
                             continue
+                        checkpoint = stats["bytes"]
                         with open(target, "wb") as out:
-                            shutil.copyfileobj(src, out, length=1024 * 1024)
+                            while True:
+                                chunk = src.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                out.write(chunk)
+                                stats["bytes"] += len(chunk)
+                                if progress is not None and stats["bytes"] - checkpoint >= 8 * 1024 * 1024:
+                                    checkpoint = stats["bytes"]
+                                    progress(dict(stats))
                         stats["files"] += 1
-                        stats["bytes"] += member.size
-                        if progress is not None and stats["files"] % 100 == 0:
+                        if progress is not None:
                             progress(dict(stats))
                     # Symlinks and special files are skipped to avoid loops.
         finally:

@@ -121,6 +121,7 @@ class CFDApp {
     // Automatically load configs/config.json as the default config
     await this.loadConfigFile('config.json', true);
     await this.loadCasesArchive();
+    await this.resumeActiveDownloads();
 
     // 5. Start background queue polling
     this.pollInterval = setInterval(() => {
@@ -1867,12 +1868,11 @@ class CFDApp {
     }
   }
 
-  startDownloadProgress(caseName) {
+  showDownloadProgress(caseName) {
     const overlay = document.getElementById('download-progress-overlay');
     const fill = document.getElementById('download-progress-fill');
     const stats = document.getElementById('download-progress-stats');
     const title = document.getElementById('download-progress-title');
-
     if (title) title.textContent = `Downloading ${caseName} from cluster…`;
     if (overlay) overlay.style.display = 'flex';
     if (fill) {
@@ -1880,38 +1880,30 @@ class CFDApp {
       fill.style.width = '0%';
     }
     if (stats) stats.textContent = 'Starting…';
-
-    if (this.downloadProgressTimer) clearInterval(this.downloadProgressTimer);
-    this.downloadProgressTimer = setInterval(async () => {
-      try {
-        const r = await fetch(`/api/case/download/progress?case_name=${encodeURIComponent(caseName)}`);
-        if (!r.ok) return;
-        const p = await r.json();
-        if (!p || !p.active) return;
-        const bytes = p.bytes || 0;
-        const total = p.total_bytes || 0;
-        if (total > 0) {
-          const pct = Math.min(100, (bytes / total) * 100);
-          if (fill) {
-            fill.classList.remove('indeterminate');
-            fill.style.width = `${pct.toFixed(1)}%`;
-          }
-          if (stats) {
-            stats.textContent = `${pct.toFixed(1)}% — ${(bytes / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB (${p.files || 0} files)`;
-          }
-        } else {
-          if (fill) fill.classList.add('indeterminate');
-          if (stats) {
-            stats.textContent = `${(bytes / 1e6).toFixed(1)} MB (${p.files || 0} files)`;
-          }
-        }
-      } catch (e) {
-        /* transient polling error; keep the overlay up */
-      }
-    }, 500);
   }
 
-  stopDownloadProgress() {
+  updateDownloadProgress(p) {
+    if (!p) return;
+    const fill = document.getElementById('download-progress-fill');
+    const stats = document.getElementById('download-progress-stats');
+    const bytes = p.bytes || 0;
+    const total = p.total_bytes || 0;
+    if (total > 0) {
+      const pct = Math.min(100, (bytes / total) * 100);
+      if (fill) {
+        fill.classList.remove('indeterminate');
+        fill.style.width = `${pct.toFixed(1)}%`;
+      }
+      if (stats) {
+        stats.textContent = `${pct.toFixed(1)}% — ${(bytes / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB (${p.files || 0} files)`;
+      }
+    } else {
+      if (fill) fill.classList.add('indeterminate');
+      if (stats) stats.textContent = `${(bytes / 1e6).toFixed(1)} MB (${p.files || 0} files)`;
+    }
+  }
+
+  hideDownloadProgress() {
     if (this.downloadProgressTimer) {
       clearInterval(this.downloadProgressTimer);
       this.downloadProgressTimer = null;
@@ -1920,14 +1912,57 @@ class CFDApp {
     if (overlay) overlay.style.display = 'none';
   }
 
+  watchDownload(caseName) {
+    if (this.downloadProgressTimer) clearInterval(this.downloadProgressTimer);
+    const poll = async () => {
+      try {
+        const r = await fetch(`/api/case/download/progress?case_name=${encodeURIComponent(caseName)}`);
+        if (!r.ok) return;
+        const p = await r.json();
+        this.updateDownloadProgress(p);
+        if (p && !p.active) {
+          clearInterval(this.downloadProgressTimer);
+          this.downloadProgressTimer = null;
+          setTimeout(() => this.hideDownloadProgress(), 700);
+          if (p.error) {
+            this.showToast(`Download failed: ${p.error}`, 'error');
+          } else {
+            const mb = ((p.bytes || 0) / 1e6).toFixed(1);
+            this.showToast(`Downloaded ${caseName}: ${p.files || 0} files (${mb} MB)`, 'success');
+            this.loadCasesArchive();
+          }
+        }
+      } catch (e) {
+        /* transient polling error; keep going */
+      }
+    };
+    poll();
+    this.downloadProgressTimer = setInterval(poll, 500);
+  }
+
+  async resumeActiveDownloads() {
+    try {
+      const res = await fetch('/api/case/download/active');
+      if (!res.ok) return;
+      const data = await res.json();
+      const downloads = data.downloads || [];
+      if (downloads.length > 0) {
+        const name = downloads[0].case_name;
+        this.showDownloadProgress(name);
+        this.watchDownload(name);
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
   async downloadCase(caseName) {
     const proceed = confirm(
       `Download case "${caseName}" from the cluster to local cases/${caseName}/?\n\n` +
-      `This mirrors the full case directory (including all solution time directories) ` +
-      `and may take a while for large cases.`
+      `The transfer runs in the background, so you can keep working. This mirrors the ` +
+      `full case directory (including all solution time directories).`
     );
     if (!proceed) return;
-    this.startDownloadProgress(caseName);
     try {
       const res = await fetch('/api/case/download', {
         method: 'POST',
@@ -1936,12 +1971,10 @@ class CFDApp {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Download failed');
-      this.stopDownloadProgress();
-      const mb = (data.bytes / 1e6).toFixed(1);
-      this.showToast(`Downloaded ${caseName}: ${data.files} files (${mb} MB)`, 'success');
-      await this.loadCasesArchive();
+      this.showDownloadProgress(caseName);
+      this.watchDownload(caseName);
     } catch (err) {
-      this.stopDownloadProgress();
+      this.hideDownloadProgress();
       this.showToast(`Download error: ${err.message}`, 'error');
     }
   }

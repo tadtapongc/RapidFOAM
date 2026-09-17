@@ -95,6 +95,17 @@ def _get_download_progress(case_name: str) -> dict[str, Any]:
         return dict(_download_progress.get(case_name, {"active": False}))
 
 
+def _list_download_progress(active_only: bool = False) -> list[dict[str, Any]]:
+    with _download_progress_lock:
+        items: list[dict[str, Any]] = []
+        for name, state in _download_progress.items():
+            entry = {"case_name": name, **state}
+            if active_only and not entry.get("active"):
+                continue
+            items.append(entry)
+        return items
+
+
 def get_saved_cluster_config() -> dict[str, Any]:
     """Load cached cluster credentials if available."""
     if CREDENTIALS_FILE.exists():
@@ -653,23 +664,12 @@ async def api_case_cancel(req: JobCancelRequest) -> dict[str, Any]:
     return res
 
 
-@app.post("/api/case/download")
-async def api_case_download(req: CaseDownloadRequest) -> dict[str, Any]:
-    """Download a case directory from the cluster into the local cases/ folder."""
-    if not CASE_NAME_REGEX.match(req.case_name):
-        raise HTTPException(status_code=400, detail="Invalid case_name")
-    if not ssh_client.is_connected:
-        raise HTTPException(status_code=400, detail="Not connected to cluster")
-
-    remote_case = f"{ssh_client.remote_repo_path}/cases/{req.case_name}"
-    if not await asyncio.to_thread(ssh_client.remote_file_exists, remote_case):
-        raise HTTPException(status_code=404, detail=f"Case '{req.case_name}' not found on cluster")
-
-    local_dir = PROJECT_ROOT / "cases" / req.case_name
+def _run_download(case_name: str, remote_case: str, local_dir: Path) -> None:
+    """Background worker: mirror a remote case into the local cases/ folder."""
 
     def _progress(snapshot: dict[str, Any]) -> None:
         _set_download_progress(
-            req.case_name,
+            case_name,
             active=True,
             done=False,
             error=None,
@@ -681,15 +681,13 @@ async def api_case_download(req: CaseDownloadRequest) -> dict[str, Any]:
 
     _progress({"files": 0, "dirs": 0, "bytes": 0, "total_bytes": 0})
     try:
-        stats = await asyncio.to_thread(
-            ssh_client.download_directory, remote_case, local_dir, _progress
-        )
+        stats = ssh_client.download_directory(remote_case, local_dir, _progress)
     except Exception as exc:
-        _set_download_progress(req.case_name, active=False, done=True, error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Download failed: {exc}")
-
+        _set_download_progress(case_name, active=False, done=True, error=str(exc))
+        log.warning("Case download failed for %s: %s", case_name, exc)
+        return
     _set_download_progress(
-        req.case_name,
+        case_name,
         active=False,
         done=True,
         error=None,
@@ -698,15 +696,44 @@ async def api_case_download(req: CaseDownloadRequest) -> dict[str, Any]:
         bytes=stats.get("bytes", 0),
         total_bytes=stats.get("total_bytes", 0),
     )
-    return {
-        "success": True,
-        "case_name": req.case_name,
-        "local_path": str(local_dir),
-        "files": stats.get("files", 0),
-        "dirs": stats.get("dirs", 0),
-        "bytes": stats.get("bytes", 0),
-        "total_bytes": stats.get("total_bytes", 0),
-    }
+
+
+@app.post("/api/case/download")
+async def api_case_download(req: CaseDownloadRequest) -> dict[str, Any]:
+    """Start mirroring a cluster case into the local cases/ folder.
+
+    The transfer runs in a background executor thread, so the request returns
+    immediately and the browser may navigate or reload while it continues.
+    Poll ``/api/case/download/progress`` for status.
+    """
+    if not CASE_NAME_REGEX.match(req.case_name):
+        raise HTTPException(status_code=400, detail="Invalid case_name")
+    if not ssh_client.is_connected:
+        raise HTTPException(status_code=400, detail="Not connected to cluster")
+
+    remote_case = f"{ssh_client.remote_repo_path}/cases/{req.case_name}"
+    if not await asyncio.to_thread(ssh_client.remote_file_exists, remote_case):
+        raise HTTPException(status_code=404, detail=f"Case '{req.case_name}' not found on cluster")
+
+    if _get_download_progress(req.case_name).get("active"):
+        return {"success": True, "already_running": True, "case_name": req.case_name}
+
+    local_dir = PROJECT_ROOT / "cases" / req.case_name
+    _set_download_progress(
+        req.case_name,
+        active=True, done=False, error=None,
+        files=0, dirs=0, bytes=0, total_bytes=0,
+    )
+    asyncio.get_running_loop().run_in_executor(
+        None, _run_download, req.case_name, remote_case, local_dir
+    )
+    return {"success": True, "started": True, "case_name": req.case_name}
+
+
+@app.get("/api/case/download/active")
+async def api_case_download_active() -> dict[str, Any]:
+    """List in-progress case downloads (used to restore the UI after reload)."""
+    return {"downloads": _list_download_progress(active_only=True)}
 
 
 @app.get("/api/case/download/progress")
