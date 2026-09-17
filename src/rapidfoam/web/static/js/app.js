@@ -1044,11 +1044,21 @@ class CFDApp {
     }
   }
 
+  isGenericPlaceholder(filename) {
+    // 'geometry.stl' only acts as a placeholder when no such file actually
+    // exists on the server. If it is a real uploaded/example geometry it must
+    // be rendered like any other STL.
+    if (filename !== 'geometry.stl') return false;
+    const list = Array.isArray(this.availableSTLs) ? this.availableSTLs : null;
+    if (list === null) return false; // availability unknown -> never hide
+    return !list.some((s) => s.filename === filename);
+  }
+
   async loadAllActiveSTLsFromServer(autoFit = true) {
     if (!this.viewer) return;
 
     const stlsToLoad = (this.activeConfig.stl_files || []).filter(
-      (f) => f && f !== 'geometry.stl'
+      (f) => f && !this.isGenericPlaceholder(f)
     );
 
     if (stlsToLoad.length === 0) {
@@ -1151,8 +1161,10 @@ class CFDApp {
         const data = await res.json();
         if (data.success) {
           if (!this.activeConfig.stl_files) this.activeConfig.stl_files = [];
-          // Filter out generic placeholder if present
-          this.activeConfig.stl_files = this.activeConfig.stl_files.filter((f) => f !== 'geometry.stl');
+          // Drop the generic placeholder only when it is not a real file
+          this.activeConfig.stl_files = this.activeConfig.stl_files.filter(
+            (f) => !this.isGenericPlaceholder(f)
+          );
           if (!this.activeConfig.stl_files.includes(targetFilename)) {
             this.activeConfig.stl_files.push(targetFilename);
           }
