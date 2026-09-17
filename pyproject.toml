@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rapidfoam"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Rapid external aerodynamics and OpenFOAM automation suite for Rapidamente Formula Student"
 readme = "README.md"
 license = { text = "MIT" }
@@ -36,6 +36,9 @@ keywords = [
     "snappyhexmesh",
     "simplefoam",
 ]
+
+[tool.hatch.version]
+path = "src/rapidfoam/__init__.py"
 
 [project.urls]
 Homepage = "https://github.com/tadtapongc/RapidFOAM"

@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from rapidfoam import __version__
 from rapidfoam.config import DEFAULT_CONFIG, deep_merge, find_stl, validate
 from rapidfoam.geometry import (
     FIDELITY_PRESETS,
@@ -45,7 +46,7 @@ from rapidfoam.web.ssh_client import ClusterSSHClient
 
 log = logging.getLogger("rapidfoam.web")
 
-app = FastAPI(title="RapidFOAM Studio", version="1.1.0")
+app = FastAPI(title="RapidFOAM Studio", version=__version__)
 
 # Restrict CORS to local origins only to protect credentials and SSH operations
 app.add_middleware(
