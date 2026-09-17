@@ -30,10 +30,7 @@ RapidFOAM streamlines the OpenFOAM workflow for external vehicle aerodynamics: C
 
 ### Supported OpenFOAM Versions
 
-- **Primary Target**: **ESI-OpenCFD releases (OpenFOAM v2006, v2106, v2206, v2306, v2406, v2606)**
-  - The generated dictionaries utilize OpenCFD syntax conventions (such as `libs (forces);` function objects and modern Open MPI process binding options).
-- **OpenFOAM Foundation (v8, v9, v10, v11)**:
-  - The core solvers (`simpleFoam`, `snappyHexMesh`, `blockMesh`, `surfaceFeatureExtract`) and boundary condition structures are largely compatible. Note that minor syntax differences (such as function object library naming like `"libforces.so"`) may apply depending on the specific release.
+RapidFOAM has only been tested against **ESI-OpenCFD OpenFOAM v2606**. The generated dictionaries follow OpenCFD syntax conventions (such as `libs (forces);` function objects), and other releases — including older ESI versions and OpenFOAM Foundation builds — are untested and may require manual dictionary edits.
 
 ### Environment Configuration
 The path to your OpenFOAM installation is configured in `configs/config.json` under `"slurm"`:
@@ -47,7 +44,7 @@ The path to your OpenFOAM installation is configured in `configs/config.json` un
 ### Prerequisites
 
 - **Python**: 3.9 or higher
-- **OpenFOAM**: Installed locally or on the remote cluster (see compatibility above).
+- **OpenFOAM**: Installed locally or on the remote cluster (see supported versions above).
 
 ### Setup
 
@@ -243,7 +240,7 @@ Key settings available in `configs/config.json`:
 | `standard` | 0.10 m | [4, 5] | 6 | 5 | 1500 | ~6–9 M | ~30–60 min |
 | `fine` | 0.08 m | [5, 6] | 7 | 6 | 3000 | ~12–16 M | ~2–4 hrs |
 
-*\* Runtime estimates based on typical Formula Student half-car models on a 32-core cluster node. Actual solve time depends on geometry complexity, core count, and convergence rate.*
+*\* Rough guidance only — not benchmarked. Actual cell counts and solve times depend on geometry complexity, core count, and convergence rate.*
 
 ---
 
@@ -312,7 +309,7 @@ RapidFOAM/
 │       ├── server.py   # FastAPI backend & static file server
 │       ├── ssh_client.py # Paramiko SSH/SFTP client for remote SLURM clusters
 │       └── static/     # Web Studio UI (Three.js 3D viewport, telemetry graphs)
-├── tests/              # Automated test suite (74 unit & regression tests)
+├── tests/              # Automated unit & regression tests
 ├── run_app.bat         # 1-click launcher for Windows
 ├── run_app.sh          # 1-click launcher for Linux / macOS
 ├── setup_case.py       # Case generator CLI script

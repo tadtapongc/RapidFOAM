@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mesh Fidelity Presets**: Built-in presets (`fast`, `standard`, `fine`) with predefined cell count budgets and refinement levels.
 - **Symmetry Plane Support**: Half-car simulation support (e.g. `x = 0`) with automatic 2x force scaling across reports and comparisons.
 - **Execution Pipeline Scripts**: Generates hardened POSIX execution scripts (`Allrun`, `Allrun.parallel`, `Allclean`, `run.sh`) with signal handling, background monitor termination, and interrupted parallel run reconstruction.
-- **OpenFOAM Compatibility**: Supports ESI-OpenCFD releases (`v2006` through `v2606`) and OpenFOAM Foundation (`v8`–`v11`).
+- **OpenFOAM Compatibility**: Developed and tested against ESI-OpenCFD OpenFOAM (`v2606`) only; other releases (older ESI versions, OpenFOAM Foundation) are untested and may require manual dictionary edits.
 
 #### Real-Time Telemetry & Convergence Monitoring
 - **Convergence Auto-Stop**: Live background monitor analyzing rolling window force variation ($\pm 0.5\%$) and gracefully signaling OpenFOAM solvers to stop via `stopAt writeNow;`.
