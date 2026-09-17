@@ -1,6 +1,7 @@
 """Automated tests for Web API endpoints and Cluster SSH client using standard unittest."""
 
 import asyncio
+import json
 import shutil
 from pathlib import Path
 import unittest
@@ -827,6 +828,60 @@ class TestWebAPI(unittest.TestCase):
                 self.assertTrue(c.is_case_running("RP14"))
             with patch.object(c, "get_slurm_queue", return_value=[{"name": "cfd_RP14", "state": "PENDING"}]):
                 self.assertTrue(c.is_case_running("RP14"))
+
+    def test_remote_merge_does_not_regress_local_progress(self):
+        """A stale remote snapshot must not overwrite newer local iteration data."""
+        case_name = "test_merge_no_regress"
+        case_dir = Path("cases") / case_name
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+        (case_dir / "case_config.json").write_text(json.dumps({"case_name": case_name}))
+        rows = ["# Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z\n"]
+        for i in range(1, 61):
+            rows.append(f"{i} (0 -50 20) (0 0 0) (0 0 0)\n")
+        (forces_dir / "force.dat").write_text("".join(rows))
+
+        stale_remote = {
+            "name": case_name, "status": "Solving", "latest_iter": 5, "converged": False,
+            "modified": "2026-01-01 00:00:00", "modified_ts": 1.0, "fidelity": "standard",
+            "velocity": "16.7", "direction": "-z", "n_procs": 32, "stl_name": "geometry.stl",
+            "has_forces": True, "has_residuals": True, "downforce": 1.0, "drag": 1.0, "ld_ratio": 1.0,
+        }
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(ssh_client, "get_slurm_queue", return_value=[]):
+                with patch.object(ssh_client, "list_remote_cases_detailed", return_value=[stale_remote]):
+                    cases = asyncio.run(api_list_cases())
+        matched = next(c for c in cases if c["name"] == case_name)
+        self.assertEqual(matched["latest_iter"], 60)
+        self.assertEqual(matched["location"], "Local & Cluster")
+
+    def test_validation_only_does_not_write_config(self):
+        """A validate-only request (no generate/upload) must not persist a config."""
+        case_name = "test_validate_no_write"
+        cfg_path = Path("configs") / f"{case_name}.json"
+        try:
+            req = GenerateCaseRequest(
+                config={"case_name": case_name, "stl_files": ["sample_wing.stl"]},
+                upload_to_cluster=False, generate_remotely=False,
+                submit_slurm=False, generate_locally=False,
+            )
+            asyncio.run(api_case_generate_and_submit(req))
+            self.assertFalse(cfg_path.exists())
+        finally:
+            if cfg_path.exists():
+                cfg_path.unlink()
+
+    def test_delete_missing_remote_case_returns_404(self):
+        """Deleting a case that exists neither locally nor remotely must 404."""
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(ssh_client, "run_command", return_value=(1, "", "")):
+                with self.assertRaises(HTTPException) as ctx:
+                    asyncio.run(api_case_delete("missing_case_xyz"))
+                self.assertEqual(ctx.exception.status_code, 404)
+            with patch.object(ssh_client, "run_command", return_value=(0, "__DELETED__", "")):
+                res = asyncio.run(api_case_delete("present_case_xyz"))
+                self.assertTrue(res["success"])
 
 
 if __name__ == "__main__":

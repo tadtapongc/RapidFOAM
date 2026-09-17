@@ -535,11 +535,13 @@ async def api_case_generate_and_submit(req: GenerateCaseRequest) -> dict[str, An
     if errors:
         raise HTTPException(status_code=400, detail=f"Config validation errors: {', '.join(errors)}")
 
-    # 2. Save config locally
-    cfg_dir = PROJECT_ROOT / "configs"
-    cfg_dir.mkdir(exist_ok=True)
-    local_cfg_path = cfg_dir / f"{case_name}.json"
-    local_cfg_path.write_text(json.dumps(cfg, indent=4) + "\n", encoding="utf-8")
+    # 2. Save config locally only when an action actually uses it. A pure
+    #    validation request must not create or overwrite a config file.
+    local_cfg_path = PROJECT_ROOT / "configs" / f"{case_name}.json"
+    if req.generate_locally or req.upload_to_cluster:
+        cfg_dir = PROJECT_ROOT / "configs"
+        cfg_dir.mkdir(exist_ok=True)
+        local_cfg_path.write_text(json.dumps(cfg, indent=4) + "\n", encoding="utf-8")
 
     local_actions: dict[str, Any] = {}
     cluster_actions: dict[str, Any] = {}
@@ -1246,8 +1248,10 @@ async def api_list_cases() -> list[dict[str, Any]]:
                     if final_status in ("Solving", "Meshing", "Queued", "Converged", "Completed", "Failed") or rc.get("latest_iter") is not None:
                         local_iter = local_entry.get("latest_iter") or 0
                         remote_iter = rc.get("latest_iter") or 0
-                        if remote_iter >= local_iter or final_status in ("Solving", "Meshing", "Queued", "Converged", "Completed", "Failed"):
-                            local_entry["status"] = final_status
+                        # Status always reflects the newest known state, but numeric
+                        # progress must never regress because of a stale remote snapshot.
+                        local_entry["status"] = final_status
+                        if remote_iter >= local_iter:
                             if rc.get("latest_iter") is not None:
                                 local_entry["latest_iter"] = rc["latest_iter"]
                             if rc.get("downforce") is not None:
@@ -1258,18 +1262,18 @@ async def api_list_cases() -> list[dict[str, Any]]:
                                 local_entry["ld_ratio"] = rc["ld_ratio"]
                             if rc.get("converged"):
                                 local_entry["converged"] = rc["converged"]
-                            if rc.get("has_forces"):
-                                local_entry["has_forces"] = True
-                            if rc.get("has_residuals"):
-                                local_entry["has_residuals"] = True
-                            if rc.get("fidelity") and rc["fidelity"] != "--":
-                                local_entry["fidelity"] = rc["fidelity"]
-                            if rc.get("velocity") and rc["velocity"] != "--":
-                                local_entry["velocity"] = rc["velocity"]
-                            if rc.get("direction") and rc["direction"] != "--":
-                                local_entry["direction"] = rc["direction"]
-                            if rc.get("stl_name") and rc["stl_name"] != "--" and local_entry.get("stl_name") == "--":
-                                local_entry["stl_name"] = rc["stl_name"]
+                        if rc.get("has_forces"):
+                            local_entry["has_forces"] = True
+                        if rc.get("has_residuals"):
+                            local_entry["has_residuals"] = True
+                        if rc.get("fidelity") and rc["fidelity"] != "--":
+                            local_entry["fidelity"] = rc["fidelity"]
+                        if rc.get("velocity") and rc["velocity"] != "--":
+                            local_entry["velocity"] = rc["velocity"]
+                        if rc.get("direction") and rc["direction"] != "--":
+                            local_entry["direction"] = rc["direction"]
+                        if rc.get("stl_name") and rc["stl_name"] != "--" and local_entry.get("stl_name") == "--":
+                            local_entry["stl_name"] = rc["stl_name"]
                 else:
                     cases_dict[cname] = {
                         "name": cname,
@@ -1313,8 +1317,11 @@ async def api_case_delete(case_name: str) -> dict[str, Any]:
 
     if ssh_client.is_connected:
         quoted_remote = shlex.quote(f"{ssh_client.remote_repo_path}/cases/{case_name}")
-        code, _, _ = await asyncio.to_thread(ssh_client.run_command, f"rm -rf {quoted_remote}")
-        if code == 0:
+        code, out, _ = await asyncio.to_thread(
+            ssh_client.run_command,
+            f"[ -e {quoted_remote} ] && rm -rf {quoted_remote} && echo __DELETED__",
+        )
+        if code == 0 and "__DELETED__" in out:
             deleted = True
 
     if not deleted:

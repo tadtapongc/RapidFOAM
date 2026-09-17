@@ -196,7 +196,7 @@
                       <div class="card-body">
                         <div class="card-title">Fast Preview</div>
                         <div class="card-cells">~2–4M cells</div>
-                        <div class="card-time">~10–15 min</div>
+                        <div class="card-time">~5–10 min</div>
                         <div class="card-desc">Rapid validation & geometry orientation check</div>
                       </div>
                     </label>
@@ -206,7 +206,7 @@
                       <div class="card-body">
                         <div class="card-title">Standard (Recommended)</div>
                         <div class="card-cells">~6–9M cells</div>
-                        <div class="card-time">~35–50 min</div>
+                        <div class="card-time">~30–60 min</div>
                         <div class="card-desc">Production aerodynamic balance & force calculation</div>
                       </div>
                     </label>
@@ -216,7 +216,7 @@
                       <div class="card-body">
                         <div class="card-title">Fine Mesh</div>
                         <div class="card-cells">~12–16M cells</div>
-                        <div class="card-time">~1.5–2 hrs</div>
+                        <div class="card-time">~2–4 hrs</div>
                         <div class="card-desc">High-resolution boundary layer & wake vortex capture</div>
                       </div>
                     </label>
@@ -804,17 +804,17 @@
       <!-- Telemetry KPIs -->
       <div class="kpi-grid">
         <div class="kpi-card">
-          <div class="kpi-title">Downforce (-Fy)</div>
+          <div class="kpi-title" id="kpi-downforce-title">Downforce (-Fy)</div>
           <div class="kpi-val" id="kpi-downforce">-- <span class="kpi-unit">N</span></div>
           <div class="kpi-sub" id="kpi-downforce-variation">±--% variation</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-title">Drag (-Fz)</div>
+          <div class="kpi-title" id="kpi-drag-title">Drag (-Fz)</div>
           <div class="kpi-val" id="kpi-drag">-- <span class="kpi-unit">N</span></div>
           <div class="kpi-sub" id="kpi-drag-variation">±--% variation</div>
         </div>
         <div class="kpi-card highlight">
-          <div class="kpi-title">Aero Efficiency (-Fy / -Fz)</div>
+          <div class="kpi-title" id="kpi-ld-title">Aero Efficiency (-Fy / -Fz)</div>
           <div class="kpi-val" id="kpi-ld">--</div>
           <div class="kpi-sub">Lift-to-Drag Ratio (L/D)</div>
         </div>

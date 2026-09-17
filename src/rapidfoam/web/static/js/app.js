@@ -130,7 +130,7 @@ class CFDApp {
       if (this.telemetryPollingActive && activeTab && activeTab.dataset.tab === 'telemetry-tab') {
         this.pollTelemetry();
       }
-    }, 4000);
+    }, 5000);
   }
 
   // -------------------------------------------------------------
@@ -307,22 +307,22 @@ class CFDApp {
     const kmh = velMs * 3.6;
     this.setVal('cfg-flow-velocity-kmh', kmh.toFixed(1));
     this.setVal('slider-velocity', Math.min(Math.max(kmh, 5), 150));
-    this.setVal('cfg-flow-direction', flow.direction || '-z');
+    this.setSelectValue('cfg-flow-direction', flow.direction || '-z');
     this.setCheck('cfg-flow-ground', flow.ground !== false);
 
     // Outputs
     const outputs = cfg.outputs || {};
-    this.setVal('cfg-outputs-drag', outputs.drag_axis || '-z');
-    this.setVal('cfg-outputs-downforce', outputs.downforce_axis || '-y');
+    this.setSelectValue('cfg-outputs-drag', outputs.drag_axis || '-z');
+    this.setSelectValue('cfg-outputs-downforce', outputs.downforce_axis || '-y');
 
     // Domain & Boundaries
     if (typeof cfg.domain_box === 'object' && cfg.domain_box !== null) {
-      this.setVal('cfg-domain-box', 'custom');
+      this.setSelectValue('cfg-domain-box', 'custom');
       document.getElementById('custom-domain-container').style.display = 'block';
       this.setVal('cfg-domain-min', JSON.stringify(cfg.domain_box.min || []));
       this.setVal('cfg-domain-max', JSON.stringify(cfg.domain_box.max || []));
     } else {
-      this.setVal('cfg-domain-box', 'auto');
+      this.setSelectValue('cfg-domain-box', 'auto');
       document.getElementById('custom-domain-container').style.display = 'none';
     }
 
@@ -335,19 +335,19 @@ class CFDApp {
 
     if (cfg.ground_clearance !== undefined && cfg.ground_clearance !== null) {
       // Style 1: Relative Ride Height
-      this.setVal('cfg-ground-style', 'relative');
+      this.setSelectValue('cfg-ground-style', 'relative');
       this.setVal('cfg-ground-clearance', cfg.ground_clearance);
       if (groupRel) groupRel.style.display = 'block';
       if (groupAbs) groupAbs.style.display = 'none';
     } else if (cfg.ground_plane !== undefined && cfg.ground_plane !== null) {
       // Style 2: Absolute CAD Ground Plane
-      this.setVal('cfg-ground-style', 'absolute');
+      this.setSelectValue('cfg-ground-style', 'absolute');
       this.setVal('cfg-ground-plane', cfg.ground_plane);
       if (groupRel) groupRel.style.display = 'none';
       if (groupAbs) groupAbs.style.display = 'block';
     } else {
       // Style 0 / None (Default in config.json): Touching CAD Bottom
-      this.setVal('cfg-ground-style', 'none');
+      this.setSelectValue('cfg-ground-style', 'none');
       this.setVal('cfg-ground-clearance', cfg._ground_clearance !== undefined ? cfg._ground_clearance : 0.035);
       this.setVal('cfg-ground-plane', cfg._ground_plane !== undefined ? cfg._ground_plane : 0.0);
       if (groupRel) groupRel.style.display = 'none';
@@ -355,20 +355,20 @@ class CFDApp {
     }
 
     const faces = cfg.domain_faces || {};
-    this.setVal('cfg-face-neg-x', faces['-x'] || 'symmetry');
-    this.setVal('cfg-face-pos-x', faces['+x'] || 'farField');
-    this.setVal('cfg-face-neg-y', faces['-y'] || 'ground');
-    this.setVal('cfg-face-pos-y', faces['+y'] || 'farField');
-    this.setVal('cfg-face-pos-z', faces['+z'] || 'inlet');
-    this.setVal('cfg-face-neg-z', faces['-z'] || 'outlet');
+    this.setSelectValue('cfg-face-neg-x', faces['-x'] || 'symmetry');
+    this.setSelectValue('cfg-face-pos-x', faces['+x'] || 'farField');
+    this.setSelectValue('cfg-face-neg-y', faces['-y'] || 'ground');
+    this.setSelectValue('cfg-face-pos-y', faces['+y'] || 'farField');
+    this.setSelectValue('cfg-face-pos-z', faces['+z'] || 'inlet');
+    this.setSelectValue('cfg-face-neg-z', faces['-z'] || 'outlet');
 
     // Parallel & SLURM
     const par = cfg.parallel || {};
-    this.setVal('cfg-parallel-procs', par.n_procs || 32);
-    this.setVal('cfg-parallel-method', par.method || 'scotch');
+    this.setSelectValue('cfg-parallel-procs', par.n_procs || 32);
+    this.setSelectValue('cfg-parallel-method', par.method || 'scotch');
 
     const slurm = cfg.slurm || {};
-    this.setVal('cfg-slurm-qos', slurm.qos || 'cu_hpc');
+    this.setSelectValue('cfg-slurm-qos', slurm.qos || 'cu_hpc');
     this.setVal('cfg-slurm-partition', slurm.partition || 'cpu');
     this.setVal('cfg-slurm-time', slurm.time || '08:00:00');
     this.setVal('cfg-slurm-mem', slurm.mem_per_cpu || '2G');
@@ -435,7 +435,7 @@ class CFDApp {
     this.setVal('cfg-override-fluid-nu', fluid?.nu ?? '');
 
     // 6. Turbulence Modeling (Priority 6: Closure model)
-    this.setVal('cfg-override-turb-model', turb?.model ?? '');
+    this.setSelectValue('cfg-override-turb-model', turb?.model ?? '');
     this.setVal('cfg-override-turb-intensity', turb?.intensity ?? '');
     this.setVal('cfg-override-turb-nut-ratio', turb?.nut_ratio ?? '');
 
@@ -547,9 +547,11 @@ class CFDApp {
     };
 
     // Parallel (preserve untouched keys such as the decomposition method)
+    const prevParallel = this.activeConfig.parallel || {};
     cfg.parallel = {
-      ...(this.activeConfig.parallel || {}),
+      ...prevParallel,
       n_procs: parseInt(this.getVal('cfg-parallel-procs'), 10) || 32,
+      method: this.getVal('cfg-parallel-method') || prevParallel.method || 'scotch',
     };
 
     // SLURM
@@ -1639,6 +1641,14 @@ class CFDApp {
     reconnectBtn?.addEventListener('click', () => this.openSSHModal());
 
     connectSubmitBtn?.addEventListener('click', () => this.submitSSHConnect());
+
+    document.getElementById('btn-refresh-queue')?.addEventListener('click', () => {
+      if (!this.clusterConnected) {
+        this.showToast('Not connected to a cluster', 'warning');
+        return;
+      }
+      this.refreshQueue();
+    });
   }
 
   async loadLocalClusterConfig() {
@@ -1934,6 +1944,13 @@ class CFDApp {
       if (data.has_data) {
         if (forcesOverlay) forcesOverlay.style.display = 'none';
 
+        const dragAxisLabel = data.drag_axis || '-z';
+        const dfAxisLabel = data.downforce_axis || '-y';
+        this.setValText('kpi-downforce-title', `Downforce (${dfAxisLabel})`);
+        this.setValText('kpi-drag-title', `Drag (${dragAxisLabel})`);
+        this.setValText('kpi-ld-title', `Aero Efficiency (${dfAxisLabel} / ${dragAxisLabel})`);
+        this.setValText('chart-force-axes', `Downforce: ${dfAxisLabel} | Drag: ${dragAxisLabel}`);
+
         this.setKpiVal('kpi-downforce', data.downforce_avg, 'N');
         this.setValText('kpi-downforce-variation', `±${data.downforce_pct}% variation`);
         this.setKpiVal('kpi-drag', data.drag_avg, 'N');
@@ -1960,6 +1977,11 @@ class CFDApp {
         if (this.charts) {
           this.charts.clear();
         }
+
+        this.setValText('kpi-downforce-title', 'Downforce (-Fy)');
+        this.setValText('kpi-drag-title', 'Drag (-Fz)');
+        this.setValText('kpi-ld-title', 'Aero Efficiency (-Fy / -Fz)');
+        this.setValText('chart-force-axes', 'Downforce: -y | Drag: -z');
 
         this.setKpiVal('kpi-downforce', '--', 'N');
         this.setValText('kpi-downforce-variation', '±--% variation');
@@ -2293,6 +2315,27 @@ class CFDApp {
   setVal(id, val) {
     const el = document.getElementById(id);
     if (el) el.value = val;
+  }
+
+  setSelectValue(id, value) {
+    // Populate a <select> without silently dropping values that are not among
+    // its predefined options (e.g. a custom n_procs or decomposition method).
+    const el = document.getElementById(id);
+    if (!el) return;
+    const strVal = value === null || value === undefined ? '' : String(value);
+    if (el.tagName === 'SELECT') {
+      el.querySelectorAll('option[data-config-custom="1"]').forEach((o) => {
+        if (o.value !== strVal) o.remove();
+      });
+      if (strVal !== '' && !Array.from(el.options).some((o) => o.value === strVal)) {
+        const opt = document.createElement('option');
+        opt.value = strVal;
+        opt.textContent = `${strVal} (from config)`;
+        opt.dataset.configCustom = '1';
+        el.appendChild(opt);
+      }
+    }
+    el.value = strVal;
   }
 
   setValText(id, text) {
