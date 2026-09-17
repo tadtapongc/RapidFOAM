@@ -883,6 +883,54 @@ class TestWebAPI(unittest.TestCase):
                 res = asyncio.run(api_case_delete("present_case_xyz"))
                 self.assertTrue(res["success"])
 
+    def test_cancel_job_graceful_stop(self):
+        """A running job is asked to write the current iteration and exit."""
+        c = ClusterSSHClient()
+        c.remote_repo_path = "/repo"
+        calls = []
+
+        def fake_run(cmd, timeout=60.0):
+            calls.append(cmd)
+            if "-o '%T|%j'" in cmd:
+                return (0, "RUNNING|case_x", "")
+            if cmd.startswith("[ -f "):
+                return (0, "", "")
+            if "sed -i" in cmd:
+                return (0, "", "")
+            if "squeue -h -j" in cmd:
+                return (0, "", "")  # job has exited after the graceful stop
+            return (0, "", "")
+
+        with patch.object(c, "run_command", side_effect=fake_run):
+            res = c.cancel_job("12345", timeout=1.0, poll=0.01)
+        self.assertTrue(res["success"])
+        self.assertEqual(res["mode"], "graceful")
+        self.assertFalse(any(cmd.startswith("scancel") for cmd in calls))
+        self.assertTrue(any("sed -i" in cmd and "writeNow" in cmd for cmd in calls))
+
+    def test_cancel_job_falls_back_to_scancel(self):
+        """A job that ignores writeNow is force-cancelled after the timeout."""
+        c = ClusterSSHClient()
+        c.remote_repo_path = "/repo"
+        calls = []
+
+        def fake_run(cmd, timeout=60.0):
+            calls.append(cmd)
+            if "-o '%T|%j'" in cmd:
+                return (0, "RUNNING|case_y", "")
+            if cmd.startswith("[ -f "):
+                return (0, "", "")
+            if "sed -i" in cmd:
+                return (0, "", "")
+            if "squeue -h -j" in cmd:
+                return (0, "12345 still running", "")
+            return (0, "", "")
+
+        with patch.object(c, "run_command", side_effect=fake_run):
+            res = c.cancel_job("12345", timeout=0.0, poll=0.01)
+        self.assertEqual(res["mode"], "graceful-cancel")
+        self.assertTrue(any(cmd.startswith("scancel") for cmd in calls))
+
 
 if __name__ == "__main__":
     unittest.main()

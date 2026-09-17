@@ -1838,7 +1838,13 @@ class CFDApp {
   }
 
   async cancelJob(jobId) {
-    if (!confirm(`Cancel SLURM Job ${jobId}?`)) return;
+    const proceed = confirm(
+      `Stop SLURM job ${jobId}?\n\n` +
+      `If it is solving, RapidFOAM asks simpleFoam to write the current iteration ` +
+      `and reconstruct the results, then force-cancels if it does not stop within 60s.`
+    );
+    if (!proceed) return;
+    this.showToast(`Stopping job ${jobId}...`, 'info');
     try {
       const res = await fetch('/api/case/cancel', {
         method: 'POST',
@@ -1847,10 +1853,13 @@ class CFDApp {
       });
       const data = await res.json();
       if (data.success) {
-        this.showToast(`Cancelled job ${jobId}`, 'info');
+        const msg = data.mode === 'graceful'
+          ? `Job ${jobId} stopped gracefully; results written and reconstructed`
+          : `Cancelled job ${jobId}`;
+        this.showToast(msg, 'info');
         this.refreshQueue();
       } else {
-        this.showToast(`Could not cancel: ${data.error}`, 'error');
+        this.showToast(`Could not cancel: ${data.error || 'unknown error'}`, 'error');
       }
     } catch (err) {
       this.showToast(`Cancel error: ${err.message}`, 'error');

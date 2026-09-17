@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import threading
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -356,18 +357,88 @@ class ClusterSSHClient:
             "case_dir": remote_case_dir,
         }
 
-    @_synchronized
-    def cancel_job(self, job_id: str) -> dict[str, Any]:
-        """Cancel a SLURM job."""
+    def _job_state_and_name(self, job_id: str) -> tuple[str, str]:
+        """Return (state, job_name) for a SLURM job, or ("", "") if unknown."""
+        code, out, _ = self.run_command(
+            f"squeue -h -j {shlex.quote(job_id)} -o '%T|%j' 2>/dev/null", timeout=10
+        )
+        if code == 0 and out.strip():
+            for line in out.strip().splitlines():
+                if "|" in line:
+                    state, _, name = line.partition("|")
+                    return state.strip().upper(), name.strip()
+        return "", ""
+
+    def _request_graceful_stop(self, job_name: str) -> bool:
+        """Ask a running solver to write its current state and exit.
+
+        Only meaningful once simpleFoam has started; returns True when the case
+        controlDict was successfully switched to ``stopAt writeNow``.
+        """
+        if not job_name:
+            return False
+        case_dir = f"{self.remote_repo_path}/cases/{job_name}"
+        control_dict = f"{case_dir}/system/controlDict"
+        solver_log = f"{case_dir}/log.simpleFoam"
+        code, _, _ = self.run_command(
+            f"[ -f {shlex.quote(solver_log)} ] && [ -f {shlex.quote(control_dict)} ]", timeout=10
+        )
+        if code != 0:
+            return False
+        code, _, _ = self.run_command(
+            f"sed -i 's/^stopAt .*/stopAt          writeNow;/' {shlex.quote(control_dict)}",
+            timeout=10,
+        )
+        return code == 0
+
+    def _wait_for_job_exit(self, job_id: str, timeout: float, poll: float) -> bool:
+        """Poll the SLURM queue until the job is gone or the timeout elapses."""
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            code, out, _ = self.run_command(
+                f"squeue -h -j {shlex.quote(job_id)} 2>/dev/null", timeout=10
+            )
+            if code != 0 or not out.strip():
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(poll, remaining))
+
+    def cancel_job(self, job_id: str, timeout: float = 60.0, poll: float = 5.0) -> dict[str, Any]:
+        """Cancel a SLURM job, preferring a graceful solver stop.
+
+        For a job that is actively solving, request a clean write-and-exit by
+        setting ``stopAt writeNow`` in the case controlDict, then wait for the
+        job to leave the queue so ``run.sh`` can reconstruct the results. If it
+        does not stop within ``timeout`` seconds (or is still meshing/queued),
+        fall back to ``scancel``.
+
+        Deliberately not decorated with ``@_synchronized``: the wait can block
+        for up to ``timeout`` and must not hold the shared SSH session lock.
+        Every individual ``run_command`` is still serialized internally.
+        """
         job_id_str = str(job_id).strip()
         if not re.match(r"^[0-9]+$", job_id_str):
             return {"success": False, "job_id": job_id_str, "error": "Job ID must be numeric"}
 
-        cmd = f"scancel {shlex.quote(job_id_str)}"
-        code, _, err = self.run_command(cmd, timeout=15)
+        state, job_name = self._job_state_and_name(job_id_str)
+        graceful = False
+        if state in ("RUNNING", "COMPLETING", "R", "CG"):
+            graceful = self._request_graceful_stop(job_name)
+            if graceful and self._wait_for_job_exit(job_id_str, timeout=timeout, poll=poll):
+                return {
+                    "success": True,
+                    "job_id": job_id_str,
+                    "mode": "graceful",
+                    "message": "Solver wrote the current iteration and exited; results reconstructed.",
+                }
+
+        code, _, err = self.run_command(f"scancel {shlex.quote(job_id_str)}", timeout=15)
         return {
             "success": code == 0,
             "job_id": job_id_str,
+            "mode": "graceful-cancel" if graceful else "cancel",
             "error": err if code != 0 else None,
         }
 
