@@ -931,6 +931,77 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(res["mode"], "graceful-cancel")
         self.assertTrue(any(cmd.startswith("scancel") for cmd in calls))
 
+    def test_download_directory_streams_remote_tar(self):
+        """download_directory extracts a streamed remote tar (not per-file SFTP)."""
+        import io
+        import tarfile
+        import tempfile
+
+        def make_tar():
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as t:
+                dinfo = tarfile.TarInfo("system")
+                dinfo.type = tarfile.DIRTYPE
+                t.addfile(dinfo)
+                for name, data in (("log.simpleFoam", b"hello"), ("system/controlDict", b"abc")):
+                    info = tarfile.TarInfo(name)
+                    info.size = len(data)
+                    t.addfile(info, io.BytesIO(data))
+            return buf.getvalue()
+
+        class FakeChannel:
+            def recv_exit_status(self):
+                return 0
+
+        class FakeStream(io.BytesIO):
+            def __init__(self, data):
+                super().__init__(data)
+                self.channel = FakeChannel()
+
+        class FakeClient:
+            def __init__(self, payload):
+                self.payload = payload
+                self.commands = []
+
+            def exec_command(self, command, timeout=None):
+                self.commands.append(command)
+                return io.BytesIO(), FakeStream(self.payload), io.BytesIO()
+
+        client = FakeClient(make_tar())
+        c = ClusterSSHClient()
+        c._client = client
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+                stats = c.download_directory("/repo/cases/c1", tmp)
+            self.assertIn("tar -C", client.commands[0])
+            self.assertEqual(stats["files"], 2)
+            self.assertEqual(stats["dirs"], 1)
+            self.assertEqual(stats["bytes"], 8)
+            self.assertEqual((Path(tmp) / "log.simpleFoam").read_bytes(), b"hello")
+            self.assertEqual((Path(tmp) / "system" / "controlDict").read_bytes(), b"abc")
+
+    def test_download_case_endpoint(self):
+        """The download endpoint returns transfer stats for a cluster case."""
+        from rapidfoam.web.server import CaseDownloadRequest, api_case_download
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(ssh_client, "remote_file_exists", return_value=True):
+                with patch.object(ssh_client, "download_directory",
+                                  return_value={"files": 3, "dirs": 1, "bytes": 42}):
+                    res = asyncio.run(api_case_download(CaseDownloadRequest(case_name="remote_case_zzz")))
+        self.assertTrue(res["success"])
+        self.assertEqual(res["files"], 3)
+        self.assertEqual(res["bytes"], 42)
+
+    def test_download_case_requires_connection(self):
+        """Downloading without an SSH session is rejected."""
+        from rapidfoam.web.server import CaseDownloadRequest, api_case_download
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=False):
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(api_case_download(CaseDownloadRequest(case_name="remote_case_zzz")))
+            self.assertEqual(ctx.exception.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

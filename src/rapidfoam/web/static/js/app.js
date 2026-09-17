@@ -1866,6 +1866,30 @@ class CFDApp {
     }
   }
 
+  async downloadCase(caseName) {
+    const proceed = confirm(
+      `Download case "${caseName}" from the cluster to local cases/${caseName}/?\n\n` +
+      `This mirrors the full case directory (including all solution time directories) ` +
+      `and may take a while for large cases.`
+    );
+    if (!proceed) return;
+    this.showToast(`Downloading ${caseName} from cluster...`, 'info');
+    try {
+      const res = await fetch('/api/case/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ case_name: caseName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Download failed');
+      const mb = (data.bytes / 1e6).toFixed(1);
+      this.showToast(`Downloaded ${caseName}: ${data.files} files (${mb} MB)`, 'success');
+      await this.loadCasesArchive();
+    } catch (err) {
+      this.showToast(`Download error: ${err.message}`, 'error');
+    }
+  }
+
   // -------------------------------------------------------------
   // Live Telemetry & Console Tail
   // -------------------------------------------------------------
@@ -2298,6 +2322,7 @@ class CFDApp {
         <td>
           <div class="action-btn-group">
             <button class="btn btn-outline btn-xs btn-inspect-case" data-name="${c.name}" title="Inspect Live Telemetry">📊 Live Telemetry</button>
+            ${isCluster ? `<button class="btn btn-outline btn-xs btn-download-case" data-name="${c.name}" title="Download case from cluster to local cases/">⬇ Download</button>` : ''}
           </div>
         </td>
       `;
@@ -2308,6 +2333,8 @@ class CFDApp {
         this.addTelemetryCase(c.name);
         this.pollTelemetry();
       });
+
+      tr.querySelector('.btn-download-case')?.addEventListener('click', () => this.downloadCase(c.name));
 
       tbody.appendChild(tr);
     });

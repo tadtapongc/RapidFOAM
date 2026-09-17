@@ -10,6 +10,8 @@ import logging
 import os
 import re
 import shlex
+import shutil
+import tarfile
 import threading
 import time
 from pathlib import Path
@@ -243,6 +245,73 @@ class ClusterSSHClient:
         sftp = self.get_sftp()
         bio = io.BytesIO(text_content.encode("utf-8"))
         sftp.putfo(bio, remote_path.replace("\\", "/"))
+
+    def download_directory(self, remote_dir: str, local_dir: str | Path) -> dict[str, Any]:
+        """Recursively download a remote directory by streaming a remote tar.
+
+        Runs ``tar -C <dir> -cf - .`` over the SSH exec channel and extracts the
+        stream locally. This is much faster than per-file SFTP because it avoids
+        the 32 KiB SFTP request/response round trips; it approaches raw SSH
+        throughput.
+
+        Deliberately not decorated with ``@_synchronized``: the stream can take
+        a long time and must not hold the shared session lock. Only the initial
+        ``exec_command`` is briefly locked.
+        """
+        if not self.is_connected:
+            raise ConnectionError("Not connected to cluster SSH server.")
+
+        remote_root = remote_dir.rstrip("/")
+        local_root = Path(local_dir)
+        local_root.mkdir(parents=True, exist_ok=True)
+        resolved_root = local_root.resolve()
+
+        cmd = f"tar -C {shlex.quote(remote_root)} -cf - ."
+        with self._lock:
+            _stdin, stdout, stderr = self._client.exec_command(cmd)
+
+        stats = {"files": 0, "dirs": 0, "bytes": 0}
+        exit_code: Optional[int] = None
+        err_text = ""
+        try:
+            with tarfile.open(fileobj=stdout, mode="r|") as tar:
+                for member in tar:
+                    if member.name in (".", "./") or member.islnk():
+                        continue
+                    target = (resolved_root / member.name).resolve()
+                    if not target.is_relative_to(resolved_root):
+                        continue  # guard against path traversal
+                    if member.isdir():
+                        target.mkdir(parents=True, exist_ok=True)
+                        stats["dirs"] += 1
+                    elif member.isfile():
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        src = tar.extractfile(member)
+                        if src is None:
+                            continue
+                        with open(target, "wb") as out:
+                            shutil.copyfileobj(src, out, length=1024 * 1024)
+                        stats["files"] += 1
+                        stats["bytes"] += member.size
+                    # Symlinks and special files are skipped to avoid loops.
+        finally:
+            try:
+                exit_code = stdout.channel.recv_exit_status()
+            except Exception:
+                exit_code = -1
+            try:
+                err_text = stderr.read().decode("utf-8", errors="replace").strip()
+            except Exception:
+                err_text = ""
+            for stream in (stdout, stderr):
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+
+        if exit_code not in (0, None):
+            raise RuntimeError(err_text or f"remote tar failed (exit {exit_code})")
+        return stats
 
     @_synchronized
     def read_remote_text(self, remote_path: str, max_lines: Optional[int] = None) -> str:

@@ -164,6 +164,10 @@ class JobCancelRequest(BaseModel):
     job_id: str
 
 
+class CaseDownloadRequest(BaseModel):
+    case_name: str
+
+
 class DomainBoxRequest(BaseModel):
     config: dict[str, Any]
     bounds: Optional[dict[str, list[float]]] = None
@@ -632,6 +636,34 @@ async def api_case_cancel(req: JobCancelRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Not connected to cluster")
     res = await asyncio.to_thread(ssh_client.cancel_job, job_id)
     return res
+
+
+@app.post("/api/case/download")
+async def api_case_download(req: CaseDownloadRequest) -> dict[str, Any]:
+    """Download a case directory from the cluster into the local cases/ folder."""
+    if not CASE_NAME_REGEX.match(req.case_name):
+        raise HTTPException(status_code=400, detail="Invalid case_name")
+    if not ssh_client.is_connected:
+        raise HTTPException(status_code=400, detail="Not connected to cluster")
+
+    remote_case = f"{ssh_client.remote_repo_path}/cases/{req.case_name}"
+    if not await asyncio.to_thread(ssh_client.remote_file_exists, remote_case):
+        raise HTTPException(status_code=404, detail=f"Case '{req.case_name}' not found on cluster")
+
+    local_dir = PROJECT_ROOT / "cases" / req.case_name
+    try:
+        stats = await asyncio.to_thread(ssh_client.download_directory, remote_case, local_dir)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Download failed: {exc}")
+
+    return {
+        "success": True,
+        "case_name": req.case_name,
+        "local_path": str(local_dir),
+        "files": stats.get("files", 0),
+        "dirs": stats.get("dirs", 0),
+        "bytes": stats.get("bytes", 0),
+    }
 
 
 @app.get("/api/telemetry/forces")
