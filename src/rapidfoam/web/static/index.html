@@ -603,6 +603,23 @@
                   </div>
 
                   <div class="form-group">
+                    <label for="cfg-override-layer-mode">Near-Wall Target</label>
+                    <select id="cfg-override-layer-mode" class="input">
+                      <option value="auto" selected>Auto (preset y+)</option>
+                      <option value="yplus">y+ target</option>
+                      <option value="absolute">Absolute thickness (m)</option>
+                      <option value="relative">Relative fraction</option>
+                    </select>
+                    <span class="field-hint">Auto follows the fidelity preset y+ target; thicknesses are generated in metres.</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cfg-override-layer-yplus">y+ Target</label>
+                    <input type="number" id="cfg-override-layer-yplus" class="input" step="any" min="0.1" max="200" placeholder="Auto / Preset (40)">
+                    <span class="field-hint">1 = wall-resolved, 30&ndash;100 = wall functions</span>
+                  </div>
+
+                  <div class="form-group">
                     <label for="cfg-override-layer-nlayers">Number of Layers (n_layers)</label>
                     <input type="number" id="cfg-override-layer-nlayers" class="input" min="0" max="20" placeholder="Auto / Preset (5)">
                     <span class="field-hint">Total prism layers on STL surfaces (0 = disable layer extrusion)</span>
@@ -615,15 +632,29 @@
                   </div>
 
                   <div class="form-group">
-                    <label for="cfg-override-layer-firstlayer">First Layer Thickness</label>
-                    <input type="number" id="cfg-override-layer-firstlayer" class="input" step="any" min="0.0001" placeholder="Auto / Preset (0.30)">
-                    <span class="field-hint">Thickness of first cell next to wall (relative ratio or absolute dimension)</span>
+                    <label for="cfg-override-layer-firstlayer">First Layer Thickness (m)</label>
+                    <input type="number" id="cfg-override-layer-firstlayer" class="input" step="any" min="0" placeholder="Auto / Preset">
+                    <span class="field-hint">Metres in absolute mode; fraction of cell size in relative mode</span>
                   </div>
 
                   <div class="form-group">
                     <label for="cfg-override-layer-minthickness">Minimum Overall Thickness</label>
-                    <input type="number" id="cfg-override-layer-minthickness" class="input" step="any" min="0.0001" placeholder="Auto (0.05)">
-                    <span class="field-hint">Minimum layer thickness before layer collapses / pinches off</span>
+                    <input type="number" id="cfg-override-layer-minthickness" class="input" step="any" min="0" placeholder="Auto (first layer)">
+                    <span class="field-hint">Same units as the first layer; must not exceed the total stack</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cfg-override-layer-ground">Ground Boundary Layers</label>
+                    <select id="cfg-override-layer-ground" class="input">
+                      <option value="auto" selected>Auto (preset)</option>
+                      <option value="on">On</option>
+                      <option value="off">Off</option>
+                    </select>
+                    <span class="field-hint">Prism layers on the moving ground patch (floor and diffuser sensitive)</span>
+                  </div>
+
+                  <div class="form-group col-span-2">
+                    <span id="cfg-layer-preview" class="field-hint"></span>
                   </div>
 
                   <!-- 5. Fluid Property Overrides -->

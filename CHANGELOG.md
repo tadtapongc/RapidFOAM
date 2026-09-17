@@ -5,6 +5,16 @@ All notable changes to RapidFOAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **y+ boundary-layer targeting**: fidelity presets carry a near-wall `y_plus_target` that is converted to an absolute first-layer thickness (flat-plate friction-velocity estimate) and written with `relativeSizes false`; `layers.relativeSizes` selects absolute metres versus fractions of the local cell size.
+- **FSAE preset refresh**: geometry-relative base cell (`cells_per_length`), wall-function layer counts (fast 2, standard 3), wall-resolved fine tier (12 layers, y+ 1), distance shells as base-cell multiples, ground boundary layers for standard/fine, refreshed cell/runtime/SLURM estimates.
+- **Studio near-wall controls**: Auto (preset y+) mode with y+ target, ground-layer selector, live layer preview, and server-driven override placeholders.
+
+### Fixed
+- Boundary layers silently extruded at ~0 thickness when an absolute first-layer thickness was combined with snappy's default relative sizing; layer stack versus `minThickness` is now validated.
+
 ## [1.1.0] - 2026-09-17
 
 ### Added

@@ -16,6 +16,8 @@ class CFDApp {
     this.currentSTLName = null;
     this.downloadStates = new Map();
     this.downloadPollTimer = null;
+    this.fidelityPresets = null;
+    this.layerPreviewTimer = null;
 
     this.activeConfig = {
       case_name: "my_case",
@@ -119,6 +121,7 @@ class CFDApp {
     await this.checkClusterStatus();
     await this.loadTemplatesList();
     await this.loadExistingSTLs();
+    await this.loadFidelityPresets();
     // Automatically load configs/config.json as the default config
     await this.loadConfigFile('config.json', true);
     await this.loadCasesArchive();
@@ -192,6 +195,7 @@ class CFDApp {
         const fidelity = card.dataset.fidelity || 'standard';
         this.updateOverridePlaceholders(fidelity);
         this.buildConfigFromVisualForm();
+        this.scheduleLayerPreview();
       });
     });
 
@@ -251,11 +255,19 @@ class CFDApp {
       this.updateDomainBoxVisualization();
     });
 
+    // Boundary-layer near-wall target selector
+    document.getElementById('cfg-override-layer-mode')?.addEventListener('change', () => {
+      this.updateLayerModeUI();
+      this.scheduleLayerPreview();
+    });
+
     // Generic input change listeners on all visual inputs
     const form = document.getElementById('case-config-form');
     if (form) {
       form.addEventListener('input', () => this.buildConfigFromVisualForm());
       form.addEventListener('change', () => this.buildConfigFromVisualForm());
+      form.addEventListener('input', () => this.scheduleLayerPreview());
+      form.addEventListener('change', () => this.scheduleLayerPreview());
     }
 
     // Action buttons
@@ -428,10 +440,23 @@ class CFDApp {
     this.setVal('cfg-override-farwake', meshParams?.far_wake_level ?? '');
 
     // 4. Boundary Layer Overrides (Priority 4: Wall y+ & inflation)
+    let layerMode = 'auto';
+    if (layers?.y_plus_target !== undefined && layers?.y_plus_target !== null) {
+      layerMode = 'yplus';
+    } else if (layers?.relativeSizes === false) {
+      layerMode = 'absolute';
+    } else if (layers?.first_layer_thickness !== undefined) {
+      layerMode = 'relative';
+    }
+    this.setSelectValue('cfg-override-layer-mode', layerMode);
+    const groundMode = layers?.ground_layers === true ? 'on' : (layers?.ground_layers === false ? 'off' : 'auto');
+    this.setSelectValue('cfg-override-layer-ground', groundMode);
+    this.setVal('cfg-override-layer-yplus', layers?.y_plus_target ?? '');
     this.setVal('cfg-override-layer-nlayers', layers?.n_layers ?? '');
     this.setVal('cfg-override-layer-expansion', layers?.expansion_ratio ?? '');
     this.setVal('cfg-override-layer-firstlayer', layers?.first_layer_thickness ?? '');
     this.setVal('cfg-override-layer-minthickness', layers?.min_thickness ?? '');
+    this.updateLayerModeUI();
 
     // 5. Fluid Properties (Priority 5: Ambient medium)
     this.setVal('cfg-override-fluid-rho', fluid?.rho ?? '');
@@ -462,6 +487,7 @@ class CFDApp {
     }
     this.renderActiveSTLChips(this.activeConfig.stl_files);
     this.loadAllActiveSTLsFromServer(true);
+    this.scheduleLayerPreview();
   }
 
   buildConfigFromVisualForm() {
@@ -637,14 +663,29 @@ class CFDApp {
 
     // 4. Boundary Layers (Priority 4)
     const layersOverrides = {};
+    const layerMode = this.getVal('cfg-override-layer-mode') || 'auto';
     const nLayers = getOptionalInt('cfg-override-layer-nlayers');
     if (nLayers !== null) layersOverrides.n_layers = nLayers;
     const expansionRatio = getOptionalFloat('cfg-override-layer-expansion');
     if (expansionRatio !== null) layersOverrides.expansion_ratio = expansionRatio;
-    const firstLayer = getOptionalFloat('cfg-override-layer-firstlayer');
-    if (firstLayer !== null) layersOverrides.first_layer_thickness = firstLayer;
+    if (layerMode === 'yplus') {
+      const yPlus = getOptionalFloat('cfg-override-layer-yplus');
+      if (yPlus !== null) {
+        layersOverrides.y_plus_target = yPlus;
+        layersOverrides.relativeSizes = false;
+      }
+    } else if (layerMode === 'absolute' || layerMode === 'relative') {
+      const firstLayer = getOptionalFloat('cfg-override-layer-firstlayer');
+      if (firstLayer !== null) {
+        layersOverrides.first_layer_thickness = firstLayer;
+        layersOverrides.relativeSizes = layerMode === 'relative';
+      }
+    }
     const minThickness = getOptionalFloat('cfg-override-layer-minthickness');
     if (minThickness !== null) layersOverrides.min_thickness = minThickness;
+    const groundMode = this.getVal('cfg-override-layer-ground') || 'auto';
+    if (groundMode === 'on') layersOverrides.ground_layers = true;
+    else if (groundMode === 'off') layersOverrides.ground_layers = false;
     if (Object.keys(layersOverrides).length > 0) overrides.layers = layersOverrides;
 
     // 5. Fluid (Priority 5)
@@ -893,12 +934,32 @@ class CFDApp {
   }
 
   updateOverridePlaceholders(fidelity = 'standard') {
-    const presets = {
-      fast: { base_cell: '0.15', surf_min: '3', surf_max: '4', edge: '5', nearwake: '3', farwake: '1', endtime: '800', writeint: '400', n_layers: '3', expansion: '1.30', first_layer: '0.40' },
-      standard: { base_cell: '0.10', surf_min: '4', surf_max: '5', edge: '6', nearwake: '3', farwake: '1', endtime: '1500', writeint: '500', n_layers: '5', expansion: '1.20', first_layer: '0.30' },
-      fine: { base_cell: '0.06', surf_min: '5', surf_max: '6', edge: '7', nearwake: '3', farwake: '1', endtime: '2500', writeint: '500', n_layers: '6', expansion: '1.15', first_layer: '0.20' },
+    const fallback = {
+      fast: { base_cell: 'L/20', surf_min: '3', surf_max: '4', edge: '5', nearwake: '2', farwake: '1', endtime: '800', writeint: '400', n_layers: '2', expansion: '1.30', yplus: '100' },
+      standard: { base_cell: 'L/30', surf_min: '4', surf_max: '5', edge: '6', nearwake: '3', farwake: '1', endtime: '1500', writeint: '500', n_layers: '3', expansion: '1.20', yplus: '40' },
+      fine: { base_cell: 'L/37.5', surf_min: '4', surf_max: '5', edge: '7', nearwake: '4', farwake: '2', endtime: '2500', writeint: '500', n_layers: '12', expansion: '1.20', yplus: '1' },
     };
-    const p = presets[fidelity] || presets.standard;
+    const p = { ...(fallback[fidelity] || fallback.standard) };
+    const server = this.fidelityPresets?.[fidelity];
+    if (server) {
+      const mesh = server.mesh || {};
+      const layers = server.layers || {};
+      const solver = server.solver || {};
+      if (mesh.cells_per_length != null) p.base_cell = `L/${mesh.cells_per_length}`;
+      else if (mesh.base_cell_size != null) p.base_cell = String(mesh.base_cell_size);
+      if (Array.isArray(mesh.surface_level)) {
+        p.surf_min = String(mesh.surface_level[0]);
+        p.surf_max = String(mesh.surface_level[1]);
+      }
+      if (mesh.edge_level != null) p.edge = String(mesh.edge_level);
+      if (mesh.near_wake_level != null) p.nearwake = String(mesh.near_wake_level);
+      if (mesh.far_wake_level != null) p.farwake = String(mesh.far_wake_level);
+      if (solver.end_time != null) p.endtime = String(solver.end_time);
+      if (solver.write_interval != null) p.writeint = String(solver.write_interval);
+      if (layers.n_layers != null) p.n_layers = String(layers.n_layers);
+      if (layers.expansion_ratio != null) p.expansion = String(layers.expansion_ratio);
+      if (layers.y_plus_target != null) p.yplus = String(layers.y_plus_target);
+    }
 
     const setPlaceholder = (id, text) => {
       const el = document.getElementById(id);
@@ -915,7 +976,71 @@ class CFDApp {
     setPlaceholder('cfg-override-solver-writeinterval', `Auto / Preset (${p.writeint})`);
     setPlaceholder('cfg-override-layer-nlayers', `Auto / Preset (${p.n_layers})`);
     setPlaceholder('cfg-override-layer-expansion', `Auto / Preset (${p.expansion})`);
-    setPlaceholder('cfg-override-layer-firstlayer', `Auto / Preset (${p.first_layer})`);
+    setPlaceholder('cfg-override-layer-yplus', `Auto / Preset (y+ ${p.yplus})`);
+    setPlaceholder('cfg-override-layer-firstlayer', 'Auto / Preset');
+  }
+
+  async loadFidelityPresets() {
+    try {
+      const res = await fetch('/api/config/schema-defaults');
+      if (res.ok) {
+        const data = await res.json();
+        this.fidelityPresets = data.fidelity_presets || null;
+        this.updateOverridePlaceholders(this.activeConfig?.fidelity || 'standard');
+      }
+    } catch (err) {
+      console.warn('Could not load fidelity presets:', err);
+    }
+  }
+
+  updateLayerModeUI() {
+    const mode = this.getVal('cfg-override-layer-mode') || 'auto';
+    const yplus = document.getElementById('cfg-override-layer-yplus');
+    const first = document.getElementById('cfg-override-layer-firstlayer');
+    if (yplus) yplus.disabled = mode !== 'yplus';
+    if (first) first.disabled = (mode === 'auto' || mode === 'yplus');
+  }
+
+  scheduleLayerPreview() {
+    if (this.layerPreviewTimer) clearTimeout(this.layerPreviewTimer);
+    this.layerPreviewTimer = setTimeout(() => this.updateLayerPreview(), 400);
+  }
+
+  async updateLayerPreview() {
+    const el = document.getElementById('cfg-layer-preview');
+    if (!el) return;
+    try {
+      const res = await fetch('/api/geometry/domain-box', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: this.activeConfig }),
+      });
+      if (!res.ok) {
+        el.textContent = '';
+        return;
+      }
+      const data = await res.json();
+      this.renderLayerPreview(data.layer_preview);
+    } catch (err) {
+      el.textContent = '';
+    }
+  }
+
+  renderLayerPreview(p) {
+    const el = document.getElementById('cfg-layer-preview');
+    if (!el) return;
+    if (!p || p.first_layer_thickness == null) {
+      el.textContent = p && p.mode === 'relative'
+        ? 'Relative layer sizing (fraction of local cell size)'
+        : '';
+      return;
+    }
+    const uTau = p.u_tau != null ? p.u_tau.toFixed(2) : '—';
+    const first = (p.first_layer_thickness * 1e6).toFixed(1);
+    const yPlus = p.y_plus_effective != null ? p.y_plus_effective.toFixed(1) : '—';
+    const stack = p.stack != null ? (p.stack * 1000).toFixed(3) : '—';
+    const clamped = p.clamped ? ' (clamped)' : '';
+    el.textContent = `u_tau ≈ ${uTau} m/s | first layer ${first} µm (y+ ${yPlus}${clamped}) | stack ${stack} mm`;
   }
 
   clearAllOverrides() {
@@ -936,6 +1061,7 @@ class CFDApp {
       'cfg-override-farwake',
       'cfg-override-layer-nlayers',
       'cfg-override-layer-expansion',
+      'cfg-override-layer-yplus',
       'cfg-override-layer-firstlayer',
       'cfg-override-layer-minthickness',
       'cfg-override-fluid-rho',
@@ -945,6 +1071,11 @@ class CFDApp {
       'cfg-override-turb-nut-ratio',
     ];
     overrideIds.forEach((id) => this.setVal(id, ''));
+    this.setSelectValue('cfg-override-layer-mode', 'auto');
+    this.setSelectValue('cfg-override-layer-ground', 'auto');
+    this.updateLayerModeUI();
+    const preview = document.getElementById('cfg-layer-preview');
+    if (preview) preview.textContent = '';
     this.buildConfigFromVisualForm();
     this.showToast('All overrides cleared. Falling back to fidelity presets & defaults.', 'info');
   }

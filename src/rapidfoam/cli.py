@@ -99,12 +99,13 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
-    from rapidfoam.config import find_stl, load_config, validate
+    from rapidfoam.config import find_stl, load_config, user_set, validate
     from rapidfoam.geometry import (
         compute_domain_box,
         compute_mesh_params,
         face_assignments,
         face_role,
+        resolve_layers,
         turbulence_values,
         vec_str,
         velocity_vector,
@@ -123,15 +124,9 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
     # Load raw config to correctly handle user overrides
     with open(cfg_path, encoding="utf-8") as f:
         raw_user = json.load(f)
-    raw_overrides = raw_user.get("overrides", {}) if isinstance(raw_user, dict) else {}
-    
+
     def _is_set(section: str, key: str) -> bool:
-        """Check if user explicitly set a value in their config."""
-        if isinstance(raw_overrides, dict) and isinstance(raw_overrides.get(section), dict) and key in raw_overrides[section]:
-            return True
-        if isinstance(raw_user, dict) and isinstance(raw_user.get(section), dict) and key in raw_user[section]:
-            return True
-        return False
+        return user_set(raw_user, section, key)
 
     print(f"  Config: {cfg_path}")
 
@@ -231,12 +226,17 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         cfg["layers"]["n_layers"] = preset["n_layers"]
     if not _is_set("layers", "expansion_ratio"):
         cfg["layers"]["expansion_ratio"] = preset["expansion_ratio"]
-    if not _is_set("layers", "first_layer_thickness"):
+    if "y_plus_target" in preset:
+        if not _is_set("layers", "y_plus_target") and not _is_set("layers", "first_layer_thickness"):
+            cfg["layers"]["y_plus_target"] = preset["y_plus_target"]
+    elif not _is_set("layers", "first_layer_thickness"):
         cfg["layers"]["first_layer_thickness"] = preset["first_layer_thickness"]
     if not _is_set("layers", "nLayerIter"):
         cfg["layers"]["nLayerIter"] = preset.get("nLayerIter", 50)
     if not _is_set("layers", "nRelaxIter"):
         cfg["layers"]["nRelaxIter"] = preset.get("nRelaxIter_layers", 10)
+    if not _is_set("layers", "ground_layers"):
+        cfg["layers"]["ground_layers"] = preset.get("ground_layers", False)
     if not _is_set("solver", "write_interval"):
         cfg["solver"]["write_interval"] = preset["write_interval"]
     if not _is_set("snap", "nSolveIter"):
@@ -247,6 +247,17 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
     # Only apply preset SLURM time if user left it as default 'auto'
     if cfg["slurm"]["time"] == "auto":
         cfg["slurm"]["time"] = preset.get("slurm_time", "04:00:00")
+    if not _is_set("slurm", "mem_per_cpu"):
+        cfg["slurm"]["mem_per_cpu"] = preset.get("slurm_mem_per_cpu", cfg["slurm"]["mem_per_cpu"])
+
+    layer_resolution = resolve_layers(
+        cfg,
+        combined_bounds,
+        explicit_first_layer=_is_set("layers", "first_layer_thickness"),
+        explicit_min_thickness=_is_set("layers", "min_thickness"),
+    )
+    if layer_resolution.get("y_plus_target") is not None and _is_set("layers", "first_layer_thickness"):
+        print("  ⚠  layers.first_layer_thickness overrides layers.y_plus_target")
 
     # Derived values for display
     k, omega, nut = turbulence_values(cfg)
@@ -271,6 +282,29 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         print(f"    Distance shells: {shells}")
     for r in mesh.get("refinement_regions", []):
         print(f"    Region {r['name']}: Level {r['level']}")
+
+    if layer_resolution.get("first_layer_thickness") is not None:
+        print("  Boundary layers:")
+        if layer_resolution.get("u_tau"):
+            print(f"    u_tau estimate: {layer_resolution['u_tau']:.3f} m/s")
+        if layer_resolution.get("y_plus_target") is not None and layer_resolution.get("mode") == "absolute":
+            print(f"    y+ target:      {layer_resolution['y_plus_target']:.3g} -> "
+                  f"first layer {layer_resolution['first_layer_thickness'] * 1e6:.1f} um")
+        else:
+            print(f"    first layer:    {layer_resolution['first_layer_thickness'] * 1e6:.1f} um (absolute)")
+        if layer_resolution.get("y_plus_effective") is not None:
+            suffix = " (clamped by maxFaceThicknessRatio)" if layer_resolution.get("clamped") else ""
+            print(f"    effective y+:   {layer_resolution['y_plus_effective']:.1f}{suffix}")
+        if layer_resolution.get("stack") is not None:
+            print(f"    {cfg['layers'].get('n_layers')} layers, expansion "
+                  f"{cfg['layers'].get('expansion_ratio')}, "
+                  f"stack {layer_resolution['stack'] * 1000:.3f} mm")
+        ground_state = "on" if cfg["layers"].get("ground_layers") else "off"
+        print(f"    ground layers:  {ground_state}")
+        if (layer_resolution.get("min_thickness") is not None
+                and layer_resolution.get("stack") is not None
+                and layer_resolution["min_thickness"] > layer_resolution["stack"]):
+            print("    WARNING: min_thickness exceeds the layer stack — snappyHexMesh will add 0 layers")
 
     div_u_scheme = cfg.get("schemes", {}).get("div_U", "bounded Gauss limitedLinear 1")
 

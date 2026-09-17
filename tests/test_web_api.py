@@ -76,6 +76,12 @@ class TestWebAPI(unittest.TestCase):
         self.assertIn("fidelity_presets", res)
         self.assertIn("fast", res["fidelity_presets"])
         self.assertIn("standard", res["fidelity_presets"])
+        standard = res["fidelity_presets"]["standard"]
+        self.assertEqual(standard.get("layers", {}).get("y_plus_target"), 40)
+        self.assertTrue(standard.get("layers", {}).get("ground_layers"))
+        self.assertEqual(standard.get("mesh", {}).get("cells_per_length"), 30)
+        self.assertIn("mesh", standard)
+        self.assertIn("solver", standard)
 
     def test_config_templates(self):
         """Test templates list endpoint."""
@@ -346,6 +352,40 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(res["lateral_axis"], "x")
         # (-0.8640 + 0.6266) / 2 = -0.2374 / 2 = -0.1187
         self.assertAlmostEqual(res["auto_symmetry_plane"], -0.1187, places=4)
+
+    def test_geometry_domain_box_layer_preview(self):
+        """Preset y+ target is resolved to an absolute first-layer thickness."""
+        bounds = {"min": [-0.745, 0.0, -2.961], "max": [0.745, 1.145, 0.296]}
+        cfg = {
+            "flow": {"velocity": 16.67, "direction": "-z", "ground": True},
+            "fluid": {"nu": 1.516e-5, "rho": 1.225},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+            "fidelity": "standard",
+        }
+        res = asyncio.run(api_geometry_domain_box(DomainBoxRequest(config=cfg, bounds=bounds)))
+        preview = res["layer_preview"]
+        self.assertIsNotNone(preview["first_layer_thickness"])
+        self.assertGreater(preview["u_tau"], 0.0)
+        self.assertGreater(preview["y_plus_effective"], 1.0)
+        base_cell = round(3.257 / 30.0, 4)
+        unclamped = 2.0 * 40 * 1.516e-5 / preview["u_tau"]
+        clamped = 0.5 * base_cell / 2 ** 5
+        self.assertAlmostEqual(preview["first_layer_thickness"], min(unclamped, clamped), places=9)
+
+    def test_geometry_domain_box_layer_preview_explicit_absolute(self):
+        """Explicit absolute thickness wins and reports its effective y+."""
+        bounds = {"min": [-0.745, 0.0, -2.961], "max": [0.745, 1.145, 0.296]}
+        cfg = {
+            "flow": {"velocity": 16.67, "direction": "-z", "ground": True},
+            "fluid": {"nu": 1.516e-5, "rho": 1.225},
+            "fidelity": "standard",
+            "layers": {"relativeSizes": False, "first_layer_thickness": 2e-5, "min_thickness": 2e-5},
+        }
+        res = asyncio.run(api_geometry_domain_box(DomainBoxRequest(config=cfg, bounds=bounds)))
+        preview = res["layer_preview"]
+        self.assertAlmostEqual(preview["first_layer_thickness"], 2e-5)
+        self.assertIsNotNone(preview["y_plus_effective"])
+        self.assertLess(preview["y_plus_effective"], 2.0)
 
     def test_list_cases_and_delete(self):
         """Test listing cases archive and deleting a case."""

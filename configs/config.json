@@ -10,7 +10,7 @@
     "_stl_files": "ASCII STL geometry files located in the stl/ directory",
     "stl_files": ["geometry.stl"],
 
-    "_fidelity": "Presets: 'fast' (~2-4M cells, 10 min), 'standard' (~6-9M cells, 45 min, RECOMMENDED for general aerodynamics), 'fine' (~12-16M cells, 2-4 hrs)",
+    "_fidelity": "Presets: 'fast' (~2-4M cells, 10 min, y+~100), 'standard' (~6-9M cells, 45 min, y+~40, RECOMMENDED for general aerodynamics), 'fine' (~12-16M cells, 2-4 hrs, y+~1). Each preset carries a near-wall y+ target that is converted to an absolute first-layer thickness from the flow velocity and fluid properties.",
     "fidelity": "standard",
 
     "_section_flow": "--- 2. Flow & Operating Conditions ---",
@@ -89,17 +89,21 @@
             "_CofR": [0.0, 0.0, 0.0]
         },
         "mesh_params": {
-            "_base_cell_size": 0.10,
+            "_cells_per_length": "Auto base cell = longest STL extent / this number (fast 20, standard 30, fine 37.5)",
+            "_base_cell_size": "Explicit metres; use 'auto' to derive from cells_per_length",
             "_surface_level": [4, 5],
             "_edge_level": 6,
             "_near_wake_level": 3,
             "_far_wake_level": 1
         },
         "layers": {
-            "_n_layers": 5,
+            "_y_plus_target": "Near-wall target. 1 = wall-resolved, 30-100 = wall functions. Overrides first_layer_thickness unless that is set explicitly.",
+            "_n_layers": 3,
             "_expansion_ratio": 1.2,
-            "_first_layer_thickness": 0.3,
-            "_min_thickness": 0.05
+            "_relativeSizes": "false = first_layer_thickness/min_thickness are metres; true = fractions of the local cell size",
+            "_first_layer_thickness": "Metres when relativeSizes is false, fraction of cell size when true",
+            "_min_thickness": "Same units as first_layer_thickness. Must not exceed the total layer stack.",
+            "_ground_layers": "true adds prism layers on the moving ground patch (floor and diffuser sensitive)"
         },
         "fluid": {
             "_rho": 1.225,

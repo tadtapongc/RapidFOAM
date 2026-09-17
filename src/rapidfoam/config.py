@@ -161,8 +161,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "layers": {
         "n_layers": 5,
         "expansion_ratio": 1.2,
-        "first_layer_thickness": 0.3,   # relative
-        "min_thickness": 0.05,
+        # relativeSizes=true: thicknesses are fractions of the local cell size
+        # relativeSizes=false: thicknesses are absolute, in metres
+        "relativeSizes": True,
+        "first_layer_thickness": 0.3,   # fraction of cell (or metres if relativeSizes=false)
+        "min_thickness": 0.05,          # same units as first_layer_thickness
+        "y_plus_target": None,          # absolute near-wall target; overrides first_layer_thickness
         "featureAngle": 170,
         "slipFeatureAngle": 30,
         "nGrow": 0,
@@ -180,6 +184,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "nSmoothDisplacement": 0,
         "detectExtrusionIsland": True,
         "nRelaxedIter": 20,
+        "ground_layers": False,
     },
 
     # Feature extraction (140° captures real aero edges without cosmetic CAD seams)
@@ -376,12 +381,21 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
 
     for section, keys in {
         "fluid": ("nu", "rho"), "turbulence": ("intensity", "nut_ratio"),
-        "mesh_params": ("base_cell_size",), "solver": ("end_time", "write_interval"),
+        "solver": ("end_time", "write_interval"),
         "layers": ("expansion_ratio", "first_layer_thickness", "min_thickness"),
         "force_refs": ("lRef", "Aref"),
     }.items():
         for key in keys:
             positive(section, key)
+    base_cell = cfg.get("mesh_params", {}).get("base_cell_size")
+    if base_cell is not None and base_cell != "auto":
+        positive("mesh_params", "base_cell_size")
+    cells_per_length = cfg.get("mesh_params", {}).get("cells_per_length")
+    if cells_per_length is not None and (
+            not finite(cells_per_length) or not (5.0 <= cells_per_length <= 100.0)):
+        errors.append("mesh_params.cells_per_length must be a number between 5 and 100")
+    if "ground_layers" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["ground_layers"], bool):
+        errors.append("layers.ground_layers must be true or false")
     for section, keys in {
         "parallel": ("n_procs",), "slurm": ("nodes", "cpus_per_task"),
         "mesh_params": ("maxGlobalCells", "maxLocalCells", "nCellsBetweenLevels"),
@@ -416,6 +430,32 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
             f"Both 'ground_plane' ({cfg['ground_plane']}) and 'ground_clearance' "
             f"({cfg['ground_clearance']}) are defined; 'ground_plane' takes precedence."
         )
+
+    # A layer stack that cannot reach minThickness makes snappyHexMesh unmark
+    # every extrusion, silently adding 0 boundary layers.
+    lay = cfg.get("layers", {})
+    y_target = lay.get("y_plus_target")
+    if y_target is not None:
+        if not finite(y_target) or not (0.1 <= y_target <= 200):
+            errors.append("layers.y_plus_target must be a finite number between 0.1 and 200 (or null)")
+    n_layers = lay.get("n_layers")
+    ratio = lay.get("expansion_ratio")
+    first = lay.get("first_layer_thickness")
+    min_th = lay.get("min_thickness")
+    if (isinstance(n_layers, int) and not isinstance(n_layers, bool) and n_layers >= 1
+            and finite(first) and finite(ratio) and finite(min_th)):
+        if math.isclose(ratio, 1.0):
+            total = first * n_layers
+        else:
+            total = first * (ratio ** n_layers - 1) / (ratio - 1)
+        if total < min_th:
+            mode = "fraction of cell size" if lay.get("relativeSizes", True) else "metres"
+            warnings.append(
+                f"layers.stack: first_layer_thickness {first:g} x {n_layers} layers "
+                f"(expansion {ratio:g}) = {total:.3g} total, below min_thickness {min_th:g} "
+                f"(units: {mode}) — snappyHexMesh will add 0 layers. Increase "
+                f"first_layer_thickness/n_layers or lower min_thickness."
+            )
 
     # Domain box (can be "auto" or {"min": [x,y,z], "max": [x,y,z]})
     box = cfg.get("domain_box")
@@ -477,3 +517,20 @@ def _find_stl(stl_dir: Path, name: str) -> Path | None:
 def find_stl(stl_dir: Path, name: str) -> Path | None:
     """Public interface for STL file search."""
     return _find_stl(stl_dir, name)
+
+
+def user_set(raw_user: dict[str, Any], section: str, key: str) -> bool:
+    """True when a config value was explicitly provided by the user.
+
+    Checks the top level of the raw config and its 'overrides' block, the
+    two places the CLI and the Studio accept explicit values.
+    """
+    if not isinstance(raw_user, dict):
+        return False
+    overrides = raw_user.get("overrides")
+    if isinstance(overrides, dict):
+        block = overrides.get(section)
+        if isinstance(block, dict) and key in block:
+            return True
+    block = raw_user.get(section)
+    return isinstance(block, dict) and key in block

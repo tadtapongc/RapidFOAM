@@ -6,6 +6,7 @@ No geometry-specific tuning required.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from rapidfoam.stl_utils import BBox
@@ -234,20 +235,21 @@ def compute_domain_box(cfg: dict[str, Any], combined_bounds: BBox) -> dict[str, 
 
 FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
     "fast": {
-        # Quick turnaround for iterative design (~5-10 min on 16-32 cores, ~2-4M cells)
+        # Quick turnaround for iterative design (~10-20 min on 32 cores, ~3-5M cells)
         "desc": "Quick iterative design turnaround",
-        "cell_estimate": "~2-4M cells",
-        "n_cells_target": 3000000,
-        "runtime_estimate": "~5-10 min",
-        "base_cell_size": 0.15,        # m — coarse background
-        "surface_level": [3, 4],       # 18.75mm - 9.38mm surface cells
+        "cell_estimate": "~3-5M cells",
+        "n_cells_target": 4000000,
+        "runtime_estimate": "~10-20 min",
+        "cells_per_length": 20,        # base cell = longest STL extent / 20
+        "surface_level": [3, 4],       # 18.75mm - 9.38mm surface cells at ~3m model
         "edge_level": 5,               # 4.69mm at edges
-        "n_layers": 3,
+        "n_layers": 2,
         "expansion_ratio": 1.3,
-        "first_layer_thickness": 0.4,
+        "y_plus_target": 100,
+        "ground_layers": False,
         "end_time": 800,
         "write_interval": 400,
-        "maxGlobalCells": 8_000_000,
+        "maxGlobalCells": 10_000_000,
         "nCellsBetweenLevels": 2,
         "resolveFeatureAngle": 35,
         "nSolveIter": 100,             # snap iterations
@@ -255,29 +257,31 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "nLayerIter": 30,
         "nRelaxIter_layers": 5,
         "slurm_time": "04:00:00",
-        # Distance-based refinement shells
-        "distance_levels": [
-            (0.040, 3),   # 40mm → level 3
-            (0.120, 2),   # 120mm → level 2
+        "slurm_mem_per_cpu": "2G",
+        # Distance-based refinement shells, as multiples of the base cell
+        "distance_shells": [
+            (0.25, 3),    # quarter cell -> level 3
+            (0.80, 2),    # ~cell -> level 2
         ],
-        "near_wake_level": 2,          # 37.5mm near wake
-        "far_wake_level": 1,           # 75mm far wake
+        "near_wake_level": 2,
+        "far_wake_level": 1,
     },
     "standard": {
-        # Balanced — optimal for FSAE aero (~30-60 min on 32 cores, sweet spot: ~6-9M cells)
+        # Balanced — optimal for FSAE aero (~1-2 hrs on 32 cores, sweet spot: ~9-13M cells)
         "desc": "Balanced accuracy and speed for FSAE aero",
-        "cell_estimate": "~6-9M cells",
-        "n_cells_target": 7500000,
-        "runtime_estimate": "~30-60 min",
-        "base_cell_size": 0.10,        # 100mm background
+        "cell_estimate": "~9-13M cells",
+        "n_cells_target": 11000000,
+        "runtime_estimate": "~1-2 hrs",
+        "cells_per_length": 30,        # base cell = longest STL extent / 30
         "surface_level": [4, 5],       # 6.25mm bodywork, 3.125mm fine features
         "edge_level": 6,               # 1.56mm at sharp aero edges (wings/gurneys)
-        "n_layers": 5,
+        "n_layers": 3,
         "expansion_ratio": 1.2,
-        "first_layer_thickness": 0.3,
+        "y_plus_target": 40,
+        "ground_layers": True,
         "end_time": 1500,
         "write_interval": 500,
-        "maxGlobalCells": 18_000_000,
+        "maxGlobalCells": 20_000_000,
         "nCellsBetweenLevels": 2,      # 2 buffer cells (avoids massive 3D transition bloat)
         "resolveFeatureAngle": 35,     # Prevents general body curvature from ballooning to max level
         "nSolveIter": 200,
@@ -285,43 +289,47 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "nLayerIter": 50,
         "nRelaxIter_layers": 10,
         "slurm_time": "08:00:00",
-        # Conforming distance shells (lean transition around bodywork)
-        "distance_levels": [
-            (0.025, 4),   # 25mm → level 4 (6.25mm)
-            (0.080, 3),   # 80mm → level 3 (12.5mm)
+        "slurm_mem_per_cpu": "3G",
+        # Conforming distance shells, as multiples of the base cell
+        "distance_shells": [
+            (0.25, 4),    # quarter cell -> level 4 (6.25mm at ~3m model)
+            (0.80, 3),    # ~cell -> level 3 (12.5mm)
         ],
-        "near_wake_level": 3,          # 12.5mm for rear wing vortex / diffuser
-        "far_wake_level": 1,           # 50mm for downstream transport (saves ~8M cells)
+        "near_wake_level": 3,          # rear wing vortex / diffuser
+        "far_wake_level": 1,           # downstream transport (saves cells)
     },
     "fine": {
-        # High resolution validation (~2-4 hours, ~12-16M cells)
-        "desc": "High-resolution validation quality",
-        "cell_estimate": "~12-16M cells",
-        "n_cells_target": 14000000,
-        "runtime_estimate": "~2-4 hrs",
-        "base_cell_size": 0.08,        # 80mm background
-        "surface_level": [5, 6],       # 2.5mm - 1.25mm surface cells
-        "edge_level": 7,               # 0.625mm at edges
-        "n_layers": 6,
-        "expansion_ratio": 1.15,
-        "first_layer_thickness": 0.2,
-        "end_time": 3000,
+        # Wall-resolved validation (~4-6 hours, ~20-28M cells on 32 cores)
+        "desc": "High-resolution wall-resolved validation quality",
+        "cell_estimate": "~20-28M cells",
+        "n_cells_target": 24000000,
+        "runtime_estimate": "~4-6 hrs",
+        "cells_per_length": 37.5,      # base cell = longest STL extent / 37.5
+        "surface_level": [4, 5],       # keep tangential cells, layers carry the near-wall work
+        "edge_level": 7,               # 0.68mm at sharp aero edges (trailing edges, gurneys)
+        "n_layers": 12,
+        "expansion_ratio": 1.2,
+        "y_plus_target": 1,
+        "ground_layers": True,
+        "end_time": 2500,
         "write_interval": 500,
-        "maxGlobalCells": 30_000_000,
+        "maxGlobalCells": 32_000_000,
         "nCellsBetweenLevels": 2,
         "resolveFeatureAngle": 30,
         "nSolveIter": 300,
         "nFeatureSnapIter": 20,
         "nLayerIter": 50,
         "nRelaxIter_layers": 10,
-        "slurm_time": "12:00:00",
-        "distance_levels": [
-            (0.020, 5),   # 20mm → level 5
-            (0.060, 4),   # 60mm → level 4
-            (0.150, 3),   # 150mm → level 3
+        "slurm_time": "14:00:00",
+        "slurm_mem_per_cpu": "4G",
+        # Conforming distance shells, as multiples of the base cell
+        "distance_shells": [
+            (0.25, 5),    # 2.5mm at ~3m model
+            (0.75, 4),    # 6.25mm
+            (1.90, 3),    # 12.5mm
         ],
-        "near_wake_level": 4,          # 5mm near wake
-        "far_wake_level": 2,           # 20mm far wake
+        "near_wake_level": 4,
+        "far_wake_level": 2,
     },
 }
 
@@ -368,15 +376,26 @@ def compute_mesh_params(cfg: dict[str, Any], combined_bounds: BBox) -> dict[str,
 
     user_mesh = cfg.get("mesh_params", {})
 
-    # Base cell: respect user override or use fidelity preset
-    base_cell = user_mesh.get("base_cell_size", preset["base_cell_size"])
+    # Base cell: explicit metres, or derived from the model length and
+    # the preset's cells_per_length so resolution scales with the geometry.
+    base_cell_override = user_mesh.get("base_cell_size")
+    if base_cell_override in (None, "auto"):
+        cells_per_length = float(user_mesh.get("cells_per_length", preset.get("cells_per_length", 30)))
+        base_cell = max_extent / max(cells_per_length, 1.0)
+    else:
+        base_cell = float(base_cell_override)
 
     # Surface and edge levels: respect user override or use fidelity preset
     surface_level = user_mesh.get("surface_level", preset["surface_level"])
     edge_level = user_mesh.get("edge_level", preset["edge_level"])
 
-    # Distance-based refinement shells
-    distance_levels = user_mesh.get("distance_levels", preset["distance_levels"])
+    # Distance-based refinement shells. Users specify metres via
+    # distance_levels; presets store base-cell multiples via distance_shells.
+    if "distance_levels" in user_mesh:
+        distance_levels = user_mesh["distance_levels"]
+    else:
+        shells = user_mesh.get("distance_shells", preset.get("distance_shells", []))
+        distance_levels = [(round(float(d) * base_cell, 6), int(l)) for d, l in shells]
     if distance_levels and isinstance(distance_levels[0], list):
         distance_levels = [tuple(x) for x in distance_levels]
 
@@ -518,5 +537,130 @@ def compute_mesh_params(cfg: dict[str, Any], combined_bounds: BBox) -> dict[str,
         if key in user_mesh:
             result[key] = user_mesh[key]
     return result
+
+
+# ============================================================
+# NEAR-WALL SIZING — y+ target to absolute layer thickness
+# ============================================================
+
+def estimate_friction_velocity(U: float, nu: float, length: float) -> float:
+    """Flat-plate friction velocity estimate for external aero.
+
+    Uses the turbulent Prandtl-Schlichting correlation above Re=5e5 and the
+    Blasius laminar correlation below. Expect roughly ±30-40% versus the
+    local u_tau on a real vehicle, so treat the result as a design target
+    and verify against the yPlus function object after solving.
+    """
+    if U <= 0 or nu <= 0:
+        return 0.0
+    length = max(float(length), 1e-3)
+    Re = U * length / nu
+    if Re > 5.0e5:
+        Cf = 0.026 * Re ** (-1.0 / 7.0)
+    else:
+        Cf = 1.328 / math.sqrt(Re)
+    return U * math.sqrt(0.5 * Cf)
+
+
+def first_layer_height(y_plus: float, u_tau: float, nu: float) -> float:
+    """First cell thickness whose centre sits at the requested y+."""
+    if u_tau <= 0 or nu <= 0:
+        return 0.0
+    return 2.0 * float(y_plus) * nu / u_tau
+
+
+def resolve_layers(
+    cfg: dict[str, Any],
+    combined_bounds: BBox,
+    *,
+    explicit_first_layer: bool = False,
+    explicit_min_thickness: bool = False,
+) -> dict[str, Any]:
+    """Resolve layers.y_plus_target into an absolute snappy layer spec.
+
+    Writes the resolved values (relativeSizes false, metre-valued
+    first_layer_thickness and min_thickness) back into cfg["layers"] and
+    stores provenance under layers["_resolved"] (ignored by deep_merge on
+    reload). No-op when no target is set or when the user supplied an
+    explicit first_layer_thickness, in which case the latter wins.
+    """
+    layers = cfg.setdefault("layers", {})
+    nu = float(cfg.get("fluid", {}).get("nu", 0.0) or 0.0)
+    U = float(cfg.get("flow", {}).get("velocity", 0.0) or 0.0)
+    flow_idx, _ = flow_axis_index_sign(cfg)
+    extent = float(combined_bounds[1][flow_idx]) - float(combined_bounds[0][flow_idx])
+    u_tau = estimate_friction_velocity(U, nu, extent)
+
+    target = layers.get("y_plus_target")
+    first = layers.get("first_layer_thickness")
+    relative = bool(layers.get("relativeSizes", True))
+    n_layers = int(layers.get("n_layers", 0) or 0)
+    ratio = float(layers.get("expansion_ratio", 1.0) or 1.0)
+
+    def _stack(t: float) -> float:
+        if n_layers >= 1 and ratio > 1.0:
+            return t * (ratio ** n_layers - 1) / (ratio - 1)
+        return t * max(n_layers, 1)
+
+    resolved: dict[str, Any] = {
+        "u_tau": u_tau,
+        "y_plus_target": target,
+        "y_plus_effective": None,
+        "first_layer_thickness": None,
+        "min_thickness": None,
+        "stack": None,
+        "mode": "relative" if relative else "absolute",
+        "clamped": False,
+    }
+    layers["_resolved"] = resolved
+
+    if target is not None and not explicit_first_layer:
+        try:
+            target_value = float(target)
+        except (TypeError, ValueError):
+            return resolved
+        if not math.isfinite(target_value) or target_value <= 0 or u_tau <= 0:
+            return resolved
+        thickness = first_layer_height(target_value, u_tau, nu)
+
+        mesh = cfg.get("mesh_params", {})
+        base_cell = float(mesh.get("base_cell_size", 0.0) or 0.0)
+        levels = mesh.get("surface_level") or [0, 0]
+        ratio_limit = float(layers.get("maxFaceThicknessRatio", 0.5) or 0.5)
+        if base_cell > 0 and len(levels) == 2:
+            cell_fine = base_cell / (2 ** int(levels[1]))
+            thickness_max = ratio_limit * cell_fine
+            if thickness > thickness_max:
+                thickness = thickness_max
+                resolved["clamped"] = True
+
+        layers["relativeSizes"] = False
+        layers["first_layer_thickness"] = thickness
+        if not explicit_min_thickness:
+            layers["min_thickness"] = thickness
+        resolved.update(
+            y_plus_effective=thickness * u_tau / (2.0 * nu),
+            first_layer_thickness=thickness,
+            min_thickness=layers.get("min_thickness"),
+            stack=_stack(thickness),
+            mode="absolute",
+        )
+        return resolved
+
+    if not relative and first is not None:
+        try:
+            thickness = float(first)
+        except (TypeError, ValueError):
+            return resolved
+        if math.isfinite(thickness) and thickness > 0:
+            resolved.update(
+                y_plus_effective=(thickness * u_tau / (2.0 * nu)) if u_tau > 0 else None,
+                first_layer_thickness=thickness,
+                min_thickness=layers.get("min_thickness"),
+                stack=_stack(thickness),
+                mode="absolute",
+            )
+    return resolved
+
 
 

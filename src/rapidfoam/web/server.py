@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import logging
 import math
@@ -25,11 +26,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from rapidfoam import __version__
-from rapidfoam.config import DEFAULT_CONFIG, deep_merge, find_stl, validate
+from rapidfoam.config import DEFAULT_CONFIG, deep_merge, find_stl, user_set, validate
 from rapidfoam.geometry import (
     FIDELITY_PRESETS,
     compute_domain_box,
+    compute_mesh_params,
     flow_axis_index_sign,
+    resolve_layers,
     up_axis_index,
 )
 from rapidfoam.postproc.forces import (
@@ -169,6 +172,28 @@ def merge_config_with_defaults(raw_cfg: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def layer_preview(merged: dict[str, Any], raw_cfg: dict[str, Any], bounds: tuple) -> dict[str, Any]:
+    """Resolve the near-wall layer spec for the Studio preview without mutating it."""
+    preview_cfg = copy.deepcopy(merged)
+    preset = FIDELITY_PRESETS.get(preview_cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"])
+    layers = preview_cfg.setdefault("layers", {})
+    if not user_set(raw_cfg, "layers", "n_layers"):
+        layers["n_layers"] = preset.get("n_layers", layers.get("n_layers"))
+    if not user_set(raw_cfg, "layers", "expansion_ratio"):
+        layers["expansion_ratio"] = preset.get("expansion_ratio", layers.get("expansion_ratio"))
+    explicit_first = user_set(raw_cfg, "layers", "first_layer_thickness")
+    if not explicit_first and not user_set(raw_cfg, "layers", "y_plus_target"):
+        if preset.get("y_plus_target") is not None:
+            layers["y_plus_target"] = preset["y_plus_target"]
+    preview_cfg["mesh_params"] = compute_mesh_params(preview_cfg, bounds)
+    return resolve_layers(
+        preview_cfg,
+        bounds,
+        explicit_first_layer=explicit_first,
+        explicit_min_thickness=user_set(raw_cfg, "layers", "min_thickness"),
+    )
+
+
 # -------------------------------------------------------------
 # Pydantic Request Models
 # -------------------------------------------------------------
@@ -263,6 +288,7 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
             "bounds": {"min": bounds_tuple[0], "max": bounds_tuple[1]},
             "auto_symmetry_plane": round(center_lateral, 4),
             "lateral_axis": "xyz"[lateral_idx],
+            "layer_preview": layer_preview(merged, cfg, bounds_tuple),
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -354,6 +380,24 @@ async def api_config_defaults() -> dict[str, Any]:
                 "cell_estimate": p.get("cell_estimate", ""),
                 "n_cells_target": p.get("n_cells_target", 0),
                 "runtime_estimate": p.get("runtime_estimate", ""),
+                "layers": {
+                    "y_plus_target": p.get("y_plus_target"),
+                    "n_layers": p.get("n_layers"),
+                    "expansion_ratio": p.get("expansion_ratio"),
+                    "ground_layers": p.get("ground_layers", False),
+                },
+                "mesh": {
+                    "cells_per_length": p.get("cells_per_length"),
+                    "base_cell_size": p.get("base_cell_size"),
+                    "surface_level": p.get("surface_level"),
+                    "edge_level": p.get("edge_level"),
+                    "near_wake_level": p.get("near_wake_level"),
+                    "far_wake_level": p.get("far_wake_level"),
+                },
+                "solver": {
+                    "end_time": p.get("end_time"),
+                    "write_interval": p.get("write_interval"),
+                },
             }
             for name, p in FIDELITY_PRESETS.items()
         },

@@ -280,7 +280,7 @@ snapControls
 
 addLayersControls
 {{
-    relativeSizes       true;
+    relativeSizes       {bool_str(layers.get("relativeSizes", True))};
     layers
     {{
 {chr(10).join(layer_lines)}
