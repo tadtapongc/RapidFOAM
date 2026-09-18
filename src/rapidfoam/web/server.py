@@ -899,11 +899,53 @@ def _latest_vector(cols: dict[str, list[float]], kind: str) -> Optional[list[flo
     return None
 
 
+def _average_vector(
+    cols: dict[str, list[float]], kind: str, window: int = 200
+) -> Optional[list[float]]:
+    """Trailing-window mean of a force/moment vector component (same basis as KPIs)."""
+    keys = [f"{kind}_{axis}" for axis in ("x", "y", "z")]
+    averages: list[float] = []
+    for key in keys:
+        series = cols.get(key)
+        if not series:
+            return None
+        size = min(window, len(series))
+        window_values = [v for v in series[-size:] if v is not None and math.isfinite(v)]
+        if not window_values:
+            return None
+        averages.append(round(sum(window_values) / len(window_values), 4))
+    return averages
+
+
+def _load_stl_files(cfg_path: Optional[str], case_dir: Optional[Path] = None) -> list[str]:
+    """Return the STL basenames referenced by a case config (for 3D telemetry)."""
+    for candidate in (cfg_path, str(case_dir / "case_config.json") if case_dir else None):
+        if not candidate:
+            continue
+        try:
+            with open(candidate, encoding="utf-8") as handle:
+                cfg_obj = json.load(handle)
+        except Exception:
+            continue
+        files = cfg_obj.get("stl_files")
+        if isinstance(files, (list, tuple)) and files:
+            return [Path(str(name)).name for name in files]
+    return []
+
+
 def _load_reference_quantities(
     cfg_path: Optional[str], case_dir: Optional[Path] = None
 ) -> dict[str, Any]:
-    rho, velocity, aref, lref = 1.225, 0.0, 1.0, 1.0
-    cofr: list[float] = [0.0, 0.0, 0.0]
+    # Fallbacks mirror the universal defaults (DEFAULT_CONFIG), not magic numbers.
+    default_fluid = DEFAULT_CONFIG.get("fluid", {})
+    default_refs = DEFAULT_CONFIG.get("force_refs", {})
+    rho = float(default_fluid.get("rho", 1.225))
+    velocity = 0.0
+    aref = float(default_refs.get("Aref", 1.0))
+    lref = float(default_refs.get("lRef", 1.0))
+    cofr: list[float] = list(default_refs.get("CofR", [0.0, 0.0, 0.0]))
+    ground_plane: Optional[float] = None
+    ground_clearance: Optional[float] = None
     cfg_obj: Optional[dict[str, Any]] = None
     for candidate in (cfg_path, str(case_dir / "case_config.json") if case_dir else None):
         if not candidate:
@@ -918,11 +960,15 @@ def _load_reference_quantities(
         try:
             rho = float(cfg_obj.get("fluid", {}).get("rho", rho) or rho)
             velocity = float(cfg_obj.get("flow", {}).get("velocity", 0.0) or 0.0)
-            aref = float(cfg_obj.get("force_refs", {}).get("Aref", 1.0) or 1.0)
-            lref = float(cfg_obj.get("force_refs", {}).get("lRef", 1.0) or 1.0)
+            aref = float(cfg_obj.get("force_refs", {}).get("Aref", aref) or aref)
+            lref = float(cfg_obj.get("force_refs", {}).get("lRef", lref) or lref)
             raw_cofr = cfg_obj.get("force_refs", {}).get("CofR")
             if isinstance(raw_cofr, (list, tuple)) and len(raw_cofr) == 3:
                 cofr = [float(v) for v in raw_cofr]
+            if cfg_obj.get("ground_plane") is not None:
+                ground_plane = float(cfg_obj["ground_plane"])
+            if cfg_obj.get("ground_clearance") is not None:
+                ground_clearance = float(cfg_obj["ground_clearance"])
         except Exception:
             pass
     return {
@@ -931,6 +977,8 @@ def _load_reference_quantities(
         "Aref": round(aref, 6),
         "lRef": round(lref, 6),
         "CofR": [round(v, 6) for v in cofr],
+        "ground_plane": ground_plane,
+        "ground_clearance": ground_clearance,
         "dynamic_pressure": round(0.5 * rho * velocity * velocity, 4),
     }
 
@@ -953,6 +1001,103 @@ def _cross(a: tuple[float, ...], b: tuple[float, ...]) -> tuple[float, float, fl
     )
 
 
+def _lateral_axis_index(drag_idx: int, df_idx: int) -> int:
+    """Index of the axis normal to the symmetry plane (neither flow nor up)."""
+    for index in range(3):
+        if index != drag_idx and index != df_idx:
+            return index
+    return 0
+
+
+def _project_force_columns_for_symmetry(
+    cols: dict[str, list[float]], lateral_idx: int
+) -> dict[str, list[float]]:
+    """Full-car forces: in-plane components double, the normal component cancels."""
+    return {
+        name: [
+            0.0 if "xyz".index(name[-1]) == lateral_idx else value * 2.0
+            for value in values
+        ]
+        for name, values in cols.items()
+    }
+
+
+def _project_moment_columns_for_symmetry(
+    cols: dict[str, list[float]], lateral_idx: int
+) -> dict[str, list[float]]:
+    """Full-car moments (pseudovector): about-normal doubles, others cancel."""
+    return {
+        name: [
+            value * 2.0 if "xyz".index(name[-1]) == lateral_idx else 0.0
+            for value in values
+        ]
+        for name, values in cols.items()
+    }
+
+
+# Force/moment coefficients perpendicular to the symmetry plane cancel for the
+# projected full car (side force, roll, yaw).
+_SYMMETRY_ZERO_COEFFICIENTS = {"Cs", "Cs(f)", "Cs(r)", "CmRoll", "CmYaw"}
+
+
+def _project_coefficient_columns_for_symmetry(
+    cols: dict[str, list[float]],
+) -> dict[str, list[float]]:
+    """Full-car coefficients: in-plane double, out-of-plane (side/roll/yaw) cancel."""
+    return {
+        name: (
+            [0.0 for _ in values]
+            if name in _SYMMETRY_ZERO_COEFFICIENTS
+            else [value * 2.0 for value in values]
+        )
+        for name, values in cols.items()
+    }
+
+
+def _shift_moment_columns(
+    moment_cols: dict[str, list[float]],
+    force_cols: dict[str, list[float]],
+    cofr_run: list[float],
+    cofr_effective: list[float],
+) -> dict[str, list[float]]:
+    """Translate stored moments from the run-time CofR to an effective CofR.
+
+    Uses the parallel-axis theorem ``M_new = M_old + (CofR_run - CofR_new) x F``
+    so the moment vector, pressure/viscous breakdown, and coefficients all agree
+    on the same reference point.
+    """
+    if not moment_cols:
+        return moment_cols
+    delta = (
+        cofr_run[0] - cofr_effective[0],
+        cofr_run[1] - cofr_effective[1],
+        cofr_run[2] - cofr_effective[2],
+    )
+    if delta == (0.0, 0.0, 0.0):
+        return moment_cols
+
+    shifted = {name: list(values) for name, values in moment_cols.items()}
+    for kind in ("total", "pressure", "viscous"):
+        mkeys = [f"{kind}_x", f"{kind}_y", f"{kind}_z"]
+        fkeys = mkeys if kind != "total" else ["total_x", "total_y", "total_z"]
+        if not all(key in moment_cols for key in mkeys):
+            continue
+        if not all(key in force_cols for key in fkeys):
+            continue
+        count = min(len(moment_cols[mkeys[0]]), len(force_cols[fkeys[0]]))
+        for index in range(count):
+            force = (
+                force_cols[fkeys[0]][index],
+                force_cols[fkeys[1]][index],
+                force_cols[fkeys[2]][index],
+            )
+            offset = _cross(delta, force)
+            shifted[mkeys[0]][index] += offset[0]
+            shifted[mkeys[1]][index] += offset[1]
+            shifted[mkeys[2]][index] += offset[2]
+    return shifted
+
+
 def _compute_coefficients(
     force_cols: dict[str, list[float]],
     moment_cols: dict[str, list[float]],
@@ -964,15 +1109,12 @@ def _compute_coefficients(
     velocity: float,
     aref: float,
     lref: float,
-    cofr_run: list[float],
-    cofr_effective: list[float],
 ) -> dict[str, list[float]]:
-    """Normalize raw force/moment histories with configurable reference values.
+    """Normalize force/moment histories with the effective reference values.
 
-    Moments from the run are taken about ``cofr_run``; when ``cofr_effective``
-    differs, they are shifted with ``M_new = M_old + (r_run - r_new) x F``.
-    Axes follow the same conventions as the OpenFOAM ``forceCoeffs`` function
-    object (dragging/lift directions plus pitch/roll/yaw about drag/lift/side).
+    ``moment_cols`` must already be expressed about the effective CofR (see
+    :func:`_shift_moment_columns`). Axes follow the OpenFOAM ``forceCoeffs``
+    conventions (drag/lift directions plus pitch/roll/yaw about drag/lift/side).
     """
     dynamic_pressure = 0.5 * rho * velocity * velocity
     if dynamic_pressure <= 0 or aref <= 0:
@@ -990,13 +1132,6 @@ def _compute_coefficients(
     has_moment = all(
         key in moment_cols and len(moment_cols[key]) == count for key in force_keys
     )
-    shift = None
-    if has_moment and list(cofr_run) != list(cofr_effective):
-        shift = (
-            cofr_run[0] - cofr_effective[0],
-            cofr_run[1] - cofr_effective[1],
-            cofr_run[2] - cofr_effective[2],
-        )
 
     q_area = dynamic_pressure * aref
     q_area_length = q_area * lref if lref > 0 else 0.0
@@ -1023,13 +1158,6 @@ def _compute_coefficients(
                 moment_cols["total_y"][index],
                 moment_cols["total_z"][index],
             )
-            if shift:
-                offset = _cross(shift, force)
-                moment = (
-                    moment[0] + offset[0],
-                    moment[1] + offset[1],
-                    moment[2] + offset[2],
-                )
             series["CmPitch"].append(_dot(moment, pitch_axis) / q_area_length)
             series["CmRoll"].append(_dot(moment, roll_axis) / q_area_length)
             series["CmYaw"].append(_dot(moment, yaw_axis) / q_area_length)
@@ -1066,7 +1194,9 @@ async def api_telemetry_forces(
     )
     is_sym = is_symmetry_case(config_path=cfg_path, case_dir=case_dir)
     sym_scale = 2.0 if is_sym else 1.0
+    lateral_idx = _lateral_axis_index(drag_idx, df_idx)
     reference = _load_reference_quantities(cfg_path, case_dir)
+    stl_files = _load_stl_files(cfg_path, case_dir)
     cofr_run = list(reference.get("CofR", [0.0, 0.0, 0.0]))
 
     # Post-run reference overrides from the inline telemetry editor. Blank
@@ -1152,15 +1282,17 @@ async def api_telemetry_forces(
             "run_command": "./Allrun.parallel",
             "message": f"No force.dat found yet for case '{case_name}'. Current stage: {case_stage}.",
             "reference": reference,
+            "stl_files": stl_files,
             "coefficients": {"available": False, "summary": {}, "series": {}},
             "components": {"available": False},
         }
 
-    # Apply symmetry doubling to full-car projections.
+    # Apply symmetry projection to full-car values: drag/downforce (in-plane)
+    # double, while side force (normal to the symmetry plane) cancels.
     drags = [v * sym_scale for v in raw_drags]
     downforces = [v * sym_scale for v in raw_downforces]
-    if sym_scale != 1.0 and force_cols:
-        force_cols = {name: [v * sym_scale for v in values] for name, values in force_cols.items()}
+    if is_sym and force_cols:
+        force_cols = _project_force_columns_for_symmetry(force_cols, lateral_idx)
 
     converged, d_pct, f_pct, d_avg, f_avg = check_convergence(drags, downforces)
     ld_ratio = abs(f_avg / d_avg) if abs(d_avg) > 1e-3 else 0.0
@@ -1168,8 +1300,9 @@ async def api_telemetry_forces(
     # ---- Components (force + moment), scaled to full-car if symmetric ----
     moment_times, moment_rows, moment_header = parse_tabular_dat(moment_segments)
     moment_cols = normalize_component_columns(moment_rows, moment_header)
-    if sym_scale != 1.0 and moment_cols:
-        moment_cols = {name: [v * sym_scale for v in values] for name, values in moment_cols.items()}
+    if is_sym and moment_cols:
+        moment_cols = _project_moment_columns_for_symmetry(moment_cols, lateral_idx)
+    moment_cols = _shift_moment_columns(moment_cols, force_cols, cofr_run, cofr_effective)
 
     # ---- Coefficients (solver output, recomputed, or config fallback) ----
     coeff_times, coeff_rows, coeff_header = parse_tabular_dat(coeff_segments)
@@ -1188,16 +1321,14 @@ async def api_telemetry_forces(
             reference["velocity"],
             reference["Aref"],
             reference["lRef"],
-            cofr_run,
-            cofr_effective,
         )
     if recomputed:
         coeff_cols = recomputed
         coeff_times = times
         coeff_source = "recomputed"
     elif coeff_cols:
-        if sym_scale != 1.0:
-            coeff_cols = {name: [v * sym_scale for v in values] for name, values in coeff_cols.items()}
+        if is_sym:
+            coeff_cols = _project_coefficient_columns_for_symmetry(coeff_cols)
     else:
         velocity_ref = reference["velocity"]
         dynamic_pressure_area = (
@@ -1237,6 +1368,11 @@ async def api_telemetry_forces(
             "pressure": _latest_vector(force_cols, "pressure"),
             "viscous": _latest_vector(force_cols, "viscous"),
         },
+        "average": {
+            "total": _average_vector(force_cols, "total"),
+            "pressure": _average_vector(force_cols, "pressure"),
+            "viscous": _average_vector(force_cols, "viscous"),
+        },
     }
     moment_components = {
         "available": bool(moment_cols),
@@ -1246,6 +1382,11 @@ async def api_telemetry_forces(
             "total": _latest_vector(moment_cols, "total"),
             "pressure": _latest_vector(moment_cols, "pressure"),
             "viscous": _latest_vector(moment_cols, "viscous"),
+        },
+        "average": {
+            "total": _average_vector(moment_cols, "total"),
+            "pressure": _average_vector(moment_cols, "pressure"),
+            "viscous": _average_vector(moment_cols, "viscous"),
         },
     }
 
@@ -1264,6 +1405,7 @@ async def api_telemetry_forces(
         "downforce_pct": round(f_pct, 3),
         "ld_ratio": round(ld_ratio, 3),
         "reference": reference,
+        "stl_files": stl_files,
         "series": {
             "iterations": [times[i] for i in sub_indices],
             "drag": [round(drags[i], 3) for i in sub_indices],
@@ -1779,20 +1921,24 @@ async def api_list_cases() -> list[dict[str, Any]]:
             if not cfg_file.is_file():
                 cfg_file = PROJECT_ROOT / "configs" / f"{case_name}.json"
 
-            fidelity = "standard"
-            velocity = "16.67"
-            flow_dir = "-z"
-            n_procs = 32
+            default_flow = DEFAULT_CONFIG.get("flow", {})
+            default_velocity = float(default_flow.get("velocity", 16.67))
+            default_direction = default_flow.get("direction", "-z")
+            default_nprocs = int(DEFAULT_CONFIG.get("parallel", {}).get("n_procs", 32))
+            fidelity = DEFAULT_CONFIG.get("fidelity", "standard")
+            velocity = f"{default_velocity:.1f}"
+            flow_dir = default_direction
+            n_procs = default_nprocs
             stl_name = "--"
             if cfg_file.is_file():
                 try:
                     with open(cfg_file, encoding="utf-8") as cf:
                         cd = json.load(cf)
-                        fidelity = cd.get("fidelity", "standard")
-                        v_val = cd.get("flow", {}).get("velocity", 16.67)
+                        fidelity = cd.get("fidelity", fidelity)
+                        v_val = cd.get("flow", {}).get("velocity", default_velocity)
                         velocity = f"{v_val:.1f}" if isinstance(v_val, (int, float)) else str(v_val)
-                        flow_dir = cd.get("flow", {}).get("direction", "-z")
-                        n_procs = cd.get("parallel", {}).get("n_procs", 32)
+                        flow_dir = cd.get("flow", {}).get("direction", default_direction)
+                        n_procs = cd.get("parallel", {}).get("n_procs", default_nprocs)
                         stls = cd.get("stl_files", [])
                         if stls:
                             stl_name = Path(stls[0]).name

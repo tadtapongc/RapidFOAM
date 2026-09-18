@@ -871,6 +871,8 @@ class TestWebAPI(unittest.TestCase):
         shifted = asyncio.run(api_telemetry_forces(case_name, cofr="0,0.5,0"))
         # (0,-0.5,0) x (0,-50,-20) = (10, 0, 0); q=50, A=1, lRef=1 -> CmPitch = 0.2
         self.assertAlmostEqual(shifted["coefficients"]["summary"]["CmPitch"]["current"], 0.2, places=4)
+        # The displayed moment vector must also be shifted to the effective CofR.
+        self.assertEqual(shifted["components"]["moment"]["latest"]["total"], [10.0, 0.0, 0.0])
 
         with self.assertRaises(HTTPException) as ctx:
             asyncio.run(api_telemetry_forces(case_name, cofr="1,2"))
@@ -920,6 +922,87 @@ class TestWebAPI(unittest.TestCase):
         # downforce = -(-100) * 2 = 200 N; drag = -(-40) * 2 = 80 N
         self.assertAlmostEqual(res["downforce_avg"], 200.0, places=1)
         self.assertAlmostEqual(res["drag_avg"], 80.0, places=1)
+
+    def test_symmetry_projection_cancels_out_of_plane(self):
+        """Half-car symmetry cancels side force and roll/yaw for the full car."""
+        case_name = "test_case_sym_projection"
+        case_dir = Path("cases") / case_name
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        coeff_dir = case_dir / "postProcessing" / "forceCoeffs" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        coeff_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": case_name,
+            "flow": {"velocity": 10.0},
+            "fluid": {"rho": 1.0},
+            "force_refs": {"Aref": 1.0, "lRef": 1.0, "CofR": [0.0, 0.0, 0.0]},
+            "domain_faces": {"-x": "symmetry", "+x": "farField", "-y": "ground",
+                             "+y": "farField", "+z": "inlet", "-z": "outlet"},
+        }))
+        force_lines = [
+            "# Time total_x total_y total_z pressure_x pressure_y pressure_z "
+            "viscous_x viscous_y viscous_z\n"
+        ]
+        moment_lines = list(force_lines)
+        coeff_lines = [
+            "# Force and moment coefficients\n",
+            "# Time Cd Cd(f) Cd(r) Cl Cl(f) Cl(r) CmPitch CmRoll CmYaw Cs Cs(f) Cs(r)\n",
+        ]
+        for i in range(1, 25):
+            force_lines.append(f"{i} 10 -50 -20 10 -50 -20 0 0 0\n")
+            moment_lines.append(f"{i} 5 2 3 5 2 3 0 0 0\n")
+            coeff_lines.append(f"{i} 0.4 0.45 -0.05 1.0 1.1 -0.1 2.0 0.3 0.2 0.1 0.15 -0.05\n")
+        (forces_dir / "force.dat").write_text("".join(force_lines))
+        (forces_dir / "moment.dat").write_text("".join(moment_lines))
+        (coeff_dir / "coefficient.dat").write_text("".join(coeff_lines))
+
+        res = asyncio.run(api_telemetry_forces(case_name))
+        self.assertTrue(res["is_symmetry"])
+        # Lateral (x) force cancels; in-plane forces double.
+        self.assertEqual(res["components"]["force"]["latest"]["total"], [0.0, -100.0, -40.0])
+        # Pitch moment (about lateral x) doubles; roll/yaw cancel.
+        self.assertEqual(res["components"]["moment"]["latest"]["total"], [10.0, 0.0, 0.0])
+
+        summary = res["coefficients"]["summary"]
+        self.assertEqual(res["coefficients"]["source"], "forceCoeffs")
+        self.assertAlmostEqual(summary["Cd"]["current"], 0.8, places=5)
+        self.assertAlmostEqual(summary["Cl"]["current"], 2.0, places=5)
+        self.assertAlmostEqual(summary["CmPitch"]["current"], 4.0, places=5)
+        self.assertAlmostEqual(summary["Cs"]["current"], 0.0, places=5)
+        self.assertAlmostEqual(summary["CmRoll"]["current"], 0.0, places=5)
+        self.assertAlmostEqual(summary["CmYaw"]["current"], 0.0, places=5)
+
+    def test_telemetry_component_window_average(self):
+        """Component vectors expose a trailing-window average matching the KPI basis."""
+        case_name = "test_case_avg_components"
+        case_dir = Path("cases") / case_name
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": case_name,
+            "flow": {"velocity": 10.0},
+            "fluid": {"rho": 1.0},
+            "force_refs": {"Aref": 1.0},
+            "domain_faces": {"-x": "farField", "+x": "farField", "-y": "ground",
+                             "+y": "farField", "+z": "inlet", "-z": "outlet"},
+        }))
+        rows = [
+            "# Time total_x total_y total_z pressure_x pressure_y pressure_z "
+            "viscous_x viscous_y viscous_z\n"
+        ]
+        for i in range(1, 101):
+            rows.append(f"{i} 0 0 {-i} 0 0 {-i} 0 0 0\n")
+        (forces_dir / "force.dat").write_text("".join(rows))
+
+        res = asyncio.run(api_telemetry_forces(case_name))
+        self.assertFalse(res["is_symmetry"])
+        self.assertEqual(res["components"]["force"]["latest"]["total"], [0.0, 0.0, -100.0])
+        self.assertEqual(res["components"]["force"]["average"]["total"], [0.0, 0.0, -50.5])
+        self.assertAlmostEqual(res["drag_avg"], 50.5, places=2)
 
     def test_telemetry_solver_diagnostics(self):
         """Solver-health endpoint reports continuity, linear effort, timing, and ETA."""
@@ -973,6 +1056,32 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(sorted(rows), [1.0, 2.0])
         self.assertAlmostEqual(rows[2.0]["execution_time"], 8.0)
         self.assertAlmostEqual(rows[1.0]["execution_time"], 4.0)
+
+    def test_telemetry_includes_stl_files(self):
+        """Telemetry payload exposes STL basenames for the 3D aero-load view."""
+        case_name = "test_case_stl_files"
+        case_dir = Path("cases") / case_name
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": case_name,
+            "stl_files": ["some/path/wing.STL", "rear.stl"],
+            "flow": {"velocity": 16.67},
+            "domain_faces": {"-x": "farField", "+x": "farField", "-y": "ground",
+                             "+y": "farField", "+z": "inlet", "-z": "outlet"},
+        }))
+        rows = [
+            "# Time total_x total_y total_z pressure_x pressure_y pressure_z "
+            "viscous_x viscous_y viscous_z\n"
+        ]
+        for i in range(1, 10):
+            rows.append(f"{i} 0 -50 -20 0 -50 -20 0 0 0\n")
+        (forces_dir / "force.dat").write_text("".join(rows))
+
+        res = asyncio.run(api_telemetry_forces(case_name))
+        self.assertEqual(res["stl_files"], ["wing.STL", "rear.stl"])
 
     def test_telemetry_export_csv(self):
         """CSV export includes force history and aligned coefficient columns."""
