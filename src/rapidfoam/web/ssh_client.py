@@ -41,6 +41,30 @@ def _synchronized(method):
     return wrapper
 
 
+# Delimiters used by read_remote_bundle to frame each file in one SSH stream.
+FILE_BEGIN = "__RAPIDFOAM_FILE_BEGIN__"
+FILE_END = "__RAPIDFOAM_FILE_END__"
+
+
+def _parse_marked_bundle(text: str) -> dict[str, str]:
+    """Split a ``read_remote_bundle`` stream into ``{path: content}``."""
+    files: dict[str, str] = {}
+    current: Optional[str] = None
+    buffer: list[str] = []
+    for line in text.splitlines():
+        if line.startswith(FILE_BEGIN):
+            current = line[len(FILE_BEGIN):]
+            buffer = []
+        elif line.startswith(FILE_END):
+            if current is not None:
+                files[current] = "\n".join(buffer)
+            current = None
+            buffer = []
+        elif current is not None:
+            buffer.append(line)
+    return files
+
+
 class ClusterSSHClient:
     """Manages an SSH/SFTP session to the OpenFOAM compute cluster."""
 
@@ -375,6 +399,46 @@ class ClusterSSHClient:
         except Exception as exc:
             log.warning("Could not read remote file %s: %s", remote_path, exc)
             return ""
+
+    def read_remote_bundle(
+        self,
+        specs: list[tuple[str, Optional[int]]],
+        timeout: float = 30.0,
+    ) -> dict[str, str]:
+        """Read many remote files/globs in a *single* SSH command.
+
+        Batching avoids one round-trip per file, which dominates remote
+        telemetry latency. Glob patterns are relative to the remote repo path.
+
+        Args:
+            specs: list of ``(glob_pattern, tail_lines)``. ``tail_lines=None``
+                reads the whole file; otherwise only the last N lines.
+
+        Returns:
+            Mapping of matched relative path -> file content (marker headers
+            stripped). Empty when disconnected or no matches.
+        """
+        if not self.is_connected or not specs:
+            return {}
+
+        segments: list[str] = []
+        for pattern, tail_lines in specs:
+            if tail_lines:
+                cat_cmd = f'tail -n {max(1, int(tail_lines))} "$f"'
+            else:
+                cat_cmd = 'cat "$f"'
+            segments.append(
+                f'for f in {pattern}; do '
+                f'if [ -f "$f" ]; then '
+                f'printf "{FILE_BEGIN}%s\\n" "$f"; {cat_cmd}; '
+                f'printf "\\n{FILE_END}\\n"; '
+                f"fi; done"
+            )
+        cmd = f"cd {shlex.quote(self.remote_repo_path)} 2>/dev/null; " + " ; ".join(segments)
+        code, out, _ = self.run_command(cmd, timeout=timeout)
+        if code != 0 or not out:
+            return {}
+        return _parse_marked_bundle(out)
 
     @_synchronized
     def get_slurm_queue(self, username: Optional[str] = None) -> list[dict[str, str]]:

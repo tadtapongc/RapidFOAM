@@ -14,6 +14,7 @@ import shlex
 import shutil
 import sys
 import threading
+import time
 import webbrowser
 from collections import deque
 from datetime import datetime
@@ -813,23 +814,64 @@ def _read_text_files(paths: list[Path]) -> list[str]:
     return segments
 
 
-async def _read_remote_dat_segments(case_dir: str, subdir: str, filename: str) -> list[str]:
-    """Read every ``<time>/<filename>`` under a remote postProcessing subdir."""
-    base = f"{case_dir}/postProcessing/{subdir}"
-    cmd = f"ls -1 {shlex.quote(base)} 2>/dev/null | sort -n"
-    code, out, _ = await asyncio.to_thread(ssh_client.run_command, cmd, timeout=5)
-    segments: list[str] = []
-    if code != 0 or not out.strip():
-        return segments
-    for entry in out.strip().splitlines():
-        entry = entry.strip()
-        if re.match(r"^[0-9.]+$", entry):
-            content = await asyncio.to_thread(
-                ssh_client.read_remote_text, f"{base}/{entry}/{filename}"
-            )
-            if content:
-                segments.append(content)
-    return segments
+async def _read_remote_bundle(specs: list[tuple[str, Optional[int]]]) -> dict[str, str]:
+    """Read many remote files with a single SSH command (see read_remote_bundle)."""
+    if not ssh_client.is_connected or not specs:
+        return {}
+    try:
+        return await asyncio.to_thread(ssh_client.read_remote_bundle, specs)
+    except Exception as exc:
+        log.warning("Remote bundle read failed: %s", exc)
+        return {}
+
+
+def _sorted_segments(bundle: dict[str, str], suffix: str) -> list[str]:
+    """Select bundle entries ending with ``suffix``, ordered by time-directory."""
+    paths = [path for path in bundle if path.endswith(suffix)]
+    paths.sort(key=_time_dir_key)
+    return [bundle[path] for path in paths]
+
+
+def _time_dir_key(path: str) -> float:
+    try:
+        return float(Path(path).parent.name)
+    except ValueError:
+        return 0.0
+
+
+# Short-lived cache so the forces/residuals/solver endpoints share one remote
+# read per poll instead of issuing three separate SSH command batches.
+_remote_telemetry_cache: dict[str, tuple[float, dict[str, str]]] = {}
+_remote_telemetry_lock = threading.Lock()
+_REMOTE_TELEMETRY_TTL = 2.5
+
+
+def _remote_telemetry_key(case_name: str) -> str:
+    return f"{ssh_client.host}|{ssh_client.remote_repo_path}|{case_name}"
+
+
+async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
+    """Read every telemetry file for a case in one SSH command (cached ~2.5s)."""
+    if not ssh_client.is_connected:
+        return {}
+    key = _remote_telemetry_key(case_name)
+    now = time.monotonic()
+    with _remote_telemetry_lock:
+        cached = _remote_telemetry_cache.get(key)
+        if cached and now - cached[0] < _REMOTE_TELEMETRY_TTL:
+            return cached[1]
+
+    bundle = await _read_remote_bundle([
+        (f"cases/{case_name}/postProcessing/forces/*/force.dat", None),
+        (f"cases/{case_name}/postProcessing/forces/*/moment.dat", None),
+        (f"cases/{case_name}/postProcessing/forceCoeffs/*/coefficient.dat", None),
+        (f"cases/{case_name}/postProcessing/residuals/*/solverInfo.dat", None),
+        (f"cases/{case_name}/postProcessing/residuals/*/residuals.dat", None),
+        (f"cases/{case_name}/log.simpleFoam", 20000),
+    ])
+    with _remote_telemetry_lock:
+        _remote_telemetry_cache[key] = (now, bundle)
+    return bundle
 
 
 def _subsample_indices(count: int, max_pts: int = 400) -> list[int]:
@@ -1059,15 +1101,10 @@ async def api_telemetry_forces(
     coeff_segments: list[str] = []
 
     if ssh_client.is_connected:
-        remote_case_dir = f"{ssh_client.remote_repo_path}/cases/{case_name}"
-        try:
-            force_segments = await _read_remote_dat_segments(remote_case_dir, "forces", "force.dat")
-            moment_segments = await _read_remote_dat_segments(remote_case_dir, "forces", "moment.dat")
-            coeff_segments = await _read_remote_dat_segments(
-                remote_case_dir, "forceCoeffs", "coefficient.dat"
-            )
-        except Exception as exc:
-            log.warning("Remote force telemetry read failed for %s: %s", case_name, exc)
+        bundle = await _read_remote_telemetry(case_name)
+        force_segments = _sorted_segments(bundle, "/force.dat")
+        moment_segments = _sorted_segments(bundle, "/moment.dat")
+        coeff_segments = _sorted_segments(bundle, "/coefficient.dat")
 
     if not force_segments and local_case.is_dir():
         force_segments = _read_text_files(find_force_files(local_case))
@@ -1485,31 +1522,21 @@ async def api_telemetry_residuals(case_name: str) -> dict[str, Any]:
 
     # 1. Check remote cluster first if connected
     if ssh_client.is_connected:
-        find_cmd = (
-            f"cd {shlex.quote(ssh_client.remote_repo_path)} && "
-            f"find cases/{shlex.quote(case_name)}/postProcessing/residuals "
-            f"\\( -name 'solverInfo.dat' -o -name 'residuals.dat' \\) 2>/dev/null | sort -V"
+        bundle = await _read_remote_telemetry(case_name)
+        solverinfo = _sorted_segments(bundle, "/solverInfo.dat") or _sorted_segments(
+            bundle, "/residuals.dat"
         )
-        code, out, _ = await asyncio.to_thread(ssh_client.run_command, find_cmd, timeout=5)
-        if code == 0 and out.strip():
-            remote_files = [f.strip() for f in out.strip().splitlines() if f.strip()]
-            if remote_files:
-                target_path = f"{ssh_client.remote_repo_path}/{remote_files[-1]}"
-                cat_code, content, _ = await asyncio.to_thread(
-                    ssh_client.run_command, f"cat {shlex.quote(target_path)}", timeout=10
-                )
-                if cat_code == 0 and content.strip():
-                    rows = parse_solver_info_text(content)
+        if solverinfo:
+            rows = parse_solver_info_text("\n".join(solverinfo))
 
-        # Fallback to grep on remote log.simpleFoam if no solverInfo.dat
+        # Fallback to the solver log if no solverInfo.dat is present
         if not rows:
-            grep_cmd = (
-                f"cd {shlex.quote(ssh_client.remote_repo_path)} && "
-                f"grep -E 'Time = |Solving for ' cases/{shlex.quote(case_name)}/log.simpleFoam 2>/dev/null | tail -n 5000"
+            log_text = next(
+                (value for path, value in bundle.items() if path.endswith("/log.simpleFoam")),
+                "",
             )
-            code, out, _ = await asyncio.to_thread(ssh_client.run_command, grep_cmd, timeout=10)
-            if code == 0 and out.strip():
-                rows = parse_residuals_from_log(out)
+            if log_text:
+                rows = parse_residuals_from_log(log_text)
 
     # 2. Check local case directory if no rows yet
     local_case = PROJECT_ROOT / "cases" / case_name
@@ -1606,11 +1633,11 @@ async def api_telemetry_solver(case_name: str) -> dict[str, Any]:
 
     content = ""
     if ssh_client.is_connected:
-        remote_log = f"{ssh_client.remote_repo_path}/cases/{case_name}/log.simpleFoam"
-        cmd = f"tail -n 50000 {shlex.quote(remote_log)} 2>/dev/null"
-        code, out, _ = await asyncio.to_thread(ssh_client.run_command, cmd, timeout=10)
-        if code == 0 and out.strip():
-            content = out
+        bundle = await _read_remote_telemetry(case_name)
+        content = next(
+            (value for path, value in bundle.items() if path.endswith("/log.simpleFoam")),
+            "",
+        )
 
     local_case = PROJECT_ROOT / "cases" / case_name
     if not content and local_case.is_dir():

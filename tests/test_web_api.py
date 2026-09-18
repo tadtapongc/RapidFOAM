@@ -34,7 +34,9 @@ from rapidfoam.web.server import (
     merge_config_with_defaults,
     ssh_client,
 )
+from rapidfoam.web import server as web_server
 from rapidfoam.web.ssh_client import ClusterSSHClient
+from rapidfoam.web.ssh_client import FILE_BEGIN, FILE_END, _parse_marked_bundle
 from rapidfoam.postproc.forces import is_symmetry_case
 
 
@@ -63,6 +65,10 @@ class TestWebAPI(unittest.TestCase):
     def tearDownClass(cls):
         if getattr(cls, "created_stl", False) and cls.sample_stl.exists():
             cls.sample_stl.unlink(missing_ok=True)
+
+    def setUp(self):
+        # Remote telemetry is cached briefly; never leak state across tests.
+        web_server._remote_telemetry_cache.clear()
 
     def test_saved_cluster_config(self):
         """Test retrieving cached cluster config with password redacted."""
@@ -1044,8 +1050,86 @@ class TestWebAPI(unittest.TestCase):
         finally:
             shutil.rmtree(case_dir, ignore_errors=True)
 
-    def test_remote_residuals_find_command_no_processor_dirs(self):
-        """Test that remote find residuals command does not query processor* subdirectories."""
+    def test_parse_marked_bundle(self):
+        """The batching stream marker parser recovers each file's content."""
+        text = (
+            f"{FILE_BEGIN}cases/a/postProcessing/forces/0/force.dat\n"
+            "# Time total_x total_y total_z\n1 0 -1 -2\n"
+            f"\n{FILE_END}\n"
+            f"{FILE_BEGIN}cases/a/log.simpleFoam\nTime = 1\n"
+            f"\n{FILE_END}\n"
+        )
+        files = _parse_marked_bundle(text)
+        self.assertEqual(
+            set(files),
+            {"cases/a/postProcessing/forces/0/force.dat", "cases/a/log.simpleFoam"},
+        )
+        self.assertIn("1 0 -1 -2", files["cases/a/postProcessing/forces/0/force.dat"])
+        self.assertIn("Time = 1", files["cases/a/log.simpleFoam"])
+
+    def test_read_remote_bundle_single_command(self):
+        """read_remote_bundle reads all specs with one SSH command."""
+        c = ClusterSSHClient()
+        c.remote_repo_path = "/repo"
+        captured = []
+
+        def mock_run(cmd, timeout=30.0):
+            captured.append(cmd)
+            out = f"{FILE_BEGIN}cases/x/postProcessing/forces/0/force.dat\nrow1\n{FILE_END}\n"
+            return (0, out, "")
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(c, "run_command", side_effect=mock_run):
+                res = c.read_remote_bundle([
+                    ("cases/x/postProcessing/forces/*/force.dat", None),
+                    ("cases/x/log.simpleFoam", 100),
+                ])
+        self.assertEqual(len(captured), 1)
+        self.assertIn("tail -n 100", captured[0])
+        self.assertEqual(res["cases/x/postProcessing/forces/0/force.dat"], "row1")
+
+    def test_remote_forces_single_batched_command(self):
+        """Force telemetry reads force.dat, moment.dat and coefficient.dat in one command."""
+        captured = []
+
+        def mock_run(cmd, timeout=30.0):
+            captured.append(cmd)
+            return (0, "", "")
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(ClusterSSHClient, "run_command", side_effect=mock_run):
+                asyncio.run(api_telemetry_forces("test_case"))
+
+        self.assertEqual(len(captured), 1, "force telemetry should use a single SSH command")
+        self.assertIn("postProcessing/forces", captured[0])
+        self.assertIn("forceCoeffs", captured[0])
+
+    def test_remote_telemetry_cache_shares_reads(self):
+        """The three telemetry endpoints share a single remote read within the TTL."""
+        captured = []
+
+        def mock_run(cmd, timeout=30.0):
+            captured.append(cmd)
+            out = (
+                f"{FILE_BEGIN}cases/cache_case/postProcessing/forces/0/force.dat\n"
+                "# Time total_x total_y total_z pressure_x pressure_y pressure_z "
+                "viscous_x viscous_y viscous_z\n"
+                "1 0 -10 -5 0 -10 -5 0 0 0\n"
+                f"{FILE_END}\n"
+            )
+            return (0, out, "")
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(ClusterSSHClient, "run_command", side_effect=mock_run):
+                forces = asyncio.run(api_telemetry_forces("cache_case"))
+                asyncio.run(api_telemetry_residuals("cache_case"))
+                asyncio.run(api_telemetry_solver("cache_case"))
+
+        self.assertEqual(len(captured), 1, "telemetry endpoints must share one remote read")
+        self.assertTrue(forces["has_data"])
+
+    def test_remote_residuals_batched_command_no_processor_dirs(self):
+        """Remote residual reads are batched into one command without processor* globs."""
         captured_cmds = []
 
         def mock_run_command(cmd, timeout=5):
@@ -1055,10 +1139,12 @@ class TestWebAPI(unittest.TestCase):
         with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
             with patch.object(ClusterSSHClient, "run_command", side_effect=mock_run_command):
                 asyncio.run(api_telemetry_residuals("test_case"))
-                find_cmds = [c for c in captured_cmds if "find cases/" in c]
-                self.assertTrue(len(find_cmds) > 0)
-                self.assertNotIn("processor*", find_cmds[0])
-                self.assertIn("cases/test_case/postProcessing/residuals", find_cmds[0])
+
+        self.assertEqual(len(captured_cmds), 1, "residual telemetry should use a single SSH command")
+        cmd = captured_cmds[0]
+        self.assertNotIn("processor*", cmd)
+        self.assertIn("cases/test_case/postProcessing/residuals", cmd)
+        self.assertIn("log.simpleFoam", cmd)
 
     def test_slurm_job_matching_no_short_prefix_collision(self):
         """Test that a short SLURM job name ('EV') does not match a longer case name ('EV_TUR50')."""
