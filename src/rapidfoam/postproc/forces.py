@@ -46,25 +46,57 @@ def load_axis_config(
     return drag_idx, drag_sign, df_idx, df_sign, drag_axis, df_axis
 
 
-def is_symmetry_case(config_path: str | None = None, case_dir: str | Path | None = None) -> bool:
-    """Check if case is configured with a symmetry boundary."""
-    cfg = None
-    base = Path(case_dir) if case_dir else Path(".")
-    if config_path and Path(config_path).exists():
-        with open(config_path, encoding="utf-8") as f:
-            cfg = json.load(f)
-    elif (base / "case_config.json").exists():
-        with open(base / "case_config.json", encoding="utf-8") as f:
-            cfg = json.load(f)
-    elif Path("case_config.json").exists():
-        with open("case_config.json", encoding="utf-8") as f:
-            cfg = json.load(f)
+def _load_case_configs(config_path: str | None, base: Path) -> list[dict]:
+    """Load every candidate case config, most authoritative first."""
+    candidates = []
+    if config_path:
+        candidates.append(Path(config_path))
+    candidates.append(base / "case_config.json")
+    candidates.append(Path("case_config.json"))
 
-    if cfg:
-        faces = cfg.get("domain_faces", {})
+    configs: list[dict] = []
+    seen: set[Path] = set()
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved in seen or not path.is_file():
+            continue
+        seen.add(resolved)
+        try:
+            with open(path, encoding="utf-8") as f:
+                configs.append(json.load(f))
+        except Exception:
+            continue
+    return configs
+
+
+def is_symmetry_case(config_path: str | None = None, case_dir: str | Path | None = None) -> bool:
+    """Check if case is configured with a symmetry boundary.
+
+    A config that omits ``domain_faces`` still generates a half-model because
+    the face assignment defaults the lateral-min face to the symmetry patch.
+    Such cases must be detected as symmetric even without an explicit face list.
+    The mesh boundary is used as a final authoritative fallback.
+    """
+    base = Path(case_dir) if case_dir else Path(".")
+    configs = _load_case_configs(config_path, base)
+
+    explicit_faces_seen = False
+    for cfg in configs:
+        faces = cfg.get("domain_faces")
+        if not faces:
+            continue
+        explicit_faces_seen = True
         symmetry_name = cfg.get("patches", {}).get("symmetry", "symmetry")
         if any(v == symmetry_name or "symmetry" in str(v).lower() for v in faces.values()):
             return True
+
+    # No explicit domain_faces anywhere: the generator derives a symmetry face,
+    # so the case is a half-model by default.
+    if configs and not explicit_faces_seen:
+        return True
 
     # Fallback: check constant/polyMesh/boundary
     boundary_file = base / "constant" / "polyMesh" / "boundary"

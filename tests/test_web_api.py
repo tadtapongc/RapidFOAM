@@ -35,6 +35,7 @@ from rapidfoam.web.server import (
     ssh_client,
 )
 from rapidfoam.web.ssh_client import ClusterSSHClient
+from rapidfoam.postproc.forces import is_symmetry_case
 
 
 class TestWebAPI(unittest.TestCase):
@@ -868,6 +869,51 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             asyncio.run(api_telemetry_forces(case_name, cofr="1,2"))
         self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_is_symmetry_case_defaults_to_half_model(self):
+        """A config without domain_faces still generates a half-model and must double."""
+        case_dir = Path("cases") / "test_sym_default_unit"
+        case_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        (case_dir / "case_config.json").write_text(json.dumps({"case_name": "x"}))
+        self.assertTrue(is_symmetry_case(case_dir=case_dir))
+
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": "x",
+            "domain_faces": {
+                "-x": "farField", "+x": "farField", "-y": "ground",
+                "+y": "farField", "+z": "inlet", "-z": "outlet",
+            },
+        }))
+        self.assertFalse(is_symmetry_case(case_dir=case_dir))
+
+    def test_telemetry_doubles_without_domain_faces(self):
+        """Telemetry doubles forces for a minimal config that defaults to symmetry."""
+        case_name = "test_case_default_symmetry"
+        case_dir = Path("cases") / case_name
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": case_name,
+            "flow": {"velocity": 16.67, "direction": "-z", "ground": True},
+        }))
+
+        rows = [
+            "# Time total_x total_y total_z pressure_x pressure_y pressure_z "
+            "viscous_x viscous_y viscous_z\n"
+        ]
+        for i in range(1, 25):
+            rows.append(f"{i} 0 -100 -40 0 -100 -40 0 0 0\n")
+        (forces_dir / "force.dat").write_text("".join(rows))
+
+        res = asyncio.run(api_telemetry_forces(case_name))
+        self.assertTrue(res["is_symmetry"])
+        # downforce = -(-100) * 2 = 200 N; drag = -(-40) * 2 = 80 N
+        self.assertAlmostEqual(res["downforce_avg"], 200.0, places=1)
+        self.assertAlmostEqual(res["drag_avg"], 80.0, places=1)
 
     def test_telemetry_solver_diagnostics(self):
         """Solver-health endpoint reports continuity, linear effort, timing, and ETA."""

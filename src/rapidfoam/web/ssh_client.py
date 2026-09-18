@@ -652,11 +652,24 @@ if cases_dir.is_dir():
                         drag_idx, drag_sign = parse_axis(outputs["drag_axis"])
                     if "downforce_axis" in outputs:
                         df_idx, df_sign = parse_axis(outputs["downforce_axis"])
-                    faces = cd.get("domain_faces", {})
-                    if any("symmetry" in str(v).lower() for v in faces.values()):
+                    faces = cd.get("domain_faces")
+                    if not faces:
+                        # No explicit faces: the generator defaults the lateral-min
+                        # face to symmetry, so the case is a half-model.
+                        is_sym = True
+                    elif any("symmetry" in str(v).lower() for v in faces.values()):
                         is_sym = True
             except Exception:
                 pass
+
+        if not is_sym:
+            boundary = d / "constant" / "polyMesh" / "boundary"
+            if boundary.is_file():
+                try:
+                    if re.search(r"\btype\s+symmetry(?:Plane)?\s*;", boundary.read_text(encoding="utf-8", errors="replace")):
+                        is_sym = True
+                except Exception:
+                    pass
 
         sym_scale = 2.0 if is_sym else 1.0
 
