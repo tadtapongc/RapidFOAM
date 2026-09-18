@@ -5,15 +5,29 @@ All notable changes to RapidFOAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-09-18
 
 ### Added
 - **y+ boundary-layer targeting**: fidelity presets carry a near-wall `y_plus_target` that is converted to an absolute first-layer thickness (flat-plate friction-velocity estimate) and written with `relativeSizes false`; `layers.relativeSizes` selects absolute metres versus fractions of the local cell size.
 - **FSAE preset refresh**: geometry-relative base cell (`cells_per_length`), wall-function layer counts (fast 2, standard 3), wall-resolved fine tier (12 layers, y+ 1), distance shells as base-cell multiples, refreshed cell/runtime/SLURM estimates; ground layers are opt-in with a clearance guard and a two-layer cap.
 - **Studio near-wall controls**: Auto (preset y+) mode with y+ target, ground-layer selector, live layer preview, and server-driven override placeholders.
+- **Full aerodynamic telemetry**: force/moment component breakdown (total/pressure/viscous) and `Cd, Cl, Cs, CmPitch, CmRoll, CmYaw` (with Cd/Cl/Sc KPIs), coefficient chart, and CSV/JSON export.
+- **Post-run reference editor**: recompute coefficients from raw forces with ad-hoc `Aref`, `lRef`, `rho`, `velocity` and `CofR` (parallel-axis shift) without re-running the solver.
+- **Solver-health diagnostics**: continuity, linear-solver effort, execution time, iteration rate and ETA from `log.simpleFoam`, plus the ±0.5% convergence band on the force chart and per-panel help popovers.
+- **3D aero-load view**: force/moment vectors (resultant and components) anchored at `CofR` on the geometry, with an `i/j/k` readout.
+- **2D aero-load side view**: projected STL silhouette with drag/downforce arrows, pitch arc, per-element show/hide toggles and an optional center-of-pressure marker.
+- **Aero balance / center of pressure**: front/rear aero load split and CoP location computed from wheelbase and static front weight percent.
+- **Rapidamente branding**: team logo as the navbar mark and favicon, with Space Grotesk / Barlow Semi Condensed brand typography.
+
+### Changed
+- **Symmetry correctness**: half-model cases now project per-component (in-plane forces and the pitch moment double; side force and roll/yaw cancel) instead of a blanket ×2.
+- **Representative values**: 2D/3D vectors, the breakdown table and aero balance use the trailing-window average, matching the KPI cards.
+- **Cluster telemetry performance**: remote reads are batched into a single SSH command and shared through a short-lived cache.
+- **Telemetry UX**: switching the monitored case clears and guards the view so stale data never appears.
 
 ### Fixed
 - Boundary layers silently extruded at ~0 thickness when an absolute first-layer thickness was combined with snappy's default relative sizing; layer stack versus `minThickness` is now validated.
+- Symmetry detection now treats a config without explicit `domain_faces` as a half-model (matching the generator) and falls back to the mesh boundary.
 
 ## [1.1.0] - 2026-09-17
 
