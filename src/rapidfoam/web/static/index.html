@@ -907,6 +907,59 @@
         </div>
       </div>
 
+      <!-- 2D Aero Load (Side View) -->
+      <div class="panel telemetry-2d-panel" data-help="aero2d">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h3>2D Aero Load — Side View</h3>
+            <span class="panel-subtitle" id="telemetry-2d-status">Drag · Downforce · Pitch moment at CofR</span>
+          </div>
+          <div class="panel-header-actions">
+            <label class="td-scale">Scale <input type="range" id="td2-scale" min="0.2" max="3" step="0.1" value="1"></label>
+          </div>
+        </div>
+        <div class="telemetry-2d-viewport" id="telemetry-2d-viewport">
+          <canvas id="telemetry-2d-canvas"></canvas>
+          <div class="chart-empty-overlay" id="telemetry-2d-empty" style="display: none;">
+            <div class="empty-icon">📐</div>
+            <div class="empty-title">2D Geometry Unavailable</div>
+            <div class="empty-desc" id="telemetry-2d-empty-desc">Load a case whose STL is available in stl/ to draw the side view.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3D Aero Load -->
+      <div class="panel telemetry-3d-panel collapsed" id="telemetry-3d-panel" data-help="aero3d">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h3>3D Aero Load</h3>
+            <span class="panel-subtitle" id="telemetry-3d-status">Force &amp; moment vectors at CofR</span>
+          </div>
+          <div class="panel-header-actions">
+            <button class="btn btn-ghost btn-xs" id="td-toggle" title="Show or hide the 3D view">Show 3D</button>
+            <label class="td-toggle td-3d-only"><input type="checkbox" id="td-force" checked> Force</label>
+            <label class="td-toggle td-3d-only"><input type="checkbox" id="td-moment" checked> Moment</label>
+            <label class="td-toggle td-3d-only"><input type="checkbox" id="td-components"> Components</label>
+            <label class="td-scale td-3d-only">Scale <input type="range" id="td-scale" min="0.2" max="3" step="0.1" value="1"></label>
+            <button class="btn btn-ghost btn-xs td-3d-only" id="td-fit" title="Fit model">Fit</button>
+            <button class="btn btn-ghost btn-xs td-3d-only" id="td-reset" title="Reset view">Reset</button>
+          </div>
+        </div>
+        <div class="telemetry-3d-vector">
+          <span class="tdv-line" id="td-vector-force">F = -- i -- j -- k  N</span>
+          <span class="tdv-line" id="td-vector-moment">M = -- i -- j -- k  N·m</span>
+        </div>
+        <div class="telemetry-3d-viewport-wrap" id="telemetry-3d-body">
+          <div class="telemetry-3d-viewport" id="telemetry-viewer-container">
+            <div class="chart-empty-overlay" id="telemetry-3d-empty" style="display: none;">
+              <div class="empty-icon">🧭</div>
+              <div class="empty-title">3D Geometry Unavailable</div>
+              <div class="empty-desc" id="telemetry-3d-empty-desc">Load a case whose STL is available in stl/ to see 3D force vectors.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Live Charts Grid -->
       <div class="charts-grid">
         <div class="panel" data-help="forces">
@@ -1266,8 +1319,10 @@
   <div class="toast-container" id="toast-container"></div>
 
   <!-- Application Scripts -->
-  <script src="js/viewer.js"></script>
-  <script src="js/charts.js"></script>
-  <script src="js/app.js"></script>
+<script src="js/viewer.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/telemetry2d.js"></script>
+<script src="js/telemetry3d.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>

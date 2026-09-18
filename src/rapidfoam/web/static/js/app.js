@@ -70,7 +70,7 @@ const TELEMETRY_HELP = {
   },
   'component-table': {
     title: 'Force & Moment Breakdown',
-    html: `<p>Numerical version of the breakdown chart for the final step.</p>
+    html: `<p>Numerical version of the breakdown chart, averaged over the trailing 200 iterations (same basis as the KPI cards).</p>
       <ul>
         <li>Rows: <code>Fx, Fy, Fz</code> (N) and <code>Mx, My, Mz</code> (N·m).</li>
         <li><code>Total = Pressure + Viscous</code>.</li>
@@ -94,6 +94,26 @@ const TELEMETRY_HELP = {
         <li><strong>Tail Latest</strong> refreshes; <strong>Copy</strong> copies the console text.</li>
       </ul>`,
   },
+  aero3d: {
+    title: '3D Aero Load',
+    html: `<p>Force and moment vectors drawn on the model at <strong>CofR</strong>.</p>
+      <ul>
+        <li><strong>Force</strong> — resultant aerodynamic force; <strong>Components</strong> splits it into drag / downforce / side on your configured axes.</li>
+        <li><strong>Moment</strong> — resultant moment about CofR (pitch/roll/yaw).</li>
+        <li><strong>Scale</strong> adjusts arrow length; values are proportional (auto-normalized to the model size).</li>
+        <li>Arrows and vectors use the case's CAD axes, so they align with the geometry.</li>
+      </ul>`,
+  },
+  aero2d: {
+    title: '2D Aero Load (Side View)',
+    html: `<p>Free-body side view of the car at <strong>CofR</strong>.</p>
+      <ul>
+        <li><strong>Drag</strong> (red, horizontal) and <strong>Downforce</strong> (cyan, vertical) arrows on the flow–vertical plane.</li>
+        <li><strong>Pitch</strong> (violet arc) — the pitching moment about the lateral axis [N·m]; direction shows the rotation sense.</li>
+        <li>The silhouette is the actual STL projected onto the side plane; the blue dot is CofR.</li>
+        <li>Forces are full-car (symmetry-corrected). Use <strong>Scale</strong> to resize the arrows.</li>
+      </ul>`,
+  },
 };
 
 class CFDApp {
@@ -106,6 +126,20 @@ class CFDApp {
     this.telemetryRefOverrides = {};
     this.telemetryRequestId = 0;
     this.telemetryInFlight = false;
+    this.telemetryViewer = null;
+    this.telemetryLayer = null;
+    this.telemetry3dCase = null;
+    this.telemetry3dModelSize = 1;
+    this._telemetry3dPayload = null;
+    this._telemetry3dStlFiles = [];
+    this.telemetry3dExpanded = false;
+    try {
+      this.telemetry3dExpanded = window.localStorage.getItem('rapidfoam.telemetry3d') === '1';
+    } catch (err) { /* storage unavailable */ }
+    this.telemetry2dView = null;
+    this.telemetry2dCase = null;
+    this._telemetry2dStlFiles = [];
+    this._telemetry2dGeomCache = new Map();
     this.archiveCases = [];
     this.currentArchiveFilter = 'all';
     this.archiveSearchTerm = '';
@@ -212,6 +246,8 @@ class CFDApp {
     this.bindSSHModal();
     this.bindTelemetryEvents();
     this.initTelemetryHelp();
+    this.applyTelemetry3DPanelState();
+    this.initTelemetry2D();
     this.bindCasesArchiveEvents();
 
     // 3. Load initial data from backend
@@ -255,11 +291,14 @@ class CFDApp {
         if (targetId === 'config-tab' && this.viewer) {
           setTimeout(() => this.viewer.onResize(), 50);
         } else if (targetId === 'telemetry-tab') {
+          if (this.telemetry3dExpanded) this.initTelemetryViewer();
           this.pollTelemetry();
           setTimeout(() => {
             ['forcesChart', 'coefficientsChart', 'componentsChart', 'residualsChart', 'solverHealthChart'].forEach((name) => {
               this.charts?.[name]?.resize();
             });
+            this.telemetryViewer?.onResize();
+            this.telemetry2dView?.resize();
           }, 60);
         } else if (targetId === 'cases-tab') {
           this.loadCasesArchive();
@@ -2259,6 +2298,27 @@ class CFDApp {
     document.getElementById('select-log-type')?.addEventListener('change', () => this.fetchLogTail());
     document.getElementById('btn-export-telemetry')?.addEventListener('click', () => this.exportTelemetry());
 
+    // 3D aero load controls
+    document.getElementById('td-toggle')?.addEventListener('click', () => {
+      this.telemetry3dExpanded = !this.telemetry3dExpanded;
+      try {
+        window.localStorage.setItem('rapidfoam.telemetry3d', this.telemetry3dExpanded ? '1' : '0');
+      } catch (err) { /* storage unavailable */ }
+      this.applyTelemetry3DPanelState();
+    });
+    ['td-force', 'td-moment', 'td-components'].forEach((id) => {
+      document.getElementById(id)?.addEventListener('change', () => this.refreshTelemetry3D());
+    });
+    document.getElementById('td-scale')?.addEventListener('input', () => this.refreshTelemetry3D());
+    document.getElementById('td-fit')?.addEventListener('click', () => this.telemetryViewer?.setViewAngle('iso', 'model'));
+    document.getElementById('td-reset')?.addEventListener('click', () => this.telemetryViewer?.resetCamera('model'));
+
+    // 2D aero load controls
+    document.getElementById('td2-scale')?.addEventListener('input', () => {
+      this.telemetry2dView?.setScale(parseFloat(this.getVal('td2-scale')) || 1);
+    });
+    window.addEventListener('resize', () => this.telemetry2dView?.resize());
+
     // Post-run reference editor
     document.getElementById('btn-toggle-ref-editor')?.addEventListener('click', () => {
       const body = document.getElementById('ref-editor-body');
@@ -2429,6 +2489,23 @@ class CFDApp {
     this.telemetryRequestId += 1;
     this.clearTelemetryRefOverrides();
     this.clearTelemetryView(caseName);
+
+    // Reset the 3D aero-load layer; geometry reloads with the next poll.
+    this.telemetry3dCase = null;
+    this._telemetry3dPayload = null;
+    if (this.telemetryLayer) this.telemetryLayer.clear();
+    if (this.telemetryViewer) this.telemetryViewer.clearSTLs();
+    this.setValText('telemetry-3d-status', 'Force & moment vectors at CofR');
+    const empty3d = document.getElementById('telemetry-3d-empty');
+    if (empty3d) empty3d.style.display = 'none';
+
+    // Reset the 2D side view; geometry reloads with the next poll.
+    this.telemetry2dCase = null;
+    this._telemetry2dStlFiles = [];
+    if (this.telemetry2dView) this.telemetry2dView.setGeometry(null);
+    this.setValText('telemetry-2d-status', 'Drag · Downforce · Pitch moment at CofR');
+    const empty2d = document.getElementById('telemetry-2d-empty');
+    if (empty2d) empty2d.style.display = 'none';
   }
 
   clearTelemetryRefOverrides() {
@@ -2459,6 +2536,8 @@ class CFDApp {
     this.setValText('ref-source-badge', 'Normalization: --');
     this.setValText('reference-conditions', 'ρ -- · U -- · Aref --');
     this.setValText('ref-effective-summary', 'Effective: ρ -- · V -- · Aref -- · lRef --');
+    this.setValText('td-vector-force', 'F = -- i -- j -- k  N');
+    this.setValText('td-vector-moment', 'M = -- i -- j -- k  N·m');
 
     const coeffTbody = document.getElementById('coeff-summary-tbody');
     if (coeffTbody) {
@@ -2488,6 +2567,279 @@ class CFDApp {
       const text = pill.querySelector('.pill-text');
       if (text) text.textContent = caseName ? `LOADING ${caseName}` : 'Awaiting Data';
     }
+  }
+
+  initTelemetry2D() {
+    if (this.telemetry2dView || typeof Aero2DView === 'undefined') return;
+    this.telemetry2dView = new Aero2DView('telemetry-2d-canvas');
+    this.telemetry2dView.setScale(parseFloat(this.getVal('td2-scale')) || 1);
+    this.telemetry2dView.resize();
+  }
+
+  ensureTelemetry2D(caseName, stlFiles) {
+    if (stlFiles) this._telemetry2dStlFiles = stlFiles;
+    if (!caseName) return;
+    if (this.telemetry2dCase === caseName) return;
+    this.telemetry2dCase = caseName;
+    if (!this.telemetry2dView) this.initTelemetry2D();
+
+    const cached = this._telemetry2dGeomCache.get(caseName);
+    if (cached) {
+      const empty = document.getElementById('telemetry-2d-empty');
+      if (empty) empty.style.display = 'none';
+      this.telemetry2dView?.setGeometry(cached);
+      return;
+    }
+    this.loadTelemetry2DGeometry(this._telemetry2dStlFiles || []);
+  }
+
+  async loadTelemetry2DGeometry(stlFiles) {
+    const requestedCase = this.telemetry2dCase;
+    const empty = document.getElementById('telemetry-2d-empty');
+    const desc = document.getElementById('telemetry-2d-empty-desc');
+    if (!stlFiles || stlFiles.length === 0 || typeof THREE === 'undefined') {
+      if (desc) desc.textContent = 'No STL files are recorded for this case.';
+      if (empty) empty.style.display = 'flex';
+      this.telemetry2dView?.setGeometry(null);
+      return;
+    }
+
+    const chunks = [];
+    let total = 0;
+    for (const name of stlFiles) {
+      if (this.telemetry2dCase !== requestedCase) return; // switched away mid-load
+      try {
+        const res = await fetch(`/api/stl/file/${encodeURIComponent(name)}`);
+        if (!res.ok) continue;
+        const buffer = await res.arrayBuffer();
+        const geometry = new THREE.STLLoader().parse(buffer);
+        const arr = geometry.attributes && geometry.attributes.position
+          ? geometry.attributes.position.array : null;
+        if (arr && arr.length) {
+          chunks.push(arr);
+          total += arr.length;
+        }
+      } catch (err) { /* skip unreadable STL */ }
+    }
+    if (this.telemetry2dCase !== requestedCase) return;
+    if (total === 0) {
+      if (desc) desc.textContent = 'Geometry is not available locally (cluster-only case).';
+      if (empty) empty.style.display = 'flex';
+      this.telemetry2dView?.setGeometry(null);
+      return;
+    }
+
+    const positions = new Float32Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      positions.set(chunk, offset);
+      offset += chunk.length;
+    }
+    // Cache parsed geometry per case (bounded) so revisiting is instant.
+    this._telemetry2dGeomCache.set(requestedCase, positions);
+    while (this._telemetry2dGeomCache.size > 4) {
+      const oldest = this._telemetry2dGeomCache.keys().next().value;
+      this._telemetry2dGeomCache.delete(oldest);
+    }
+    if (empty) empty.style.display = 'none';
+    this.telemetry2dView?.setGeometry(positions);
+  }
+
+  updateTelemetry2D(data) {
+    if (!this.telemetry2dView) return;
+    const comps = (data && data.components) || {};
+    const forceVec = (comps.force && (comps.force.average || comps.force.latest)) || null;
+    const momentVec = (comps.moment && (comps.moment.average || comps.moment.latest)) || null;
+    const ref = (data && data.reference) || {};
+
+    if (!comps.available || !forceVec || !forceVec.total) {
+      this.telemetry2dView.clear();
+      this.setValText('telemetry-2d-status', 'Drag · Downforce · Pitch moment at CofR');
+      return;
+    }
+
+    const dragVec = AeroVectorLayer.axisVector(data.drag_axis);
+    const dfVec = AeroVectorLayer.axisVector(data.downforce_axis);
+    this.telemetry2dView.setData({
+      force: forceVec.total,
+      moment: momentVec && momentVec.total ? momentVec.total : null,
+      cofr: ref.CofR || [0, 0, 0],
+      dragVec,
+      dfVec,
+      groundPlane: ref.ground_plane,
+      groundClearance: ref.ground_clearance,
+    });
+
+    const flowIdx = Math.max(0, dragVec.findIndex((v) => v !== 0));
+    const upIdx = Math.max(0, dfVec.findIndex((v) => v !== 0));
+    const force = forceVec.total;
+    this.setValText(
+      'telemetry-2d-status',
+      `Drag ${Math.abs(force[flowIdx]).toFixed(0)} N · Downforce ${Math.abs(force[upIdx]).toFixed(0)} N · avg`,
+    );
+  }
+
+  initTelemetryViewer() {
+    if (this.telemetryViewer || typeof STLViewer === 'undefined') return;
+    const container = document.getElementById('telemetry-viewer-container');
+    if (!container) return;
+    this.telemetryViewer = new STLViewer('telemetry-viewer-container');
+    if (!this.telemetryViewer.scene) {
+      this.telemetryViewer = null;
+      return;
+    }
+    // Clean scene: model + vectors only. Set flags directly to avoid touching
+    // the shared setup-tab badges/legend DOM ids.
+    this.telemetryViewer.showDomain = false;
+    if (this.telemetryViewer.domainBoxGroup) this.telemetryViewer.domainBoxGroup.visible = false;
+    this.telemetryViewer.showBounds = false;
+    if (this.telemetryViewer.bboxHelper) this.telemetryViewer.bboxHelper.visible = false;
+    this.telemetryViewer.showFlow = false;
+    if (this.telemetryViewer.flowArrow) this.telemetryViewer.flowArrow.visible = false;
+    this.telemetryViewer.showGround = false;
+    if (this.telemetryViewer.groundGrid) this.telemetryViewer.groundGrid.visible = false;
+    this.telemetryLayer = (typeof AeroVectorLayer !== 'undefined')
+      ? new AeroVectorLayer(this.telemetryViewer) : null;
+    this.telemetryViewer.onResize();
+  }
+
+  applyTelemetry3DPanelState() {
+    const panel = document.getElementById('telemetry-3d-panel');
+    const btn = document.getElementById('td-toggle');
+    if (panel) panel.classList.toggle('collapsed', !this.telemetry3dExpanded);
+    if (btn) btn.textContent = this.telemetry3dExpanded ? 'Hide 3D' : 'Show 3D';
+
+    if (this.telemetry3dExpanded) {
+      this.initTelemetryViewer();
+      const select = document.getElementById('telemetry-case-select');
+      const caseName = select ? select.value : '';
+      this.ensureTelemetry3D(caseName, this._telemetry3dStlFiles);
+      this.telemetryViewer?.onResize();
+      this.refreshTelemetry3D();
+    }
+  }
+
+  ensureTelemetry3D(caseName, stlFiles) {
+    if (stlFiles) this._telemetry3dStlFiles = stlFiles;
+    if (!caseName || typeof STLViewer === 'undefined') return;
+    if (!this.telemetry3dExpanded) return; // only build the viewer when shown
+    this.initTelemetryViewer();
+    if (!this.telemetryViewer) return;
+    if (this.telemetry3dCase === caseName) return;
+    this.telemetry3dCase = caseName;
+    this.loadTelemetryGeometry(this._telemetry3dStlFiles || []);
+  }
+
+  async loadTelemetryGeometry(stlFiles) {
+    if (!this.telemetryViewer) return;
+    const requestedCase = this.telemetry3dCase;
+    this.telemetryViewer.clearSTLs();
+    if (this.telemetryLayer) this.telemetryLayer.clear();
+    this._telemetry3dPayload = null;
+
+    const empty = document.getElementById('telemetry-3d-empty');
+    const desc = document.getElementById('telemetry-3d-empty-desc');
+
+    if (!stlFiles || stlFiles.length === 0) {
+      if (desc) desc.textContent = 'No STL files are recorded for this case.';
+      if (empty) empty.style.display = 'flex';
+      return;
+    }
+
+    let loaded = 0;
+    for (const name of stlFiles) {
+      if (this.telemetry3dCase !== requestedCase) return; // switched away mid-load
+      try {
+        const res = await fetch(`/api/stl/file/${encodeURIComponent(name)}`);
+        if (!res.ok) continue;
+        const buffer = await res.arrayBuffer();
+        if (this.telemetryViewer.addSTLFromArrayBuffer(buffer, name)) loaded += 1;
+      } catch (err) { /* skip unreadable STL */ }
+    }
+    if (this.telemetry3dCase !== requestedCase) return;
+
+    if (loaded === 0) {
+      if (desc) desc.textContent = 'Geometry is not available locally (cluster-only case).';
+      if (empty) empty.style.display = 'flex';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    this.telemetryViewer.setViewAngle('iso', 'model');
+
+    const box = this.telemetryViewer.getCombinedBoundingBox();
+    if (box) {
+      this.telemetry3dModelSize = Math.max(
+        box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2],
+      ) || 1;
+    }
+    if (this._telemetry3dPayload) {
+      this._telemetry3dPayload.modelSize = this.telemetry3dModelSize;
+      this.refreshTelemetry3D();
+    }
+  }
+
+  updateTelemetry3D(data) {
+    const comps = (data && data.components) || {};
+    const forceVec = (comps.force && (comps.force.average || comps.force.latest)) || null;
+    const momentVec = (comps.moment && (comps.moment.average || comps.moment.latest)) || null;
+    const ref = (data && data.reference) || {};
+
+    if (!comps.available || !forceVec || !forceVec.total) {
+      if (this.telemetryLayer) this.telemetryLayer.clear();
+      this._telemetry3dPayload = null;
+      this.setValText('telemetry-3d-status', 'Force & moment vectors at CofR');
+      this.setValText('td-vector-force', 'F = -- i -- j -- k  N');
+      this.setValText('td-vector-moment', 'M = -- i -- j -- k  N·m');
+      return;
+    }
+
+    const box = this.telemetryViewer ? this.telemetryViewer.getCombinedBoundingBox() : null;
+    if (box) {
+      this.telemetry3dModelSize = Math.max(
+        box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2],
+      ) || 1;
+    }
+
+    this._telemetry3dPayload = {
+      force: forceVec.total,
+      moment: momentVec && momentVec.total ? momentVec.total : null,
+      cofr: ref.CofR || [0, 0, 0],
+      dragVec: AeroVectorLayer.axisVector(data.drag_axis),
+      dfVec: AeroVectorLayer.axisVector(data.downforce_axis),
+      modelSize: this.telemetry3dModelSize,
+    };
+    this.refreshTelemetry3D();
+  }
+
+  refreshTelemetry3D() {
+    if (!this._telemetry3dPayload) return;
+    if (this.telemetryLayer) {
+      const show = {
+        force: this.getCheck('td-force'),
+        moment: this.getCheck('td-moment'),
+        components: this.getCheck('td-components'),
+      };
+      const scale = parseFloat(this.getVal('td-scale')) || 1;
+      this.telemetryLayer.update({ ...this._telemetry3dPayload, show, scale });
+    }
+
+    const f = this._telemetry3dPayload.force;
+    const m = this._telemetry3dPayload.moment;
+    const fMag = Math.hypot(f[0], f[1], f[2]);
+    const mMag = m ? Math.hypot(m[0], m[1], m[2]) : null;
+    this.setValText('telemetry-3d-status',
+      `avg · |F| ${fMag.toFixed(0)} N` + (mMag !== null ? ` · |M| ${mMag.toFixed(0)} N·m` : ''));
+    this.setValText('td-vector-force', `F = ${this.formatVector(f)}  N`);
+    this.setValText('td-vector-moment', `M = ${m ? this.formatVector(m) : '--'}  N·m`);
+  }
+
+  formatVector(vector) {
+    if (!Array.isArray(vector) || vector.length < 3) return '-- i -- j -- k';
+    const comp = (value) => {
+      const abs = Math.abs(value).toFixed(1);
+      return `${value < 0 ? '-' : '+'}${abs}`;
+    };
+    return `${comp(vector[0])} i ${comp(vector[1])} j ${comp(vector[2])} k`;
   }
 
   async pollTelemetry() {
@@ -2521,6 +2873,9 @@ class CFDApp {
         const res = await fetch(`/api/telemetry/forces?case_name=${encodeURIComponent(caseName)}${refQuery}`);
         const data = await res.json();
         if (isStale()) return;
+
+        this.ensureTelemetry3D(caseName, data.stl_files);
+        this.ensureTelemetry2D(caseName, data.stl_files);
 
         if (data.has_data) {
           if (forcesOverlay) forcesOverlay.style.display = 'none';
@@ -2572,8 +2927,8 @@ class CFDApp {
             if (componentsOverlay) componentsOverlay.style.display = compAvailable ? 'none' : 'flex';
             if (compAvailable) {
               this.charts.updateComponents(
-                data.components.force ? data.components.force.latest : null,
-                data.components.moment ? data.components.moment.latest : null,
+                data.components.force ? (data.components.force.average || data.components.force.latest) : null,
+                data.components.moment ? (data.components.moment.average || data.components.moment.latest) : null,
               );
             } else {
               this.charts.updateComponents(null, null);
@@ -2616,6 +2971,9 @@ class CFDApp {
             emptyAction.innerHTML = `<code>${data.run_command || `./Allrun.parallel  # In cases/${caseName}`}</code>`;
           }
         }
+
+        this.updateTelemetry3D(data);
+        this.updateTelemetry2D(data);
       } catch (err) {
         console.error('Forces telemetry poll failed:', err);
       }
@@ -2805,8 +3163,8 @@ class CFDApp {
             `<td class="monospace">${cell(latest.viscous)}</td></tr>`;
         }).join('');
       };
-      const html = buildRows(force.latest, { x: 'Fx', y: 'Fy', z: 'Fz' }, 'N') +
-        buildRows(moment.latest, { x: 'Mx', y: 'My', z: 'Mz' }, 'N·m');
+      const html = buildRows(force.average || force.latest, { x: 'Fx', y: 'Fy', z: 'Fz' }, 'N') +
+        buildRows(moment.average || moment.latest, { x: 'Mx', y: 'My', z: 'Mz' }, 'N·m');
       compTbody.innerHTML = html || '<tr><td colspan="4" class="text-center text-muted">No component data</td></tr>';
     }
 
