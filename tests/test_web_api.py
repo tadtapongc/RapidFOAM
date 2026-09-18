@@ -1083,6 +1083,68 @@ class TestWebAPI(unittest.TestCase):
         res = asyncio.run(api_telemetry_forces(case_name))
         self.assertEqual(res["stl_files"], ["wing.STL", "rear.stl"])
 
+    def test_telemetry_aero_balance_cop(self):
+        """CoP + front/rear aero split from force, moment, wheelbase and static %."""
+        case_name = "test_case_balance"
+        case_dir = Path("cases") / case_name
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": case_name,
+            "flow": {"velocity": 10.0},
+            "fluid": {"rho": 1.0},
+            "force_refs": {"Aref": 1.0, "lRef": 1.0, "CofR": [0, 0, 0]},
+            "vehicle": {"wheelbase": 2.0, "front_weight_pct": 50.0},
+            "domain_faces": {"-x": "farField", "+x": "farField", "-y": "ground",
+                             "+y": "farField", "+z": "inlet", "-z": "outlet"},
+        }))
+        force_rows = [
+            "# Time total_x total_y total_z pressure_x pressure_y pressure_z "
+            "viscous_x viscous_y viscous_z\n"
+        ]
+        moment_rows = list(force_rows)
+        for i in range(1, 25):
+            force_rows.append(f"{i} 0 -100 -40 0 -100 -40 0 0 0\n")
+            moment_rows.append(f"{i} 50 0 0 50 0 0 0 0 0\n")
+        (forces_dir / "force.dat").write_text("".join(force_rows))
+        (forces_dir / "moment.dat").write_text("".join(moment_rows))
+
+        res = asyncio.run(api_telemetry_forces(case_name))
+        balance = res["balance"]
+        self.assertTrue(balance["available"])
+        # D=100 N; CoP 0.5 m ahead of CoG -> 75% front.
+        self.assertAlmostEqual(balance["front_pct"], 75.0, places=1)
+        self.assertAlmostEqual(balance["front_load"], 75.0, places=1)
+        self.assertAlmostEqual(balance["rear_load"], 25.0, places=1)
+        self.assertAlmostEqual(balance["cop_pct_wheelbase"], 25.0, places=1)
+        self.assertAlmostEqual(balance["cop_behind_front_axle"], 0.5, places=2)
+
+    def test_telemetry_aero_balance_requires_vehicle(self):
+        """Balance is unavailable when wheelbase/weight distribution are not configured."""
+        case_name = "test_case_balance_novehicle"
+        case_dir = Path("cases") / case_name
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": case_name,
+            "flow": {"velocity": 10.0},
+            "force_refs": {"Aref": 1.0},
+            "domain_faces": {"-x": "farField", "+x": "farField", "-y": "ground",
+                             "+y": "farField", "+z": "inlet", "-z": "outlet"},
+        }))
+        rows = [
+            "# Time total_x total_y total_z pressure_x pressure_y pressure_z "
+            "viscous_x viscous_y viscous_z\n"
+        ]
+        for i in range(1, 20):
+            rows.append(f"{i} 0 -100 -40 0 -100 -40 0 0 0\n")
+        (forces_dir / "force.dat").write_text("".join(rows))
+        res = asyncio.run(api_telemetry_forces(case_name))
+        self.assertFalse(res["balance"]["available"])
+
     def test_telemetry_export_csv(self):
         """CSV export includes force history and aligned coefficient columns."""
         case_name = "test_case_export"

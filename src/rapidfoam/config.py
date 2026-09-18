@@ -67,6 +67,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "CofR": [0, 0, 0],
     },
 
+    # Vehicle geometry (for aero-balance / center-of-pressure handoff)
+    "vehicle": {
+        "wheelbase": None,        # m
+        "front_weight_pct": None, # static front weight fraction, %
+    },
+
     # Parallel
     "parallel": {
         "n_procs": 10,

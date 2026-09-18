@@ -983,6 +983,107 @@ def _load_reference_quantities(
     }
 
 
+def _load_vehicle_geometry(
+    cfg_path: Optional[str], case_dir: Optional[Path] = None
+) -> dict[str, Optional[float]]:
+    """Vehicle geometry used for aero-balance (wheelbase + static front weight %)."""
+    wheelbase: Optional[float] = None
+    front_pct: Optional[float] = None
+    for candidate in (cfg_path, str(case_dir / "case_config.json") if case_dir else None):
+        if not candidate:
+            continue
+        try:
+            with open(candidate, encoding="utf-8") as handle:
+                cfg_obj = json.load(handle)
+        except Exception:
+            continue
+        vehicle = cfg_obj.get("vehicle", {}) or {}
+        try:
+            if vehicle.get("wheelbase") is not None:
+                wheelbase = float(vehicle["wheelbase"])
+            fp = vehicle.get("front_weight_pct", vehicle.get("front_pct"))
+            if fp is not None:
+                front_pct = float(fp)
+        except (TypeError, ValueError):
+            pass
+        break
+    return {"wheelbase": wheelbase, "front_weight_pct": front_pct}
+
+
+def _compute_aero_balance(
+    force: Optional[list[float]],
+    moment: Optional[list[float]],
+    cofr: list[float],
+    drag_idx: int,
+    drag_sign: int,
+    df_idx: int,
+    df_sign: int,
+    wheelbase: Optional[float],
+    front_pct: Optional[float],
+) -> dict[str, Any]:
+    """Center of pressure and front/rear aero load split.
+
+    Locates the CoP along the flow axis (where the pitch moment vanishes),
+    then applies the lever rule with downforce applied at the CoP. Assumes
+    ``CofR`` is at the CoG and ``front_pct`` is the static front weight fraction.
+    """
+    if (not force or not moment or wheelbase is None or front_pct is None
+            or wheelbase <= 0 or not (0.0 <= front_pct <= 100.0)):
+        return {"available": False}
+    e_flow = _axis_vector(drag_idx, drag_sign)
+    lift = _axis_vector(df_idx, df_sign)
+    pitch = _cross(lift, e_flow)
+    norm = math.sqrt(_dot(pitch, pitch))
+    if norm <= 1e-12:
+        return {"available": False}
+    pitch = (pitch[0] / norm, pitch[1] / norm, pitch[2] / norm)
+    force_v = (float(force[0]), float(force[1]), float(force[2]))
+    moment_v = (float(moment[0]), float(moment[1]), float(moment[2]))
+    origin = (float(cofr[0]), float(cofr[1]), float(cofr[2]))
+
+    denom = _dot(pitch, _cross(e_flow, force_v))
+    if abs(denom) < 1e-9:
+        return {"available": False, "note": "vertical aerodynamic force too small"}
+    offset = _dot(pitch, moment_v) / denom
+    cop = tuple(origin[i] + offset * e_flow[i] for i in range(3))
+
+    downforce = _dot(force_v, lift)
+    if abs(downforce) < 1e-9:
+        return {"available": False, "note": "no downforce"}
+
+    projection = lambda point: _dot(point, e_flow)  # noqa: E731
+    s_cg = projection(origin)
+    d_front = (1.0 - front_pct / 100.0) * wheelbase
+    d_rear = (front_pct / 100.0) * wheelbase
+    s_front = s_cg - d_front        # forward = -e_flow
+    s_rear = s_cg + d_rear
+    s_cop = projection(cop)
+    length = s_rear - s_front
+    if abs(length) < 1e-9:
+        return {"available": False}
+
+    front_load = downforce * (s_rear - s_cop) / length
+    rear_load = downforce - front_load
+    inside = 0.0 <= front_load <= downforce if downforce > 0 else False
+    note = "Assumes CofR is at the CoG."
+    if not inside:
+        note += " CoP is outside the wheelbase — set CofR to the CoG."
+    return {
+        "available": True,
+        "cop": [round(c, 4) for c in cop],
+        "cop_behind_front_axle": round(s_cop - s_front, 4),
+        "cop_pct_wheelbase": round((s_cop - s_front) / length * 100.0, 2),
+        "wheelbase": round(wheelbase, 4),
+        "static_front_pct": round(front_pct, 2),
+        "front_load": round(front_load, 3),
+        "rear_load": round(rear_load, 3),
+        "front_pct": round(front_load / downforce * 100.0, 2),
+        "downforce": round(downforce, 3),
+        "inside_wheelbase": bool(inside),
+        "note": note,
+    }
+
+
 def _axis_vector(index: int, sign: int) -> tuple[float, float, float]:
     vector = [0.0, 0.0, 0.0]
     vector[index] = float(sign)
@@ -1173,6 +1274,8 @@ async def api_telemetry_forces(
     rho: Optional[float] = None,
     velocity: Optional[float] = None,
     cofr: Optional[str] = None,
+    wheelbase: Optional[float] = None,
+    front_pct: Optional[float] = None,
 ) -> dict[str, Any]:
     """Fetch force, coefficient, and component telemetry for a case.
 
@@ -1197,6 +1300,7 @@ async def api_telemetry_forces(
     lateral_idx = _lateral_axis_index(drag_idx, df_idx)
     reference = _load_reference_quantities(cfg_path, case_dir)
     stl_files = _load_stl_files(cfg_path, case_dir)
+    vehicle = _load_vehicle_geometry(cfg_path, case_dir)
     cofr_run = list(reference.get("CofR", [0.0, 0.0, 0.0]))
 
     # Post-run reference overrides from the inline telemetry editor. Blank
@@ -1283,6 +1387,8 @@ async def api_telemetry_forces(
             "message": f"No force.dat found yet for case '{case_name}'. Current stage: {case_stage}.",
             "reference": reference,
             "stl_files": stl_files,
+            "vehicle": vehicle,
+            "balance": {"available": False},
             "coefficients": {"available": False, "summary": {}, "series": {}},
             "components": {"available": False},
         }
@@ -1359,6 +1465,22 @@ async def api_telemetry_forces(
     # ---- Force & moment component breakdown ----
     moment_sub_indices = _subsample_indices(len(moment_times)) if moment_times else []
 
+    force_avg_total = _average_vector(force_cols, "total")
+    moment_avg_total = _average_vector(moment_cols, "total")
+    effective_wheelbase = wheelbase if wheelbase is not None else vehicle.get("wheelbase")
+    effective_front_pct = front_pct if front_pct is not None else vehicle.get("front_weight_pct")
+    balance = _compute_aero_balance(
+        force_avg_total,
+        moment_avg_total,
+        cofr_effective,
+        drag_idx,
+        drag_sign,
+        df_idx,
+        df_sign,
+        effective_wheelbase,
+        effective_front_pct,
+    )
+
     force_components = {
         "available": bool(force_cols),
         "iterations": [times[i] for i in sub_indices],
@@ -1369,7 +1491,7 @@ async def api_telemetry_forces(
             "viscous": _latest_vector(force_cols, "viscous"),
         },
         "average": {
-            "total": _average_vector(force_cols, "total"),
+            "total": force_avg_total,
             "pressure": _average_vector(force_cols, "pressure"),
             "viscous": _average_vector(force_cols, "viscous"),
         },
@@ -1384,7 +1506,7 @@ async def api_telemetry_forces(
             "viscous": _latest_vector(moment_cols, "viscous"),
         },
         "average": {
-            "total": _average_vector(moment_cols, "total"),
+            "total": moment_avg_total,
             "pressure": _average_vector(moment_cols, "pressure"),
             "viscous": _average_vector(moment_cols, "viscous"),
         },
@@ -1406,6 +1528,8 @@ async def api_telemetry_forces(
         "ld_ratio": round(ld_ratio, 3),
         "reference": reference,
         "stl_files": stl_files,
+        "vehicle": vehicle,
+        "balance": balance,
         "series": {
             "iterations": [times[i] for i in sub_indices],
             "drag": [round(drags[i], 3) for i in sub_indices],
