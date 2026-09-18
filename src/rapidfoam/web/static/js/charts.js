@@ -2,16 +2,47 @@
  * High-Precision Telemetry & Convergence Charts using Chart.js
  */
 
+const CONVERGENCE_THRESHOLD_PCT = 0.5;
+
+const convergenceBandPlugin = {
+  id: 'convergenceBand',
+  beforeDatasetsDraw(chart) {
+    const opts = chart.options && chart.options.plugins && chart.options.plugins.convergenceBand;
+    if (!opts || !opts.enabled || !Array.isArray(opts.bands)) return;
+    const { ctx, chartArea } = chart;
+    opts.bands.forEach((band) => {
+      const scale = chart.scales[band.axisId];
+      if (!scale || band.value === null || band.value === undefined) return;
+      const half = Math.abs(band.value) * ((band.pct || CONVERGENCE_THRESHOLD_PCT) / 100);
+      const yTop = scale.getPixelForValue(band.value + half);
+      const yBottom = scale.getPixelForValue(band.value - half);
+      const top = Math.max(chartArea.top, Math.min(yTop, yBottom));
+      const bottom = Math.min(chartArea.bottom, Math.max(yTop, yBottom));
+      if (bottom <= top) return;
+      ctx.save();
+      ctx.fillStyle = band.color || 'rgba(16, 185, 129, 0.10)';
+      ctx.fillRect(chartArea.left, top, chartArea.right - chartArea.left, bottom - top);
+      ctx.restore();
+    });
+  },
+};
+
+if (typeof Chart !== 'undefined') {
+  Chart.register(convergenceBandPlugin);
+}
+
 class TelemetryCharts {
   constructor() {
     this.forcesChart = null;
     this.residualsChart = null;
     this.coefficientsChart = null;
     this.componentsChart = null;
+    this.solverHealthChart = null;
     this.initForcesChart();
     this.initResidualsChart();
     this.initCoefficientsChart();
     this.initComponentsChart();
+    this.initSolverHealthChart();
   }
 
   computeRollingAverage(values, windowSize = 35) {
@@ -94,6 +125,7 @@ class TelemetryCharts {
           intersect: false,
         },
         plugins: {
+          convergenceBand: { enabled: false, bands: [] },
           legend: {
             position: 'top',
             labels: {
@@ -374,7 +406,103 @@ class TelemetryCharts {
     });
   }
 
-  updateForces(series, dragAxis = null, downforceAxis = null) {
+  initSolverHealthChart() {
+    const ctx = document.getElementById('chart-solver-health');
+    if (!ctx || typeof Chart === 'undefined') return;
+
+    this.solverHealthChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          {
+            label: 'Continuity (global)',
+            data: [],
+            borderColor: '#f59e0b',
+            backgroundColor: 'transparent',
+            borderWidth: 1.8,
+            pointRadius: 0,
+            tension: 0.1,
+            yAxisID: 'y',
+            spanGaps: true,
+          },
+          {
+            label: 'Linear Iterations / step',
+            data: [],
+            borderColor: '#a855f7',
+            backgroundColor: 'transparent',
+            borderWidth: 1.6,
+            pointRadius: 0,
+            tension: 0.1,
+            yAxisID: 'y1',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: {
+              color: '#94a3b8',
+              font: { family: "'Inter', sans-serif", size: 10, weight: '500' },
+              boxWidth: 10,
+              padding: 8,
+              usePointStyle: true,
+              pointStyle: 'circle',
+            },
+          },
+          tooltip: {
+            backgroundColor: '#0c0e14',
+            titleColor: '#38bdf8',
+            bodyColor: '#f1f5f9',
+            borderColor: '#252c3c',
+            borderWidth: 1,
+            padding: 10,
+            cornerRadius: 6,
+            callbacks: {
+              label: (context) => {
+                const label = context.dataset.label || '';
+                const val = context.parsed.y;
+                if (val === null || val === undefined) return `${label}: --`;
+                if (context.dataset.yAxisID === 'y') return `${label}: ${val.toExponential(3)}`;
+                return `${label}: ${val}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            title: { display: true, text: 'Iteration', color: '#64748b', font: { size: 10 } },
+            ticks: { color: '#64748b', maxTicksLimit: 10, font: { family: "'JetBrains Mono', monospace", size: 10 } },
+            grid: { color: '#161b26' },
+          },
+          y: {
+            type: 'logarithmic',
+            position: 'left',
+            suggestedMin: 1e-8,
+            suggestedMax: 1.0,
+            title: { display: true, text: 'Continuity (global)', color: '#f59e0b', font: { size: 10, weight: 'bold' } },
+            ticks: { color: '#f59e0b', font: { family: "'JetBrains Mono', monospace", size: 10 } },
+            grid: { color: '#161b26' },
+          },
+          y1: {
+            type: 'linear',
+            position: 'right',
+            beginAtZero: true,
+            title: { display: true, text: 'Linear Iterations', color: '#a855f7', font: { size: 10, weight: 'bold' } },
+            ticks: { color: '#a855f7', font: { family: "'JetBrains Mono', monospace", size: 10 } },
+            grid: { drawOnChartArea: false },
+          },
+        },
+      },
+    });
+  }
+
+  updateForces(series, dragAxis = null, downforceAxis = null, convergence = null) {
     if (!this.forcesChart || !series) return;
     const iters = series.iterations || [];
     const downforces = series.downforce || [];
@@ -404,7 +532,28 @@ class TelemetryCharts {
     this.forcesChart.data.datasets[2].data = drags;
     this.forcesChart.data.datasets[3].data = smoothedDrag;
 
+    // Show the ±threshold convergence band around each window average.
+    const threshold = (convergence && convergence.threshold) || CONVERGENCE_THRESHOLD_PCT;
+    const hasBands = !!(convergence && (convergence.downforceAvg !== undefined || convergence.dragAvg !== undefined));
+    if (this.forcesChart.options.plugins) {
+      this.forcesChart.options.plugins.convergenceBand = {
+        enabled: hasBands,
+        bands: [
+          { axisId: 'y', value: convergence ? convergence.downforceAvg : null, pct: threshold, color: 'rgba(0, 210, 255, 0.10)' },
+          { axisId: 'y1', value: convergence ? convergence.dragAvg : null, pct: threshold, color: 'rgba(244, 63, 94, 0.10)' },
+        ],
+      };
+    }
+
     this.forcesChart.update('none');
+  }
+
+  updateSolverHealth(series) {
+    if (!this.solverHealthChart || !series) return;
+    this.solverHealthChart.data.labels = series.iterations || [];
+    this.solverHealthChart.data.datasets[0].data = series.continuity_global || [];
+    this.solverHealthChart.data.datasets[1].data = series.linear_iters || [];
+    this.solverHealthChart.update('none');
   }
 
   updateResiduals(iterations, residualsMap) {
@@ -473,6 +622,13 @@ class TelemetryCharts {
         ds.data = [];
       });
       this.componentsChart.update('none');
+    }
+    if (this.solverHealthChart) {
+      this.solverHealthChart.data.labels = [];
+      this.solverHealthChart.data.datasets.forEach((ds) => {
+        ds.data = [];
+      });
+      this.solverHealthChart.update('none');
     }
   }
 }

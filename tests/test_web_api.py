@@ -25,6 +25,8 @@ from rapidfoam.web.server import (
     api_telemetry_residuals,
     api_telemetry_logs,
     api_telemetry_export,
+    api_telemetry_solver,
+    parse_solver_diagnostics_from_log,
     api_list_cases,
     api_case_delete,
     api_stl_check_exists,
@@ -866,6 +868,59 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             asyncio.run(api_telemetry_forces(case_name, cofr="1,2"))
         self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_telemetry_solver_diagnostics(self):
+        """Solver-health endpoint reports continuity, linear effort, timing, and ETA."""
+        case_name = "test_case_solver_diag"
+        case_dir = Path("cases") / case_name
+        case_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": case_name,
+            "solver": {"end_time": 20},
+        }))
+
+        lines = []
+        for it in range(1, 4):
+            lines.append(f"Time = {it}\n")
+            lines.append(
+                "GAMG:  Solving for p, Initial residual = 1e-1, Final residual = 1e-3, No Iterations 8\n"
+            )
+            for var in ("Ux", "Uy", "Uz", "k", "omega"):
+                lines.append(
+                    f"DILUPBiCGStab:  Solving for {var}, Initial residual = 1e-2, "
+                    "Final residual = 1e-4, No Iterations 1\n"
+                )
+            lines.append(
+                "time step continuity errors : sum local = 1e-5, global = 3e-6, cumulative = -1e-3\n"
+            )
+            lines.append(f"ExecutionTime = {it * 10} s  ClockTime = {it * 12} s\n")
+        (case_dir / "log.simpleFoam").write_text("".join(lines))
+
+        res = asyncio.run(api_telemetry_solver(case_name))
+        self.assertTrue(res["has_data"])
+        self.assertEqual(res["total_iterations"], 3)
+        self.assertEqual(res["latest_iteration"], 3)
+        self.assertEqual(res["latest_linear_iters"], 13)  # p=8 + 5 momentum/turbulence solves
+        self.assertAlmostEqual(res["latest_continuity_global"], 3e-6)
+        self.assertAlmostEqual(res["iterations_per_second"], 0.1, places=4)
+        self.assertAlmostEqual(res["elapsed_seconds"], 30.0, places=2)
+        self.assertAlmostEqual(res["eta_seconds"], 170.0, places=1)
+        self.assertEqual(len(res["series"]["iterations"]), 3)
+        self.assertEqual(len(res["series"]["continuity_global"]), 3)
+
+    def test_parse_solver_diagnostics_restart(self):
+        """A restarted run replaces the previous trajectory in the diagnostics parser."""
+        text = (
+            "Time = 1\nExecutionTime = 5 s\n"
+            "Time = 2\nExecutionTime = 10 s\n"
+            "Time = 1\nExecutionTime = 4 s\n"
+            "Time = 2\nExecutionTime = 8 s\n"
+        )
+        rows = parse_solver_diagnostics_from_log(text)
+        self.assertEqual(sorted(rows), [1.0, 2.0])
+        self.assertAlmostEqual(rows[2.0]["execution_time"], 8.0)
+        self.assertAlmostEqual(rows[1.0]["execution_time"], 4.0)
 
     def test_telemetry_export_csv(self):
         """CSV export includes force history and aligned coefficient columns."""

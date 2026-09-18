@@ -15,6 +15,7 @@ import shutil
 import sys
 import threading
 import webbrowser
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -1389,6 +1390,91 @@ def parse_solver_info_text(content: str) -> dict[float, dict[str, float]]:
     return rows
 
 
+_SOLVE_ITERS_RE = re.compile(r"Solving for (\w+),.*?No Iterations\s+(\d+)")
+_CONTINUITY_RE = re.compile(
+    r"time step continuity errors\s*:.*?global\s*=\s*([0-9.eE+\-]+).*?cumulative\s*=\s*([0-9.eE+\-]+)"
+)
+_EXEC_TIME_RE = re.compile(r"ExecutionTime\s*=\s*([0-9.eE+\-]+)\s*s")
+_LOG_TIME_RE = re.compile(r"^Time = ([0-9.eE+\-]+)")
+
+
+def parse_solver_diagnostics_from_log(log_text: str) -> dict[float, dict[str, Any]]:
+    """Extract per-iteration continuity, linear-solver effort, and timing from a log.
+
+    Reads the ``time step continuity errors``, ``No Iterations``, and
+    ``ExecutionTime`` entries that map to the current ``Time =`` step.
+    """
+    rows: dict[float, dict[str, Any]] = {}
+    current: Optional[float] = None
+    previous: Optional[float] = None
+    for raw in log_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        match = _LOG_TIME_RE.match(line)
+        if match:
+            try:
+                current = float(match.group(1))
+            except ValueError:
+                current = None
+            if current is not None and previous is not None and current <= previous:
+                # A restarted run supersedes the old trajectory from here on.
+                rows = {key: value for key, value in rows.items() if key < round(current, 8)}
+            previous = current
+            continue
+        if current is None or current <= 0:
+            continue
+        key = round(current, 8)
+        row = rows.setdefault(
+            key,
+            {
+                "time": current,
+                "linear_iters": 0,
+                "linear_iters_max": 0,
+                "continuity_global": None,
+                "continuity_cumulative": None,
+                "execution_time": None,
+            },
+        )
+        match = _SOLVE_ITERS_RE.search(line)
+        if match:
+            iterations = int(match.group(2))
+            row["linear_iters"] += iterations
+            row["linear_iters_max"] = max(row["linear_iters_max"], iterations)
+        match = _CONTINUITY_RE.search(line)
+        if match:
+            row["continuity_global"] = float(match.group(1))
+            row["continuity_cumulative"] = float(match.group(2))
+        match = _EXEC_TIME_RE.search(line)
+        if match:
+            row["execution_time"] = float(match.group(1))
+    return rows
+
+
+def _read_text_tail_lines(path: Path, max_lines: int = 50000) -> str:
+    """Read at most the last ``max_lines`` of a text file without buffering it all."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return "".join(deque(handle, maxlen=max_lines))
+    except OSError:
+        return ""
+
+
+def _load_solver_end_time(cfg_path: Optional[str], case_dir: Optional[Path] = None) -> Optional[float]:
+    for candidate in (cfg_path, str(case_dir / "case_config.json") if case_dir else None):
+        if not candidate:
+            continue
+        try:
+            with open(candidate, encoding="utf-8") as handle:
+                cfg_obj = json.load(handle)
+            end_time = cfg_obj.get("solver", {}).get("end_time")
+            if end_time is not None:
+                return float(end_time)
+        except Exception:
+            continue
+    return None
+
+
 @app.get("/api/telemetry/residuals")
 async def api_telemetry_residuals(case_name: str) -> dict[str, Any]:
     """Parse solver residuals from solverInfo.dat or log.simpleFoam with aligned iterations."""
@@ -1509,6 +1595,91 @@ async def api_telemetry_residuals(case_name: str) -> dict[str, Any]:
         "latest_iteration": int(sorted_iters[-1]),
         "iterations": iters_sub,
         "residuals": residuals_sub,
+    }
+
+
+@app.get("/api/telemetry/solver")
+async def api_telemetry_solver(case_name: str) -> dict[str, Any]:
+    """Return solver-health diagnostics: continuity, linear effort, timing, and ETA."""
+    if not CASE_NAME_REGEX.match(case_name):
+        raise HTTPException(status_code=400, detail="Invalid case_name")
+
+    content = ""
+    if ssh_client.is_connected:
+        remote_log = f"{ssh_client.remote_repo_path}/cases/{case_name}/log.simpleFoam"
+        cmd = f"tail -n 50000 {shlex.quote(remote_log)} 2>/dev/null"
+        code, out, _ = await asyncio.to_thread(ssh_client.run_command, cmd, timeout=10)
+        if code == 0 and out.strip():
+            content = out
+
+    local_case = PROJECT_ROOT / "cases" / case_name
+    if not content and local_case.is_dir():
+        local_log = local_case / "log.simpleFoam"
+        if local_log.is_file():
+            content = _read_text_tail_lines(local_log)
+
+    rows = parse_solver_diagnostics_from_log(content) if content else {}
+    if not rows:
+        return {
+            "has_data": False,
+            "case_name": case_name,
+            "message": f"No solver diagnostics found for case '{case_name}'.",
+        }
+
+    sorted_iters = sorted(rows.keys())
+    iterations = [int(it) for it in sorted_iters]
+    continuity_global = [rows[it]["continuity_global"] for it in sorted_iters]
+    continuity_cumulative = [rows[it]["continuity_cumulative"] for it in sorted_iters]
+    linear_iters = [rows[it]["linear_iters"] for it in sorted_iters]
+    linear_iters_max = [rows[it]["linear_iters_max"] for it in sorted_iters]
+    execution_time = [rows[it]["execution_time"] for it in sorted_iters]
+
+    # Iteration rate from the two most recent fully timed steps.
+    timed = [(it, rows[it]["execution_time"]) for it in sorted_iters if rows[it]["execution_time"]]
+    iterations_per_second: Optional[float] = None
+    if len(timed) >= 2:
+        (it0, et0), (it1, et1) = timed[-2], timed[-1]
+        if et1 > et0:
+            iterations_per_second = (it1 - it0) / (et1 - et0)
+    elif timed:
+        it1, et1 = timed[-1]
+        if et1 > 0:
+            iterations_per_second = it1 / et1
+
+    elapsed = execution_time[-1] if execution_time and execution_time[-1] is not None else None
+    cfg_path = str(PROJECT_ROOT / "configs" / f"{case_name}.json")
+    if not Path(cfg_path).is_file():
+        cfg_path = None
+    end_time = _load_solver_end_time(cfg_path, local_case if local_case.is_dir() else None)
+    remaining = (end_time - iterations[-1]) if end_time is not None else None
+    eta_seconds = (
+        remaining / iterations_per_second
+        if remaining is not None and remaining > 0 and iterations_per_second
+        else (0.0 if remaining is not None and remaining <= 0 else None)
+    )
+
+    sub_indices = _subsample_indices(len(iterations))
+    latest_continuity = next(
+        (value for value in reversed(continuity_global) if value is not None), None
+    )
+    return {
+        "has_data": True,
+        "case_name": case_name,
+        "total_iterations": len(iterations),
+        "latest_iteration": iterations[-1],
+        "iterations_per_second": round(iterations_per_second, 4) if iterations_per_second else None,
+        "elapsed_seconds": round(elapsed, 2) if elapsed is not None else None,
+        "end_time": end_time,
+        "eta_seconds": round(eta_seconds, 1) if eta_seconds is not None else None,
+        "latest_continuity_global": latest_continuity,
+        "latest_linear_iters": linear_iters[-1],
+        "series": {
+            "iterations": [iterations[i] for i in sub_indices],
+            "continuity_global": [continuity_global[i] for i in sub_indices],
+            "continuity_cumulative": [continuity_cumulative[i] for i in sub_indices],
+            "linear_iters": [linear_iters[i] for i in sub_indices],
+            "linear_iters_max": [linear_iters_max[i] for i in sub_indices],
+        },
     }
 
 

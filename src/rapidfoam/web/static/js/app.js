@@ -2,6 +2,100 @@
  * OpenFOAM Case Generator Studio - Main Application Controller
  */
 
+const TELEMETRY_HELP = {
+  kpis: {
+    title: 'KPI Metrics',
+    html: `<p>Averaged over the last 200 iterations (not the final instant).</p>
+      <ul>
+        <li><strong>Downforce / Drag</strong> — force in Newtons on the configured axes; the sub-line is the ±% variation over the window.</li>
+        <li><strong>L/D</strong> — downforce ÷ drag (aero efficiency), higher is better.</li>
+        <li><strong>Cd / Cl</strong> — speed-independent coefficients: <code>C = F / (0.5·ρ·V²·Aref)</code>.</li>
+        <li><strong>Solver Iteration</strong> — current iteration and status.</li>
+      </ul>`,
+  },
+  forces: {
+    title: 'Aerodynamic Force History',
+    html: `<p>Downforce (left axis, N) and Drag (right axis, N) versus iteration.</p>
+      <ul>
+        <li>Faint lines = every raw iteration; <strong>bold lines</strong> = 35-iteration moving average. Read the bold lines.</li>
+        <li>The shaded band is the <strong>±0.5% convergence window</strong> around the average. Inside the band means forces are stable.</li>
+        <li>Expect a fast rise/fall early, then a flat horizontal trend.</li>
+      </ul>`,
+  },
+  coefficients: {
+    title: 'Aerodynamic Coefficients',
+    html: `<p>Dimensionless force and moment coefficients versus iteration.</p>
+      <ul>
+        <li><strong>Cd</strong> drag, <strong>Cl</strong> lift/downforce, <strong>Cs</strong> side force.</li>
+        <li><strong>CmPitch / CmRoll / CmYaw</strong> moment coefficients (click legend entries to show hidden ones).</li>
+        <li>Values should flatten. Cs ≈ 0 for straight-line running; a non-zero value suggests asymmetry.</li>
+      </ul>`,
+  },
+  components: {
+    title: 'Pressure vs Viscous Breakdown',
+    html: `<p>Latest iteration's split of each component into pressure and viscous parts.</p>
+      <ul>
+        <li>Bars: <code>Fx, Fy, Fz</code> in N and <code>Mx, My, Mz</code> in N·m (raw CAD axes).</li>
+        <li><code>Total = Pressure + Viscous</code>. Moments are about <strong>CofR</strong>.</li>
+        <li>Aerodynamic bodies are usually pressure-dominated; a large viscous share implies friction/separation.</li>
+      </ul>`,
+  },
+  residuals: {
+    title: 'Equation Residuals',
+    html: `<p>Initial residual of each equation per outer iteration (logarithmic scale).</p>
+      <ul>
+        <li>Lines: <code>p, Ux, Uy, Uz, k, omega</code>. Each gridline is 10×.</li>
+        <li>Expect a downward trend flattening near <code>1e-5</code> or lower.</li>
+        <li>A curve stuck high or rising means that equation is not converging.</li>
+      </ul>`,
+  },
+  solver: {
+    title: 'Solver Health',
+    html: `<p>Continuity, linear-solver effort, and timing from <code>log.simpleFoam</code>.</p>
+      <ul>
+        <li><strong>Continuity (global)</strong> — per-step mass imbalance (dimensionless, can be negative). Healthy is &lt; 1e-4; &gt; 1e-2 is high.</li>
+        <li><strong>Linear Iterations / step</strong> — linear-solver iterations summed over p/U/k/omega. Steady and low is good; a jump means a harder system.</li>
+        <li><strong>Iterations/sec, Elapsed, ETA</strong> — throughput and projected time to <code>endTime</code> (upper bound; the run may auto-stop earlier on convergence).</li>
+      </ul>`,
+  },
+  'coeff-summary': {
+    title: 'Coefficient Summary',
+    html: `<p>Tabular view of the coefficients.</p>
+      <ul>
+        <li><strong>Latest</strong> — last iteration value.</li>
+        <li><strong>Window Avg</strong> — mean over the trailing 200 iterations (the value to quote).</li>
+        <li><strong>Variation</strong> — relative standard deviation over that window; below ~0.5% means converged.</li>
+        <li>The subtitle shows the source: solver <code>forceCoeffs</code>, recomputed from your reference overrides, or computed from config refs.</li>
+      </ul>`,
+  },
+  'component-table': {
+    title: 'Force & Moment Breakdown',
+    html: `<p>Numerical version of the breakdown chart for the final step.</p>
+      <ul>
+        <li>Rows: <code>Fx, Fy, Fz</code> (N) and <code>Mx, My, Mz</code> (N·m).</li>
+        <li><code>Total = Pressure + Viscous</code>.</li>
+        <li>The subtitle lists the reference conditions (ρ, U, Aref, dynamic pressure) used for coefficients.</li>
+      </ul>`,
+  },
+  references: {
+    title: 'Reference Values (Post-Run)',
+    html: `<p>Recalculate coefficients without re-running the solver.</p>
+      <ul>
+        <li>Edit <code>Aref</code>, <code>lRef</code>, <code>ρ</code>, <code>V</code>, or <code>CofR</code>, then Apply.</li>
+        <li>Coefficients are recomputed from raw forces: <code>C = F / (0.5·ρ·V²·Aref)</code>; moments use <code>lRef</code> and a parallel-axis shift for <code>CofR</code>.</li>
+        <li>Blank fields use the case config; <strong>Reset</strong> returns to the solver's values.</li>
+      </ul>`,
+  },
+  logs: {
+    title: 'Solver & Meshing Log Console',
+    html: `<p>Raw tail of an OpenFOAM log file selected with the dropdown.</p>
+      <ul>
+        <li>Use it for continuity errors, mesh-quality warnings, <code>FOAM FATAL ERROR</code>, or why a run stopped.</li>
+        <li><strong>Tail Latest</strong> refreshes; <strong>Copy</strong> copies the console text.</li>
+      </ul>`,
+  },
+};
+
 class CFDApp {
   constructor() {
     this.viewer = null;
@@ -115,6 +209,7 @@ class CFDApp {
     this.bindSTLUpload();
     this.bindSSHModal();
     this.bindTelemetryEvents();
+    this.initTelemetryHelp();
     this.bindCasesArchiveEvents();
 
     // 3. Load initial data from backend
@@ -160,7 +255,7 @@ class CFDApp {
         } else if (targetId === 'telemetry-tab') {
           this.pollTelemetry();
           setTimeout(() => {
-            ['forcesChart', 'coefficientsChart', 'componentsChart', 'residualsChart'].forEach((name) => {
+            ['forcesChart', 'coefficientsChart', 'componentsChart', 'residualsChart', 'solverHealthChart'].forEach((name) => {
               this.charts?.[name]?.resize();
             });
           }, 60);
@@ -2211,6 +2306,90 @@ class CFDApp {
     });
   }
 
+  initTelemetryHelp() {
+    // One reusable popover for all "info" buttons.
+    let popover = document.getElementById('telemetry-help-popover');
+    if (!popover) {
+      popover = document.createElement('div');
+      popover.id = 'telemetry-help-popover';
+      popover.className = 'help-popover';
+      popover.style.display = 'none';
+      document.body.appendChild(popover);
+    }
+    this._helpPopover = popover;
+    this._helpAnchor = null;
+
+    const hide = () => { if (popover) popover.style.display = 'none'; };
+    document.addEventListener('click', (event) => {
+      if (popover.style.display !== 'block') return;
+      if (!popover.contains(event.target) && !event.target.classList.contains('info-btn')) {
+        hide();
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') hide();
+    });
+    window.addEventListener('resize', hide);
+
+    document.querySelectorAll('#telemetry-tab [data-help]').forEach((el) => {
+      const key = el.dataset.help;
+      const content = TELEMETRY_HELP[key];
+      if (!content) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'info-btn';
+      btn.textContent = 'i';
+      btn.setAttribute('aria-label', `About: ${content.title}`);
+      btn.title = `About: ${content.title}`;
+
+      const header = el.classList.contains('panel-header') ? el : el.querySelector('.panel-header');
+      if (header) {
+        const actions = header.querySelector('.panel-header-actions');
+        (actions || header).appendChild(btn);
+      } else {
+        el.classList.add('has-info-float');
+        btn.classList.add('info-btn-float');
+        el.appendChild(btn);
+      }
+
+      btn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.toggleHelpPopover(btn, content);
+      });
+    });
+  }
+
+  toggleHelpPopover(anchor, content) {
+    const popover = this._helpPopover;
+    if (!popover) return;
+    if (popover.style.display === 'block' && this._helpAnchor === anchor) {
+      popover.style.display = 'none';
+      return;
+    }
+    popover.innerHTML = `<div class="help-popover-title">${content.title}</div>` +
+      `<div class="help-popover-body">${content.html}</div>`;
+    popover.style.display = 'block';
+    this._helpAnchor = anchor;
+    this.positionHelpPopover(anchor);
+  }
+
+  positionHelpPopover(anchor) {
+    const popover = this._helpPopover;
+    if (!popover) return;
+    const width = Math.min(380, window.innerWidth - 24);
+    popover.style.width = `${width}px`;
+    const rect = anchor.getBoundingClientRect();
+    const height = popover.offsetHeight;
+    let top = rect.bottom + 8;
+    if (top + height > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - height - 8);
+    }
+    let left = rect.right - width;
+    left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+    popover.style.top = `${top}px`;
+    popover.style.left = `${left}px`;
+  }
+
   addTelemetryCase(caseName) {
     const select = document.getElementById('telemetry-case-select');
     if (!select) return;
@@ -2241,6 +2420,7 @@ class CFDApp {
     const residualsOverlay = document.getElementById('residuals-empty-overlay');
     const coeffOverlay = document.getElementById('coeff-empty-overlay');
     const componentsOverlay = document.getElementById('components-empty-overlay');
+    const solverOverlay = document.getElementById('solver-health-empty-overlay');
     const emptyDesc = document.getElementById('forces-empty-desc');
     const emptyAction = document.getElementById('forces-empty-action');
     const statusSub = document.getElementById('kpi-status-sub');
@@ -2284,7 +2464,11 @@ class CFDApp {
 
         if (this.charts) {
           if (data.series) {
-            this.charts.updateForces(data.series, data.drag_axis, data.downforce_axis);
+            this.charts.updateForces(data.series, data.drag_axis, data.downforce_axis, {
+              downforceAvg: data.downforce_avg,
+              dragAvg: data.drag_avg,
+              threshold: 0.5,
+            });
           }
           const coeffAvailable = !!(data.coefficients && data.coefficients.available);
           if (coeffOverlay) coeffOverlay.style.display = coeffAvailable ? 'none' : 'flex';
@@ -2364,8 +2548,72 @@ class CFDApp {
       console.error('Residuals telemetry poll failed:', err);
     }
 
-    // 3. Tail log
+    // 3. Fetch Solver Health
+    try {
+      const res = await fetch(`/api/telemetry/solver?case_name=${encodeURIComponent(caseName)}`);
+      const solverData = await res.json();
+      if (solverData.has_data) {
+        if (solverOverlay) solverOverlay.style.display = 'none';
+        this.renderSolverHealth(solverData);
+        if (this.charts) {
+          this.charts.updateSolverHealth(solverData.series);
+        }
+      } else {
+        if (solverOverlay) solverOverlay.style.display = 'flex';
+        this.resetSolverHealth();
+      }
+    } catch (err) {
+      console.error('Solver health telemetry poll failed:', err);
+    }
+
+    // 4. Tail log
     this.fetchLogTail();
+  }
+
+  formatDuration(seconds) {
+    if (seconds === null || seconds === undefined || !isFinite(seconds)) return '--';
+    const total = Math.max(0, Math.round(seconds));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${secs}s`;
+    return `${secs}s`;
+  }
+
+  renderSolverHealth(data) {
+    this.setValText('solver-iter-rate', data.iterations_per_second ? `${data.iterations_per_second.toFixed(3)} it/s` : '--');
+    this.setValText('solver-elapsed', this.formatDuration(data.elapsed_seconds));
+    this.setValText('solver-eta', data.eta_seconds === null ? '--' : this.formatDuration(data.eta_seconds));
+    const continuity = data.latest_continuity_global;
+    this.setValText(
+      'solver-continuity',
+      continuity === null || continuity === undefined ? '--' : Number(continuity).toExponential(2),
+    );
+    const globalContinuity = Number(continuity);
+    const badge = document.getElementById('solver-health-badge');
+    if (badge) {
+      let health = 'No continuity data';
+      if (isFinite(globalContinuity)) {
+        if (Math.abs(globalContinuity) < 1e-4) health = 'Healthy';
+        else if (Math.abs(globalContinuity) < 1e-2) health = 'Fair';
+        else health = 'High continuity error';
+      }
+      const linear = data.latest_linear_iters;
+      badge.textContent = linear !== undefined && linear !== null ? `${health} · ${linear} lin iters` : health;
+    }
+  }
+
+  resetSolverHealth() {
+    ['solver-iter-rate', 'solver-elapsed', 'solver-eta', 'solver-continuity'].forEach((id) => {
+      this.setValText(id, '--');
+    });
+    this.setValText('solver-health-badge', '--');
+    if (this.charts && this.charts.solverHealthChart) {
+      this.charts.solverHealthChart.data.labels = [];
+      this.charts.solverHealthChart.data.datasets.forEach((ds) => { ds.data = []; });
+      this.charts.solverHealthChart.update('none');
+    }
   }
 
   renderCoefficientKpis(data) {
