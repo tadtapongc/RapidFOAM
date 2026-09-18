@@ -9,6 +9,7 @@ class CFDApp {
     this.clusterConnected = false;
     this.pollInterval = null;
     this.telemetryPollingActive = true;
+    this.telemetryRefOverrides = {};
     this.archiveCases = [];
     this.currentArchiveFilter = 'all';
     this.archiveSearchTerm = '';
@@ -158,6 +159,11 @@ class CFDApp {
           setTimeout(() => this.viewer.onResize(), 50);
         } else if (targetId === 'telemetry-tab') {
           this.pollTelemetry();
+          setTimeout(() => {
+            ['forcesChart', 'coefficientsChart', 'componentsChart', 'residualsChart'].forEach((name) => {
+              this.charts?.[name]?.resize();
+            });
+          }, 60);
         } else if (targetId === 'cases-tab') {
           this.loadCasesArchive();
         }
@@ -2153,6 +2159,19 @@ class CFDApp {
     document.getElementById('telemetry-case-select')?.addEventListener('change', () => this.pollTelemetry());
     document.getElementById('btn-tail-log')?.addEventListener('click', () => this.fetchLogTail());
     document.getElementById('select-log-type')?.addEventListener('change', () => this.fetchLogTail());
+    document.getElementById('btn-export-telemetry')?.addEventListener('click', () => this.exportTelemetry());
+
+    // Post-run reference editor
+    document.getElementById('btn-toggle-ref-editor')?.addEventListener('click', () => {
+      const body = document.getElementById('ref-editor-body');
+      const btn = document.getElementById('btn-toggle-ref-editor');
+      if (!body) return;
+      const showing = body.style.display !== 'none';
+      body.style.display = showing ? 'none' : 'block';
+      if (btn) btn.textContent = showing ? 'Edit' : 'Hide';
+    });
+    document.getElementById('btn-apply-refs')?.addEventListener('click', () => this.applyTelemetryRefs());
+    document.getElementById('btn-reset-refs')?.addEventListener('click', () => this.resetTelemetryRefs());
 
     // Live Sync (5s) Toggle button
     const togglePollBtn = document.getElementById('btn-toggle-telemetry-polling');
@@ -2220,13 +2239,16 @@ class CFDApp {
     const pill = document.getElementById('telemetry-convergence-pill');
     const forcesOverlay = document.getElementById('forces-empty-overlay');
     const residualsOverlay = document.getElementById('residuals-empty-overlay');
+    const coeffOverlay = document.getElementById('coeff-empty-overlay');
+    const componentsOverlay = document.getElementById('components-empty-overlay');
     const emptyDesc = document.getElementById('forces-empty-desc');
     const emptyAction = document.getElementById('forces-empty-action');
     const statusSub = document.getElementById('kpi-status-sub');
 
-    // 1. Fetch Forces
+    // 1. Fetch Forces / Coefficients / Components
     try {
-      const res = await fetch(`/api/telemetry/forces?case_name=${encodeURIComponent(caseName)}`);
+      const refQuery = this.telemetryRefQuery();
+      const res = await fetch(`/api/telemetry/forces?case_name=${encodeURIComponent(caseName)}${refQuery}`);
       const data = await res.json();
 
       if (data.has_data) {
@@ -2257,8 +2279,30 @@ class CFDApp {
           }
         }
 
-        if (this.charts && data.series) {
-          this.charts.updateForces(data.series, data.drag_axis, data.downforce_axis);
+        this.renderCoefficientKpis(data);
+        this.renderTelemetryAnalysis(data);
+
+        if (this.charts) {
+          if (data.series) {
+            this.charts.updateForces(data.series, data.drag_axis, data.downforce_axis);
+          }
+          const coeffAvailable = !!(data.coefficients && data.coefficients.available);
+          if (coeffOverlay) coeffOverlay.style.display = coeffAvailable ? 'none' : 'flex';
+          if (coeffAvailable && data.coefficients.series) {
+            this.charts.updateCoefficients(data.coefficients.series);
+          } else {
+            this.charts.updateCoefficients({ iterations: [] });
+          }
+          const compAvailable = !!(data.components && data.components.available);
+          if (componentsOverlay) componentsOverlay.style.display = compAvailable ? 'none' : 'flex';
+          if (compAvailable) {
+            this.charts.updateComponents(
+              data.components.force ? data.components.force.latest : null,
+              data.components.moment ? data.components.moment.latest : null,
+            );
+          } else {
+            this.charts.updateComponents(null, null);
+          }
         }
       } else {
         // No forces data yet (case generated or meshed but simpleFoam not executed)
@@ -2277,6 +2321,7 @@ class CFDApp {
         this.setValText('kpi-drag-variation', '±--% variation');
         this.setValText('kpi-ld', '--');
         this.setValText('kpi-iter', '0');
+        this.resetTelemetryKpis(data);
         if (statusSub) statusSub.textContent = `Status: ${data.stage || 'Ready'}`;
 
         const stage = data.stage || 'Generated';
@@ -2287,6 +2332,8 @@ class CFDApp {
 
         if (forcesOverlay) forcesOverlay.style.display = 'flex';
         if (residualsOverlay) residualsOverlay.style.display = 'flex';
+        if (coeffOverlay) coeffOverlay.style.display = 'flex';
+        if (componentsOverlay) componentsOverlay.style.display = 'flex';
         if (emptyDesc) {
           emptyDesc.textContent = `Case is in '${stage}' state. Run the OpenFOAM solver to stream live forces and residuals.`;
         }
@@ -2319,6 +2366,185 @@ class CFDApp {
 
     // 3. Tail log
     this.fetchLogTail();
+  }
+
+  renderCoefficientKpis(data) {
+    const summary = (data.coefficients && data.coefficients.summary) || {};
+    const fmt = (value, digits = 4) => (value === null || value === undefined) ? '--' : Number(value).toFixed(digits);
+    const describe = (stats, fallback) => {
+      if (!stats || stats.avg === null || stats.avg === undefined) return fallback;
+      return `avg ${fmt(stats.avg)} · ±${stats.pct}%`;
+    };
+    const cd = summary.Cd;
+    const cl = summary.Cl;
+    this.setValText('kpi-cd', cd ? fmt(cd.current) : '--');
+    this.setValText('kpi-cd-sub', describe(cd, 'Cd window avg --'));
+    this.setValText('kpi-cl', cl ? fmt(cl.current) : '--');
+    this.setValText('kpi-cl-sub', describe(cl, 'Cl window avg --'));
+  }
+
+  resetTelemetryKpis(data) {
+    this.setValText('kpi-cd', '--');
+    this.setValText('kpi-cd-sub', 'Cd window avg --');
+    this.setValText('kpi-cl', '--');
+    this.setValText('kpi-cl-sub', 'Cl window avg --');
+
+    const coeffTbody = document.getElementById('coeff-summary-tbody');
+    if (coeffTbody) {
+      coeffTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No coefficient data</td></tr>';
+    }
+    const compTbody = document.getElementById('component-breakdown-tbody');
+    if (compTbody) {
+      compTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No component data</td></tr>';
+    }
+    this.setValText('coeff-source-badge', 'Source: --');
+    this.setValText('ref-source-badge', 'Normalization: --');
+    this.renderReferencePlaceholders((data && data.reference) || {});
+
+    const refEl = document.getElementById('reference-conditions');
+    const ref = (data && data.reference) || {};
+    if (refEl) {
+      refEl.textContent = `ρ ${ref.rho ?? '--'} kg/m³ · U ${ref.velocity ?? '--'} m/s · Aref ${ref.Aref ?? '--'} m²`;
+    }
+  }
+
+  renderTelemetryAnalysis(data) {
+    const summary = (data.coefficients && data.coefficients.summary) || {};
+    const coeffRows = [
+      ['Cd', 'Drag'],
+      ['Cl', 'Lift'],
+      ['Cs', 'Side Force'],
+      ['CmPitch', 'Pitch Moment'],
+      ['CmRoll', 'Roll Moment'],
+      ['CmYaw', 'Yaw Moment'],
+    ];
+    const coeffTbody = document.getElementById('coeff-summary-tbody');
+    if (coeffTbody) {
+      const rows = coeffRows.filter(([key]) => summary[key]).map(([key, label]) => {
+        const stats = summary[key];
+        const fmt = (value) => (value === null || value === undefined) ? '--' : Number(value).toFixed(4);
+        return `<tr><td>${label} <span class="text-muted small">(${key})</span></td>` +
+          `<td class="monospace">${fmt(stats.current)}</td>` +
+          `<td class="monospace">${fmt(stats.avg)}</td>` +
+          `<td class="monospace">${stats.pct === null || stats.pct === undefined ? '--' : '±' + stats.pct + '%'}</td></tr>`;
+      });
+      coeffTbody.innerHTML = rows.length
+        ? rows.join('')
+        : '<tr><td colspan="4" class="text-center text-muted">No coefficient data</td></tr>';
+    }
+
+    const sourceBadge = document.getElementById('coeff-source-badge');
+    const source = data.coefficients && data.coefficients.source;
+    const sourceText = source === 'forceCoeffs'
+      ? 'Source: solver forceCoeffs'
+      : (source === 'recomputed'
+        ? 'Source: recomputed from reference values'
+        : (source === 'computed' ? 'Source: computed from reference refs' : 'Source: --'));
+    if (sourceBadge) sourceBadge.textContent = sourceText;
+    this.setValText('ref-source-badge', source === 'recomputed'
+      ? 'Normalization: post-run overrides'
+      : 'Normalization: solver forceCoeffs');
+
+    const force = (data.components && data.components.force) || {};
+    const moment = (data.components && data.components.moment) || {};
+    const compTbody = document.getElementById('component-breakdown-tbody');
+    if (compTbody) {
+      const buildRows = (latest, labels, unit) => {
+        if (!latest || !Array.isArray(latest.total)) return '';
+        return ['x', 'y', 'z'].map((axis, index) => {
+          const cell = (arr) => (Array.isArray(arr) && arr[index] !== undefined && arr[index] !== null)
+            ? Number(arr[index]).toFixed(3)
+            : '--';
+          return `<tr><td>${labels[axis]} <span class="text-muted small">[${unit}]</span></td>` +
+            `<td class="monospace">${cell(latest.total)}</td>` +
+            `<td class="monospace">${cell(latest.pressure)}</td>` +
+            `<td class="monospace">${cell(latest.viscous)}</td></tr>`;
+        }).join('');
+      };
+      const html = buildRows(force.latest, { x: 'Fx', y: 'Fy', z: 'Fz' }, 'N') +
+        buildRows(moment.latest, { x: 'Mx', y: 'My', z: 'Mz' }, 'N·m');
+      compTbody.innerHTML = html || '<tr><td colspan="4" class="text-center text-muted">No component data</td></tr>';
+    }
+
+    const refEl = document.getElementById('reference-conditions');
+    const ref = data.reference || {};
+    if (refEl) {
+      refEl.textContent = `ρ ${ref.rho ?? '--'} kg/m³ · U ${ref.velocity ?? '--'} m/s · Aref ${ref.Aref ?? '--'} m² · q ${ref.dynamic_pressure ?? '--'} Pa`;
+    }
+    this.renderReferencePlaceholders(ref);
+  }
+
+  renderReferencePlaceholders(ref) {
+    const cofr = Array.isArray(ref.CofR) ? ref.CofR : [0, 0, 0];
+    const fields = {
+      'ref-aref': ref.Aref,
+      'ref-lref': ref.lRef,
+      'ref-rho': ref.rho,
+      'ref-velocity': ref.velocity,
+      'ref-cofr-x': cofr[0],
+      'ref-cofr-y': cofr[1],
+      'ref-cofr-z': cofr[2],
+    };
+    Object.entries(fields).forEach(([id, value]) => {
+      const el = document.getElementById(id);
+      if (el && value !== undefined && value !== null) {
+        el.placeholder = String(value);
+      }
+    });
+    const summary = document.getElementById('ref-effective-summary');
+    if (summary) {
+      summary.textContent = `Effective: ρ ${ref.rho ?? '--'} · V ${ref.velocity ?? '--'} · Aref ${ref.Aref ?? '--'} · lRef ${ref.lRef ?? '--'}`;
+    }
+  }
+
+  telemetryRefQuery() {
+    const overrides = this.telemetryRefOverrides || {};
+    const params = new URLSearchParams(overrides);
+    const query = params.toString();
+    return query ? `&${query}` : '';
+  }
+
+  applyTelemetryRefs() {
+    const read = (id) => (this.getVal(id) || '').trim();
+    const overrides = {};
+    const aref = read('ref-aref');
+    const lref = read('ref-lref');
+    const rho = read('ref-rho');
+    const velocity = read('ref-velocity');
+    if (aref !== '') overrides.aref = aref;
+    if (lref !== '') overrides.lref = lref;
+    if (rho !== '') overrides.rho = rho;
+    if (velocity !== '') overrides.velocity = velocity;
+    const cx = read('ref-cofr-x');
+    const cy = read('ref-cofr-y');
+    const cz = read('ref-cofr-z');
+    if (cx !== '' || cy !== '' || cz !== '') {
+      overrides.cofr = [cx || '0', cy || '0', cz || '0'].join(',');
+    }
+    this.telemetryRefOverrides = overrides;
+    this.pollTelemetry();
+    const count = Object.keys(overrides).length;
+    this.showToast(count ? 'Reference values applied — recomputing coefficients' : 'No overrides entered; using case config', count ? 'success' : 'info');
+  }
+
+  resetTelemetryRefs() {
+    ['ref-aref', 'ref-lref', 'ref-rho', 'ref-velocity', 'ref-cofr-x', 'ref-cofr-y', 'ref-cofr-z'].forEach((id) => {
+      this.setVal(id, '');
+    });
+    this.telemetryRefOverrides = {};
+    this.pollTelemetry();
+    this.showToast('Reference overrides cleared', 'info');
+  }
+
+  exportTelemetry() {
+    const select = document.getElementById('telemetry-case-select');
+    const caseName = select ? select.value : '';
+    if (!caseName) {
+      this.showToast('Select a case to export telemetry', 'info');
+      return;
+    }
+    window.location.href = `/api/telemetry/export?format=csv&case_name=${encodeURIComponent(caseName)}`;
+    this.showToast('Exporting telemetry CSV...', 'success');
   }
 
   async fetchLogTail() {

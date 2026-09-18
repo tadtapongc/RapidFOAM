@@ -824,8 +824,9 @@
             <span class="live-dot active" id="telemetry-live-dot"></span>
             <span id="telemetry-live-text">Live Sync (5s)</span>
           </button>
+          <button class="btn btn-secondary btn-xs" id="btn-export-telemetry" title="Export force &amp; coefficient histories as CSV">Export CSV</button>
         </div>
-        
+
         <div class="convergence-status-pill" id="telemetry-convergence-pill">
           <span class="pill-dot"></span>
           <span class="pill-text">Awaiting Data</span>
@@ -833,7 +834,7 @@
       </div>
 
       <!-- Telemetry KPIs -->
-      <div class="kpi-grid">
+      <div class="kpi-grid kpi-grid-6">
         <div class="kpi-card">
           <div class="kpi-title" id="kpi-downforce-title">Downforce (-Fy)</div>
           <div class="kpi-val" id="kpi-downforce">-- <span class="kpi-unit">N</span></div>
@@ -850,9 +851,61 @@
           <div class="kpi-sub">Lift-to-Drag Ratio (L/D)</div>
         </div>
         <div class="kpi-card">
+          <div class="kpi-title">Drag Coefficient</div>
+          <div class="kpi-val monospace" id="kpi-cd">--</div>
+          <div class="kpi-sub" id="kpi-cd-sub">Cd window avg --</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">Lift Coefficient</div>
+          <div class="kpi-val monospace" id="kpi-cl">--</div>
+          <div class="kpi-sub" id="kpi-cl-sub">Cl window avg --</div>
+        </div>
+        <div class="kpi-card">
           <div class="kpi-title">Solver Iteration</div>
           <div class="kpi-val monospace" id="kpi-iter">0</div>
           <div class="kpi-sub" id="kpi-status-sub">Status: Standby</div>
+        </div>
+      </div>
+
+      <!-- Post-run Reference Editor -->
+      <div class="panel ref-editor-panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h3>Reference Values (Post-Run)</h3>
+            <span class="panel-subtitle">Recompute Cd / Cl / Cs / Cm without re-running. Blank fields use the case config.</span>
+          </div>
+          <div class="panel-header-actions">
+            <span class="badge badge-subtle" id="ref-source-badge">Normalization: solver forceCoeffs</span>
+            <button class="btn btn-ghost btn-xs" id="btn-toggle-ref-editor">Edit</button>
+          </div>
+        </div>
+        <div class="ref-editor-body" id="ref-editor-body" style="display: none;">
+          <div class="ref-editor-grid">
+            <label class="ref-field">Reference Area Aref (m²)
+              <input type="number" step="any" id="ref-aref" class="input input-sm" placeholder="1.0">
+            </label>
+            <label class="ref-field">Reference Length lRef (m)
+              <input type="number" step="any" id="ref-lref" class="input input-sm" placeholder="1.0">
+            </label>
+            <label class="ref-field">Air Density ρ (kg/m³)
+              <input type="number" step="any" id="ref-rho" class="input input-sm" placeholder="1.225">
+            </label>
+            <label class="ref-field">Freestream Velocity V (m/s)
+              <input type="number" step="any" id="ref-velocity" class="input input-sm" placeholder="16.67">
+            </label>
+            <label class="ref-field col-span-3">Center of Rotation CofR (m)
+              <div class="ref-cofr-row">
+                <input type="number" step="any" id="ref-cofr-x" class="input input-sm" placeholder="X: 0.0">
+                <input type="number" step="any" id="ref-cofr-y" class="input input-sm" placeholder="Y: 0.0">
+                <input type="number" step="any" id="ref-cofr-z" class="input input-sm" placeholder="Z: 0.0">
+              </div>
+            </label>
+          </div>
+          <div class="ref-editor-actions">
+            <button class="btn btn-primary btn-xs" id="btn-apply-refs">Apply &amp; Recompute</button>
+            <button class="btn btn-ghost btn-xs" id="btn-reset-refs">Reset to Config</button>
+            <span class="panel-subtitle" id="ref-effective-summary">Effective: ρ -- · V -- · Aref -- · lRef --</span>
+          </div>
         </div>
       </div>
 
@@ -884,6 +937,40 @@
         <div class="panel">
           <div class="panel-header">
             <div class="panel-title-group">
+              <h3>Aerodynamic Coefficients</h3>
+              <span class="panel-subtitle">Cd · Cl · Cs · Cm (forceCoeffs)</span>
+            </div>
+          </div>
+          <div class="chart-container" id="chart-coefficients-container">
+            <canvas id="chart-coefficients"></canvas>
+            <div class="chart-empty-overlay" id="coeff-empty-overlay" style="display: none;">
+              <div class="empty-icon">🧮</div>
+              <div class="empty-title">Coefficients Awaiting Data</div>
+              <div class="empty-desc">Cd, Cl, Cs and moment coefficients appear once the solver writes forceCoeffs output.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h3>Latest Pressure vs Viscous Breakdown</h3>
+              <span class="panel-subtitle">Force [N] and moment [N·m] split</span>
+            </div>
+          </div>
+          <div class="chart-container" id="chart-components-container">
+            <canvas id="chart-components"></canvas>
+            <div class="chart-empty-overlay" id="components-empty-overlay" style="display: none;">
+              <div class="empty-icon">🧩</div>
+              <div class="empty-title">No Component Data</div>
+              <div class="empty-desc">Pressure and viscous contributions are read from force.dat / moment.dat.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
               <h3>Equation Residuals</h3>
               <span class="panel-subtitle">Logarithmic Initial Residuals (p, U, k, ω)</span>
             </div>
@@ -895,6 +982,47 @@
               <div class="empty-title">Residuals Awaiting Solver</div>
               <div class="empty-desc">Convergence monitor will plot equation residuals as simpleFoam iterates.</div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Analysis Tables -->
+      <div class="analysis-grid">
+        <div class="panel analysis-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h3>Coefficient Summary</h3>
+              <span class="panel-subtitle" id="coeff-source-badge">Source: --</span>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table mini-table" id="coeff-summary-table">
+              <thead>
+                <tr><th>Coefficient</th><th>Latest</th><th>Window Avg</th><th>Variation</th></tr>
+              </thead>
+              <tbody id="coeff-summary-tbody">
+                <tr><td colspan="4" class="text-center text-muted">No coefficient data</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel analysis-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h3>Force &amp; Moment Breakdown</h3>
+              <span class="panel-subtitle" id="reference-conditions">ρ -- · U -- · Aref --</span>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table mini-table" id="component-breakdown-table">
+              <thead>
+                <tr><th>Component</th><th>Total</th><th>Pressure</th><th>Viscous</th></tr>
+              </thead>
+              <tbody id="component-breakdown-tbody">
+                <tr><td colspan="4" class="text-center text-muted">No component data</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

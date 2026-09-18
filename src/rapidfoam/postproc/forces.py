@@ -207,6 +207,211 @@ def read_forces(
 
 
 # ============================================================
+# COMPONENT / COEFFICIENT PARSING
+# ============================================================
+
+# ESI (OpenCFD) tabular layout used by force.dat and moment.dat.
+FORCE_COMPONENT_COLUMNS = [
+    "total_x", "total_y", "total_z",
+    "pressure_x", "pressure_y", "pressure_z",
+    "viscous_x", "viscous_y", "viscous_z",
+]
+
+# Classic Foundation layout: pressure/viscous force followed by
+# pressure/viscous moment in a single combined file.
+CLASSIC_COMPONENT_COLUMNS = [
+    "pressure_x", "pressure_y", "pressure_z",
+    "viscous_x", "viscous_y", "viscous_z",
+    "pressure_mx", "pressure_my", "pressure_mz",
+    "viscous_mx", "viscous_my", "viscous_mz",
+]
+
+# coefficient.dat columns written by the forceCoeffs function object (v2606).
+COEFFICIENT_COLUMNS = [
+    "Cd", "Cd(f)", "Cd(r)", "Cl", "Cl(f)", "Cl(r)",
+    "CmPitch", "CmRoll", "CmYaw", "Cs", "Cs(f)", "Cs(r)",
+]
+
+_FIELD_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(?:\([A-Za-z0-9_]+\))?")
+
+
+def parse_tabular_dat(
+    segments: list[str],
+) -> tuple[list[float], list[list[float]], Optional[list[str]]]:
+    """Parse OpenFOAM tabular ``postProcessing`` ``*.dat`` text segments.
+
+    Handles the ``# Time ...`` header to recover column names and de-duplicates
+    / overrides samples from restarted runs. Parentheses from classic vector
+    layouts are flattened so numeric columns can be split positionally.
+
+    Returns:
+        ``(times, rows, header_names)`` where ``header_names`` are the column
+        names after ``Time`` (``None`` when the header is unusable).
+    """
+    samples: dict[float, tuple[float, list[float]]] = {}
+    header_names: Optional[list[str]] = None
+
+    for content in segments:
+        if not content:
+            continue
+        segment_started = False
+        for raw in content.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("#"):
+                if header_names is None and "Time" in line:
+                    tokens = _FIELD_TOKEN_RE.findall(line)
+                    if tokens and tokens[0].lower() == "time":
+                        header_names = tokens[1:]
+                continue
+            parts = line.replace("(", " ").replace(")", " ").split()
+            if not parts:
+                continue
+            try:
+                t = float(parts[0])
+                values = [float(v) for v in parts[1:]]
+            except ValueError:
+                continue
+            if not values or not all(math.isfinite(v) for v in values):
+                continue
+            t_key = round(t, 8)
+            if not segment_started:
+                samples = {k: s for k, s in samples.items() if k < t_key}
+                segment_started = True
+            samples[t_key] = (t, values)
+
+    if not samples:
+        return [], [], None
+
+    ordered = [samples[k] for k in sorted(samples)]
+    times = [item[0] for item in ordered]
+    rows = [item[1] for item in ordered]
+    if header_names is not None and len(header_names) != len(rows[0]):
+        header_names = None
+    return times, rows, header_names
+
+
+def _named_columns(rows: list[list[float]], names: list[str]) -> dict[str, list[float]]:
+    return {name: [row[i] for row in rows] for i, name in enumerate(names)}
+
+
+def normalize_component_columns(
+    rows: list[list[float]],
+    header_names: Optional[list[str]] = None,
+) -> dict[str, list[float]]:
+    """Map parsed force/moment rows to canonical total/pressure/viscous keys."""
+    if not rows:
+        return {}
+    ncols = len(rows[0])
+    if header_names and "total_x" in header_names:
+        return _named_columns(rows, header_names)
+    if ncols >= len(CLASSIC_COMPONENT_COLUMNS):
+        cols = _named_columns(rows, CLASSIC_COMPONENT_COLUMNS[:ncols])
+        for axis in ("x", "y", "z"):
+            cols[f"total_{axis}"] = [
+                p + v for p, v in zip(cols[f"pressure_{axis}"], cols[f"viscous_{axis}"])
+            ]
+            cols[f"total_m{axis}"] = [
+                p + v for p, v in zip(cols[f"pressure_m{axis}"], cols[f"viscous_m{axis}"])
+            ]
+        return cols
+    if ncols >= len(FORCE_COMPONENT_COLUMNS):
+        return _named_columns(rows, FORCE_COMPONENT_COLUMNS[:ncols])
+    return {}
+
+
+def normalize_coefficient_columns(
+    rows: list[list[float]],
+    header_names: Optional[list[str]] = None,
+) -> dict[str, list[float]]:
+    """Map parsed coefficient.dat rows to canonical coefficient keys."""
+    if not rows:
+        return {}
+    ncols = len(rows[0])
+    if header_names and len(header_names) == ncols:
+        return _named_columns(rows, header_names)
+    if ncols >= len(COEFFICIENT_COLUMNS):
+        return _named_columns(rows, COEFFICIENT_COLUMNS[:ncols])
+    return {}
+
+
+def find_moment_files(base_dir: str | Path | None = None) -> list[Path]:
+    """Find moment.dat files across time directories."""
+    base = Path(base_dir) if base_dir else Path(".")
+    all_files: list[Path] = []
+
+    forces_dir = base / "postProcessing" / "forces"
+    if forces_dir.exists():
+        for d in sorted(forces_dir.glob("*/"), key=_dir_time):
+            f = d / "moment.dat"
+            if f.exists():
+                all_files.append(f)
+
+    if not all_files:
+        for proc_dir in sorted(base.glob("processor*")):
+            pf = proc_dir / "postProcessing" / "forces"
+            if pf.exists():
+                for d in sorted(pf.glob("*/"), key=_dir_time):
+                    f = d / "moment.dat"
+                    if f.exists():
+                        all_files.append(f)
+                if all_files:
+                    break
+
+    return all_files
+
+
+def find_coefficient_files(base_dir: str | Path | None = None) -> list[Path]:
+    """Find forceCoeffs coefficient.dat files across time directories."""
+    base = Path(base_dir) if base_dir else Path(".")
+    all_files: list[Path] = []
+    names = ("coefficient.dat", "forceCoeffs.dat")
+
+    coeff_dir = base / "postProcessing" / "forceCoeffs"
+    if coeff_dir.exists():
+        for d in sorted(coeff_dir.glob("*/"), key=_dir_time):
+            for name in names:
+                f = d / name
+                if f.exists():
+                    all_files.append(f)
+                    break
+
+    if not all_files:
+        for proc_dir in sorted(base.glob("processor*")):
+            pf = proc_dir / "postProcessing" / "forceCoeffs"
+            if pf.exists():
+                for d in sorted(pf.glob("*/"), key=_dir_time):
+                    for name in names:
+                        f = d / name
+                        if f.exists():
+                            all_files.append(f)
+                            break
+                if all_files:
+                    break
+
+    return all_files
+
+
+def window_stats(values: list[Optional[float]], window: int = 200) -> tuple[Optional[float], Optional[float]]:
+    """Mean and relative standard deviation (%) over the trailing window.
+
+    Mirrors the convergence metric used by :func:`check_convergence` so
+    coefficients and forces report variation on the same basis.
+    """
+    finite = [v for v in values if v is not None and math.isfinite(v)]
+    if not finite:
+        return None, None
+    size = min(window, len(finite))
+    if size < 2:
+        return finite[-1], 100.0
+    sub = finite[-size:]
+    avg = statistics.mean(sub)
+    pct = (statistics.stdev(sub) / abs(avg) * 100) if avg != 0 else 100.0
+    return avg, pct
+
+
+# ============================================================
 # CONVERGENCE CHECK
 # ============================================================
 

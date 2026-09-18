@@ -24,6 +24,7 @@ from rapidfoam.web.server import (
     api_telemetry_forces,
     api_telemetry_residuals,
     api_telemetry_logs,
+    api_telemetry_export,
     api_list_cases,
     api_case_delete,
     api_stl_check_exists,
@@ -738,6 +739,170 @@ class TestWebAPI(unittest.TestCase):
             self.assertEqual(series_times[-1], 550)
         finally:
             shutil.rmtree(case_dir, ignore_errors=True)
+
+    def test_telemetry_coefficients_and_components(self):
+        """Telemetry exposes solver coefficients, force/moment components, and references."""
+        case_name = "test_case_coeff_components"
+        case_dir = Path(f"cases/{case_name}")
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        coeff_dir = case_dir / "postProcessing" / "forceCoeffs" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        coeff_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": case_name,
+            "flow": {"velocity": 20.0},
+            "fluid": {"rho": 1.2},
+            "force_refs": {"Aref": 0.5, "lRef": 1.2},
+            "domain_faces": {"-x": "farField"},
+        }))
+
+        force_lines = [
+            "# Time total_x total_y total_z pressure_x pressure_y pressure_z "
+            "viscous_x viscous_y viscous_z\n"
+        ]
+        moment_lines = list(force_lines)
+        coeff_lines = [
+            "# Force and moment coefficients\n",
+            "# Time Cd Cd(f) Cd(r) Cl Cl(f) Cl(r) CmPitch CmRoll CmYaw Cs Cs(f) Cs(r)\n",
+        ]
+        for i in range(1, 25):
+            force_lines.append(f"{i} 10 -200 -60 9 -195 -50 1 -5 -10\n")
+            moment_lines.append(f"{i} 5 -20 -8 4 -19 -7 1 -1 -1\n")
+            coeff_lines.append(f"{i} 0.5 0.45 0.05 -1.2 -1.1 -0.1 -0.4 0.1 0.05 0.2 0.15 0.05\n")
+        (forces_dir / "force.dat").write_text("".join(force_lines))
+        (forces_dir / "moment.dat").write_text("".join(moment_lines))
+        (coeff_dir / "coefficient.dat").write_text("".join(coeff_lines))
+
+        res = asyncio.run(api_telemetry_forces(case_name))
+        self.assertTrue(res["has_data"])
+        self.assertEqual(res["coefficients"]["source"], "forceCoeffs")
+        self.assertAlmostEqual(res["coefficients"]["summary"]["Cd"]["current"], 0.5, places=4)
+        self.assertAlmostEqual(res["coefficients"]["summary"]["Cl"]["current"], -1.2, places=4)
+        self.assertTrue(res["components"]["available"])
+        self.assertEqual(res["components"]["force"]["latest"]["total"], [10.0, -200.0, -60.0])
+        self.assertEqual(res["components"]["force"]["latest"]["viscous"], [1.0, -5.0, -10.0])
+        self.assertEqual(res["components"]["moment"]["latest"]["total"], [5.0, -20.0, -8.0])
+        self.assertAlmostEqual(res["reference"]["velocity"], 20.0)
+        self.assertAlmostEqual(res["reference"]["Aref"], 0.5)
+
+    def test_telemetry_computed_coefficients_fallback(self):
+        """Without forceCoeffs output, coefficients are computed from reference refs."""
+        case_name = "test_case_computed_coeff"
+        case_dir = Path(f"cases/{case_name}")
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": case_name,
+            "flow": {"velocity": 10.0},
+            "fluid": {"rho": 1.0},
+            "force_refs": {"Aref": 1.0},
+            "domain_faces": {"-x": "farField"},
+        }))
+
+        lines = [
+            "# Time total_x total_y total_z pressure_x pressure_y pressure_z "
+            "viscous_x viscous_y viscous_z\n"
+        ]
+        for i in range(1, 25):
+            lines.append(f"{i} 0 -50 -20 0 -50 -20 0 0 0\n")
+        (forces_dir / "force.dat").write_text("".join(lines))
+
+        res = asyncio.run(api_telemetry_forces(case_name))
+        self.assertEqual(res["coefficients"]["source"], "computed")
+        # q = 0.5 * 1.0 * 10^2 * 1.0 = 50; Cd = 20/50, Cl = 50/50
+        self.assertAlmostEqual(res["coefficients"]["summary"]["Cd"]["current"], 0.4, places=4)
+        self.assertAlmostEqual(res["coefficients"]["summary"]["Cl"]["current"], 1.0, places=4)
+
+    def test_telemetry_reference_overrides(self):
+        """Post-run reference query params recompute coefficients from raw data."""
+        case_name = "test_case_ref_override"
+        case_dir = Path(f"cases/{case_name}")
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": case_name,
+            "flow": {"velocity": 10.0},
+            "fluid": {"rho": 1.0},
+            "force_refs": {"Aref": 1.0, "lRef": 1.0, "CofR": [0.0, 0.0, 0.0]},
+            "domain_faces": {"-x": "farField"},
+        }))
+
+        force_lines = [
+            "# Time total_x total_y total_z pressure_x pressure_y pressure_z "
+            "viscous_x viscous_y viscous_z\n"
+        ]
+        moment_lines = list(force_lines)
+        for i in range(1, 25):
+            force_lines.append(f"{i} 0 -50 -20 0 -50 -20 0 0 0\n")
+            moment_lines.append(f"{i} 0 0 0 0 0 0 0 0 0\n")
+        (forces_dir / "force.dat").write_text("".join(force_lines))
+        (forces_dir / "moment.dat").write_text("".join(moment_lines))
+
+        base = asyncio.run(api_telemetry_forces(case_name))
+        self.assertEqual(base["coefficients"]["source"], "computed")
+        self.assertAlmostEqual(base["coefficients"]["summary"]["Cd"]["current"], 0.4, places=4)
+
+        # Doubling Aref halves Cd; source becomes recomputed.
+        over = asyncio.run(api_telemetry_forces(case_name, aref=2.0))
+        self.assertEqual(over["coefficients"]["source"], "recomputed")
+        self.assertAlmostEqual(over["coefficients"]["summary"]["Cd"]["current"], 0.2, places=4)
+        self.assertAlmostEqual(over["reference"]["Aref"], 2.0)
+
+        # q scales with V^2: 10 -> 20 m/s divides Cd by 4.
+        faster = asyncio.run(api_telemetry_forces(case_name, velocity=20.0))
+        self.assertAlmostEqual(faster["coefficients"]["summary"]["Cd"]["current"], 0.1, places=4)
+
+        # Shifting CofR moves the pitching moment: M_new = M_old + (r_run - r_new) x F.
+        shifted = asyncio.run(api_telemetry_forces(case_name, cofr="0,0.5,0"))
+        # (0,-0.5,0) x (0,-50,-20) = (10, 0, 0); q=50, A=1, lRef=1 -> CmPitch = 0.2
+        self.assertAlmostEqual(shifted["coefficients"]["summary"]["CmPitch"]["current"], 0.2, places=4)
+
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(api_telemetry_forces(case_name, cofr="1,2"))
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_telemetry_export_csv(self):
+        """CSV export includes force history and aligned coefficient columns."""
+        case_name = "test_case_export"
+        case_dir = Path(f"cases/{case_name}")
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        coeff_dir = case_dir / "postProcessing" / "forceCoeffs" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        coeff_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        (case_dir / "case_config.json").write_text(json.dumps({
+            "case_name": case_name,
+            "flow": {"velocity": 20.0},
+            "fluid": {"rho": 1.2},
+            "force_refs": {"Aref": 0.5},
+            "domain_faces": {"-x": "farField"},
+        }))
+        force_lines = [
+            "# Time total_x total_y total_z pressure_x pressure_y pressure_z "
+            "viscous_x viscous_y viscous_z\n"
+        ]
+        coeff_lines = [
+            "# Force and moment coefficients\n",
+            "# Time Cd Cd(f) Cd(r) Cl Cl(f) Cl(r) CmPitch CmRoll CmYaw Cs Cs(f) Cs(r)\n",
+        ]
+        for i in range(1, 25):
+            force_lines.append(f"{i} 10 -200 -60 10 -200 -60 0 0 0\n")
+            coeff_lines.append(f"{i} 0.5 0.45 0.05 -1.2 -1.1 -0.1 -0.4 0.1 0.05 0.2 0.15 0.05\n")
+        (forces_dir / "force.dat").write_text("".join(force_lines))
+        (coeff_dir / "coefficient.dat").write_text("".join(coeff_lines))
+
+        response = asyncio.run(api_telemetry_export(case_name, "csv"))
+        text = response.body.decode("utf-8")
+        self.assertIn("iteration,drag_N,downforce_N,L_over_D,Cd,Cl", text)
+        self.assertIn("attachment", response.headers.get("content-disposition", ""))
+        self.assertEqual(len(text.strip().splitlines()), 25)
 
     def test_api_list_cases_remote_modified_timestamp_update(self):
         """Test that remote cases with newer modified_ts update local_entry and sort properly."""

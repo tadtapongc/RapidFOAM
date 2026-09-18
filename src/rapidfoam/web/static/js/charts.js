@@ -6,8 +6,12 @@ class TelemetryCharts {
   constructor() {
     this.forcesChart = null;
     this.residualsChart = null;
+    this.coefficientsChart = null;
+    this.componentsChart = null;
     this.initForcesChart();
     this.initResidualsChart();
+    this.initCoefficientsChart();
+    this.initComponentsChart();
   }
 
   computeRollingAverage(values, windowSize = 35) {
@@ -227,6 +231,149 @@ class TelemetryCharts {
     });
   }
 
+  initCoefficientsChart() {
+    const ctx = document.getElementById('chart-coefficients');
+    if (!ctx || typeof Chart === 'undefined') return;
+
+    this.coefficientsChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'Cd', data: [], borderColor: '#f43f5e', borderWidth: 2, pointRadius: 0, tension: 0.2 },
+          { label: 'Cl', data: [], borderColor: '#00d2ff', borderWidth: 2, pointRadius: 0, tension: 0.2 },
+          { label: 'Cs', data: [], borderColor: '#10b981', borderWidth: 1.8, pointRadius: 0, tension: 0.2 },
+          { label: 'CmPitch', data: [], borderColor: '#a855f7', borderWidth: 1.8, pointRadius: 0, tension: 0.2 },
+          { label: 'CmRoll', data: [], borderColor: '#f59e0b', borderWidth: 1.4, pointRadius: 0, tension: 0.2, hidden: true },
+          { label: 'CmYaw', data: [], borderColor: '#6366f1', borderWidth: 1.4, pointRadius: 0, tension: 0.2, hidden: true },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: {
+              color: '#94a3b8',
+              font: { family: "'Inter', sans-serif", size: 10, weight: '500' },
+              boxWidth: 10,
+              padding: 8,
+              usePointStyle: true,
+              pointStyle: 'circle',
+            },
+          },
+          tooltip: {
+            backgroundColor: '#0c0e14',
+            titleColor: '#38bdf8',
+            bodyColor: '#f1f5f9',
+            borderColor: '#252c3c',
+            borderWidth: 1,
+            padding: 10,
+            cornerRadius: 6,
+            callbacks: {
+              label: (context) => {
+                const label = context.dataset.label || '';
+                const val = context.parsed.y;
+                return `${label}: ${val !== null && val !== undefined ? val.toFixed(4) : '--'}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            title: { display: true, text: 'Iteration', color: '#64748b', font: { size: 10 } },
+            ticks: { color: '#64748b', maxTicksLimit: 10, font: { family: "'JetBrains Mono', monospace", size: 10 } },
+            grid: { color: '#161b26' },
+          },
+          y: {
+            type: 'linear',
+            title: { display: true, text: 'Coefficient (-)', color: '#94a3b8', font: { size: 10 } },
+            ticks: { color: '#64748b', font: { family: "'JetBrains Mono', monospace", size: 10 } },
+            grid: { color: '#161b26' },
+          },
+        },
+      },
+    });
+  }
+
+  initComponentsChart() {
+    const ctx = document.getElementById('chart-components');
+    if (!ctx || typeof Chart === 'undefined') return;
+
+    this.componentsChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'],
+        datasets: [
+          {
+            label: 'Viscous',
+            data: [],
+            backgroundColor: 'rgba(168, 85, 247, 0.75)',
+            borderColor: '#a855f7',
+            borderWidth: 1,
+            stack: 'components',
+          },
+          {
+            label: 'Pressure',
+            data: [],
+            backgroundColor: 'rgba(0, 210, 255, 0.75)',
+            borderColor: '#00d2ff',
+            borderWidth: 1,
+            stack: 'components',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: {
+              color: '#94a3b8',
+              font: { family: "'Inter', sans-serif", size: 10, weight: '500' },
+              boxWidth: 10,
+              padding: 8,
+              usePointStyle: true,
+              pointStyle: 'circle',
+            },
+          },
+          tooltip: {
+            backgroundColor: '#0c0e14',
+            titleColor: '#38bdf8',
+            bodyColor: '#f1f5f9',
+            borderColor: '#252c3c',
+            borderWidth: 1,
+            padding: 10,
+            cornerRadius: 6,
+            callbacks: {
+              label: (context) => {
+                const label = context.dataset.label || '';
+                const val = context.parsed.y;
+                return `${label}: ${val !== null && val !== undefined ? val.toFixed(2) : '--'}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            ticks: { color: '#64748b', font: { family: "'JetBrains Mono', monospace", size: 10 } },
+            grid: { display: false },
+          },
+          y: {
+            title: { display: true, text: 'Latest Contribution [N] / [N·m]', color: '#94a3b8', font: { size: 10 } },
+            ticks: { color: '#64748b', font: { family: "'JetBrains Mono', monospace", size: 10 } },
+            grid: { color: '#161b26' },
+          },
+        },
+      },
+    });
+  }
+
   updateForces(series, dragAxis = null, downforceAxis = null) {
     if (!this.forcesChart || !series) return;
     const iters = series.iterations || [];
@@ -274,6 +421,31 @@ class TelemetryCharts {
     this.residualsChart.update('none');
   }
 
+  updateCoefficients(series) {
+    if (!this.coefficientsChart || !series) return;
+    this.coefficientsChart.data.labels = series.iterations || [];
+
+    this.coefficientsChart.data.datasets.forEach((ds) => {
+      const values = series[ds.label];
+      ds.data = Array.isArray(values) ? values : [];
+    });
+    this.coefficientsChart.update('none');
+  }
+
+  updateComponents(forceLatest, momentLatest) {
+    if (!this.componentsChart) return;
+    const force = forceLatest || {};
+    const moment = momentLatest || {};
+    const pick = (obj) => (Array.isArray(obj) ? obj : [null, null, null]);
+
+    const pressure = [...pick(force.pressure), ...pick(moment.pressure)];
+    const viscous = [...pick(force.viscous), ...pick(moment.viscous)];
+
+    this.componentsChart.data.datasets[0].data = viscous;
+    this.componentsChart.data.datasets[1].data = pressure;
+    this.componentsChart.update('none');
+  }
+
   clear() {
     if (this.forcesChart) {
       this.forcesChart.data.labels = [];
@@ -288,6 +460,19 @@ class TelemetryCharts {
         ds.data = [];
       });
       this.residualsChart.update('none');
+    }
+    if (this.coefficientsChart) {
+      this.coefficientsChart.data.labels = [];
+      this.coefficientsChart.data.datasets.forEach((ds) => {
+        ds.data = [];
+      });
+      this.coefficientsChart.update('none');
+    }
+    if (this.componentsChart) {
+      this.componentsChart.data.datasets.forEach((ds) => {
+        ds.data = [];
+      });
+      this.componentsChart.update('none');
     }
   }
 }

@@ -21,7 +21,7 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -37,11 +37,16 @@ from rapidfoam.geometry import (
 )
 from rapidfoam.postproc.forces import (
     check_convergence,
+    find_coefficient_files,
     find_force_files,
-    force_layout_from_header,
+    find_moment_files,
     is_symmetry_case,
     load_axis_config,
+    normalize_coefficient_columns,
+    normalize_component_columns,
+    parse_tabular_dat,
     read_forces,
+    window_stats,
 )
 from rapidfoam.postproc.residuals import find_residual_files, read_residuals
 from rapidfoam.stl_utils import stl_info
@@ -796,103 +801,298 @@ async def api_case_download_progress(case_name: str) -> dict[str, Any]:
     return _get_download_progress(case_name)
 
 
+def _read_text_files(paths: list[Path]) -> list[str]:
+    """Read a list of files into memory, skipping unreadable entries."""
+    segments: list[str] = []
+    for path in paths:
+        try:
+            segments.append(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            pass
+    return segments
+
+
+async def _read_remote_dat_segments(case_dir: str, subdir: str, filename: str) -> list[str]:
+    """Read every ``<time>/<filename>`` under a remote postProcessing subdir."""
+    base = f"{case_dir}/postProcessing/{subdir}"
+    cmd = f"ls -1 {shlex.quote(base)} 2>/dev/null | sort -n"
+    code, out, _ = await asyncio.to_thread(ssh_client.run_command, cmd, timeout=5)
+    segments: list[str] = []
+    if code != 0 or not out.strip():
+        return segments
+    for entry in out.strip().splitlines():
+        entry = entry.strip()
+        if re.match(r"^[0-9.]+$", entry):
+            content = await asyncio.to_thread(
+                ssh_client.read_remote_text, f"{base}/{entry}/{filename}"
+            )
+            if content:
+                segments.append(content)
+    return segments
+
+
+def _subsample_indices(count: int, max_pts: int = 400) -> list[int]:
+    """Evenly spaced indices that always retain the first and last sample."""
+    if count <= max_pts:
+        return list(range(count))
+    step = math.ceil(count / max_pts)
+    indices = list(range(0, count, step))
+    if indices[-1] != count - 1:
+        indices.append(count - 1)
+    return indices
+
+
+def _downsample_columns(cols: dict[str, list[float]], indices: list[int]) -> dict[str, list[float]]:
+    return {
+        name: [round(values[i], 4) for i in indices if i < len(values)]
+        for name, values in cols.items()
+    }
+
+
+def _latest_vector(cols: dict[str, list[float]], kind: str) -> Optional[list[float]]:
+    keys = [f"{kind}_{axis}" for axis in ("x", "y", "z")]
+    if all(key in cols and cols[key] for key in keys):
+        return [round(cols[key][-1], 4) for key in keys]
+    return None
+
+
+def _load_reference_quantities(
+    cfg_path: Optional[str], case_dir: Optional[Path] = None
+) -> dict[str, Any]:
+    rho, velocity, aref, lref = 1.225, 0.0, 1.0, 1.0
+    cofr: list[float] = [0.0, 0.0, 0.0]
+    cfg_obj: Optional[dict[str, Any]] = None
+    for candidate in (cfg_path, str(case_dir / "case_config.json") if case_dir else None):
+        if not candidate:
+            continue
+        try:
+            with open(candidate, encoding="utf-8") as handle:
+                cfg_obj = json.load(handle)
+            break
+        except Exception:
+            continue
+    if cfg_obj:
+        try:
+            rho = float(cfg_obj.get("fluid", {}).get("rho", rho) or rho)
+            velocity = float(cfg_obj.get("flow", {}).get("velocity", 0.0) or 0.0)
+            aref = float(cfg_obj.get("force_refs", {}).get("Aref", 1.0) or 1.0)
+            lref = float(cfg_obj.get("force_refs", {}).get("lRef", 1.0) or 1.0)
+            raw_cofr = cfg_obj.get("force_refs", {}).get("CofR")
+            if isinstance(raw_cofr, (list, tuple)) and len(raw_cofr) == 3:
+                cofr = [float(v) for v in raw_cofr]
+        except Exception:
+            pass
+    return {
+        "rho": round(rho, 6),
+        "velocity": round(velocity, 4),
+        "Aref": round(aref, 6),
+        "lRef": round(lref, 6),
+        "CofR": [round(v, 6) for v in cofr],
+        "dynamic_pressure": round(0.5 * rho * velocity * velocity, 4),
+    }
+
+
+def _axis_vector(index: int, sign: int) -> tuple[float, float, float]:
+    vector = [0.0, 0.0, 0.0]
+    vector[index] = float(sign)
+    return (vector[0], vector[1], vector[2])
+
+
+def _dot(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _cross(a: tuple[float, ...], b: tuple[float, ...]) -> tuple[float, float, float]:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+
+
+def _compute_coefficients(
+    force_cols: dict[str, list[float]],
+    moment_cols: dict[str, list[float]],
+    drag_idx: int,
+    drag_sign: int,
+    df_idx: int,
+    df_sign: int,
+    rho: float,
+    velocity: float,
+    aref: float,
+    lref: float,
+    cofr_run: list[float],
+    cofr_effective: list[float],
+) -> dict[str, list[float]]:
+    """Normalize raw force/moment histories with configurable reference values.
+
+    Moments from the run are taken about ``cofr_run``; when ``cofr_effective``
+    differs, they are shifted with ``M_new = M_old + (r_run - r_new) x F``.
+    Axes follow the same conventions as the OpenFOAM ``forceCoeffs`` function
+    object (dragging/lift directions plus pitch/roll/yaw about drag/lift/side).
+    """
+    dynamic_pressure = 0.5 * rho * velocity * velocity
+    if dynamic_pressure <= 0 or aref <= 0:
+        return {}
+    force_keys = ("total_x", "total_y", "total_z")
+    if not all(key in force_cols and force_cols[key] for key in force_keys):
+        return {}
+
+    drag_dir = _axis_vector(drag_idx, drag_sign)
+    lift_dir = _axis_vector(df_idx, df_sign)
+    side_dir = _cross(lift_dir, drag_dir)
+    roll_axis, pitch_axis, yaw_axis = drag_dir, side_dir, lift_dir
+
+    count = len(force_cols["total_x"])
+    has_moment = all(
+        key in moment_cols and len(moment_cols[key]) == count for key in force_keys
+    )
+    shift = None
+    if has_moment and list(cofr_run) != list(cofr_effective):
+        shift = (
+            cofr_run[0] - cofr_effective[0],
+            cofr_run[1] - cofr_effective[1],
+            cofr_run[2] - cofr_effective[2],
+        )
+
+    q_area = dynamic_pressure * aref
+    q_area_length = q_area * lref if lref > 0 else 0.0
+
+    series: dict[str, list[float]] = {"Cd": [], "Cl": [], "Cs": []}
+    if has_moment and q_area_length > 0:
+        series["CmPitch"] = []
+        series["CmRoll"] = []
+        series["CmYaw"] = []
+
+    for index in range(count):
+        force = (
+            force_cols["total_x"][index],
+            force_cols["total_y"][index],
+            force_cols["total_z"][index],
+        )
+        series["Cd"].append(_dot(force, drag_dir) / q_area)
+        series["Cl"].append(_dot(force, lift_dir) / q_area)
+        series["Cs"].append(_dot(force, side_dir) / q_area)
+
+        if has_moment and q_area_length > 0:
+            moment = (
+                moment_cols["total_x"][index],
+                moment_cols["total_y"][index],
+                moment_cols["total_z"][index],
+            )
+            if shift:
+                offset = _cross(shift, force)
+                moment = (
+                    moment[0] + offset[0],
+                    moment[1] + offset[1],
+                    moment[2] + offset[2],
+                )
+            series["CmPitch"].append(_dot(moment, pitch_axis) / q_area_length)
+            series["CmRoll"].append(_dot(moment, roll_axis) / q_area_length)
+            series["CmYaw"].append(_dot(moment, yaw_axis) / q_area_length)
+
+    return series
+
+
 @app.get("/api/telemetry/forces")
-async def api_telemetry_forces(case_name: str) -> dict[str, Any]:
-    """Fetch force convergence telemetry with correct axes and symmetry doubling."""
+async def api_telemetry_forces(
+    case_name: str,
+    aref: Optional[float] = None,
+    lref: Optional[float] = None,
+    rho: Optional[float] = None,
+    velocity: Optional[float] = None,
+    cofr: Optional[str] = None,
+) -> dict[str, Any]:
+    """Fetch force, coefficient, and component telemetry for a case.
+
+    Drag/downforce histories are axis-mapped and doubled for symmetry cases.
+    Coefficient histories prefer the solver's ``forceCoeffs`` output, but can
+    be recomputed from raw forces using post-run reference overrides supplied
+    as ``aref``/``lref``/``rho``/``velocity``/``cofr`` query parameters.
+    """
     if not CASE_NAME_REGEX.match(case_name):
         raise HTTPException(status_code=400, detail="Invalid case_name")
 
-    # 1. Resolve axis and symmetry configuration
     local_case = PROJECT_ROOT / "cases" / case_name
     local_cfg = PROJECT_ROOT / "configs" / f"{case_name}.json"
-    cfg_to_use = str(local_cfg) if local_cfg.is_file() else None
+    cfg_path = str(local_cfg) if local_cfg.is_file() else None
+    case_dir = local_case if local_case.is_dir() else None
 
     drag_idx, drag_sign, df_idx, df_sign, drag_axis_name, df_axis_name = load_axis_config(
-        config_path=cfg_to_use,
-        case_dir=local_case if local_case.is_dir() else None,
+        config_path=cfg_path, case_dir=case_dir
     )
-    is_sym = is_symmetry_case(
-        config_path=cfg_to_use,
-        case_dir=local_case if local_case.is_dir() else None,
-    )
+    is_sym = is_symmetry_case(config_path=cfg_path, case_dir=case_dir)
     sym_scale = 2.0 if is_sym else 1.0
+    reference = _load_reference_quantities(cfg_path, case_dir)
+    cofr_run = list(reference.get("CofR", [0.0, 0.0, 0.0]))
 
-    times: list[float] = []
-    drags: list[float] = []
-    downforces: list[float] = []
+    # Post-run reference overrides from the inline telemetry editor. Blank
+    # fields fall back to the case configuration.
+    reference_overridden = any(
+        value is not None for value in (aref, lref, rho, velocity, cofr)
+    )
+    if rho is not None:
+        reference["rho"] = round(float(rho), 6)
+    if velocity is not None:
+        reference["velocity"] = round(float(velocity), 4)
+    if aref is not None:
+        reference["Aref"] = round(float(aref), 6)
+    if lref is not None:
+        reference["lRef"] = round(float(lref), 6)
+    cofr_effective = cofr_run
+    if cofr is not None:
+        try:
+            parsed_cofr = [float(part) for part in str(cofr).split(",")]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="cofr must be three comma-separated numbers")
+        if len(parsed_cofr) != 3:
+            raise HTTPException(status_code=400, detail="cofr must be three comma-separated numbers")
+        cofr_effective = parsed_cofr
+    reference["CofR"] = [round(v, 6) for v in cofr_effective]
+    reference["dynamic_pressure"] = round(
+        0.5 * reference["rho"] * reference["velocity"] * reference["velocity"], 4
+    )
 
-    # 2. Check remote cluster first if connected
+    force_segments: list[str] = []
+    moment_segments: list[str] = []
+    coeff_segments: list[str] = []
+
     if ssh_client.is_connected:
-        remote_forces_dir = f"{ssh_client.remote_repo_path}/cases/{case_name}/postProcessing/forces"
-        quoted_dir = shlex.quote(remote_forces_dir)
-        cmd = f"ls -1 {quoted_dir} 2>/dev/null | sort -n"
-        code, out, _ = await asyncio.to_thread(ssh_client.run_command, cmd, timeout=5)
-        if code == 0 and out.strip():
-            subdirs = [d.strip() for d in out.strip().splitlines() if d.strip()]
-            all_content = []
-            for subdir in subdirs:
-                if re.match(r"^[0-9\.]+$", subdir):
-                    fpath = f"{remote_forces_dir}/{subdir}/force.dat"
-                    c = await asyncio.to_thread(ssh_client.read_remote_text, fpath)
-                    if c:
-                        all_content.append(c)
-            if all_content:
-                samples: dict[float, tuple[float, float, float]] = {}
-                for fc in all_content:
-                    segment_started = False
-                    columnar_total = True
-                    for line in fc.splitlines():
-                        line = line.strip()
-                        if not line:
-                            continue
-                        if line.startswith("#"):
-                            layout = force_layout_from_header(line)
-                            if layout is not None:
-                                columnar_total = layout
-                            continue
-                        parts = line.replace("(", " ").replace(")", " ").split()
-                        if len(parts) >= 10:
-                            try:
-                                vals = [float(v) for v in parts[:10]]
-                                if not all(math.isfinite(v) for v in vals):
-                                    continue
-                                t = vals[0]
-                                t_key = round(t, 8)
-                                if not segment_started:
-                                    samples = {k: s for k, s in samples.items() if k < t_key}
-                                    segment_started = True
-                                if columnar_total:
-                                    drag_value = vals[1 + drag_idx]
-                                    df_value = vals[1 + df_idx]
-                                else:
-                                    drag_value = vals[1 + drag_idx] + vals[4 + drag_idx]
-                                    df_value = vals[1 + df_idx] + vals[4 + df_idx]
-                                samples[t_key] = (
-                                    t,
-                                    drag_value * drag_sign * sym_scale,
-                                    df_value * df_sign * sym_scale,
-                                )
-                            except ValueError:
-                                continue
-                if samples:
-                    sorted_samples = sorted(samples.values())
-                    times = [s[0] for s in sorted_samples]
-                    drags = [s[1] for s in sorted_samples]
-                    downforces = [s[2] for s in sorted_samples]
+        remote_case_dir = f"{ssh_client.remote_repo_path}/cases/{case_name}"
+        try:
+            force_segments = await _read_remote_dat_segments(remote_case_dir, "forces", "force.dat")
+            moment_segments = await _read_remote_dat_segments(remote_case_dir, "forces", "moment.dat")
+            coeff_segments = await _read_remote_dat_segments(
+                remote_case_dir, "forceCoeffs", "coefficient.dat"
+            )
+        except Exception as exc:
+            log.warning("Remote force telemetry read failed for %s: %s", case_name, exc)
 
-    # 3. Fall back to local case directory
-    if not times and local_case.is_dir():
-        files = find_force_files(local_case)
-        if files:
-            try:
-                times, drags, downforces = read_forces(
-                    files, drag_idx, drag_sign, df_idx, df_sign
-                )
-                if is_sym:
-                    drags = [d * 2.0 for d in drags]
-                    downforces = [df * 2.0 for df in downforces]
-            except Exception as exc:
-                log.warning("Could not read local forces: %s", exc)
+    if not force_segments and local_case.is_dir():
+        force_segments = _read_text_files(find_force_files(local_case))
+        moment_segments = _read_text_files(find_moment_files(local_case))
+        coeff_segments = _read_text_files(find_coefficient_files(local_case))
+
+    times, force_rows, force_header = parse_tabular_dat(force_segments)
+    force_cols = normalize_component_columns(force_rows, force_header)
+
+    raw_drags: list[float] = []
+    raw_downforces: list[float] = []
+    if times:
+        drag_key = f"total_{'xyz'[drag_idx]}"
+        df_key = f"total_{'xyz'[df_idx]}"
+        if drag_key in force_cols and df_key in force_cols:
+            raw_drags = [v * drag_sign for v in force_cols[drag_key]]
+            raw_downforces = [v * df_sign for v in force_cols[df_key]]
+        else:
+            legacy_files = find_force_files(local_case) if local_case.is_dir() else []
+            if legacy_files:
+                try:
+                    times, raw_drags, raw_downforces = read_forces(
+                        legacy_files, drag_idx, drag_sign, df_idx, df_sign
+                    )
+                except Exception as exc:
+                    log.warning("Could not read forces for %s: %s", case_name, exc)
 
     if not times:
         case_stage = "Generated"
@@ -913,24 +1113,103 @@ async def api_telemetry_forces(case_name: str) -> dict[str, Any]:
             "has_mesh": has_mesh,
             "run_command": "./Allrun.parallel",
             "message": f"No force.dat found yet for case '{case_name}'. Current stage: {case_stage}.",
+            "reference": reference,
+            "coefficients": {"available": False, "summary": {}, "series": {}},
+            "components": {"available": False},
         }
+
+    # Apply symmetry doubling to full-car projections.
+    drags = [v * sym_scale for v in raw_drags]
+    downforces = [v * sym_scale for v in raw_downforces]
+    if sym_scale != 1.0 and force_cols:
+        force_cols = {name: [v * sym_scale for v in values] for name, values in force_cols.items()}
 
     converged, d_pct, f_pct, d_avg, f_avg = check_convergence(drags, downforces)
     ld_ratio = abs(f_avg / d_avg) if abs(d_avg) > 1e-3 else 0.0
 
-    max_pts = 400
-    if len(times) > max_pts:
-        step = math.ceil(len(times) / max_pts)
-        sub_indices = list(range(0, len(times), step))
-        if sub_indices[-1] != len(times) - 1:
-            sub_indices.append(len(times) - 1)
-        times_sub = [times[i] for i in sub_indices]
-        drags_sub = [drags[i] for i in sub_indices]
-        downforces_sub = [downforces[i] for i in sub_indices]
+    # ---- Components (force + moment), scaled to full-car if symmetric ----
+    moment_times, moment_rows, moment_header = parse_tabular_dat(moment_segments)
+    moment_cols = normalize_component_columns(moment_rows, moment_header)
+    if sym_scale != 1.0 and moment_cols:
+        moment_cols = {name: [v * sym_scale for v in values] for name, values in moment_cols.items()}
+
+    # ---- Coefficients (solver output, recomputed, or config fallback) ----
+    coeff_times, coeff_rows, coeff_header = parse_tabular_dat(coeff_segments)
+    coeff_cols = normalize_coefficient_columns(coeff_rows, coeff_header)
+    coeff_source = "forceCoeffs"
+    recomputed: dict[str, list[float]] = {}
+    if reference_overridden and force_cols:
+        recomputed = _compute_coefficients(
+            force_cols,
+            moment_cols,
+            drag_idx,
+            drag_sign,
+            df_idx,
+            df_sign,
+            reference["rho"],
+            reference["velocity"],
+            reference["Aref"],
+            reference["lRef"],
+            cofr_run,
+            cofr_effective,
+        )
+    if recomputed:
+        coeff_cols = recomputed
+        coeff_times = times
+        coeff_source = "recomputed"
+    elif coeff_cols:
+        if sym_scale != 1.0:
+            coeff_cols = {name: [v * sym_scale for v in values] for name, values in coeff_cols.items()}
     else:
-        times_sub = times
-        drags_sub = drags
-        downforces_sub = downforces
+        velocity_ref = reference["velocity"]
+        dynamic_pressure_area = (
+            0.5 * reference["rho"] * velocity_ref * velocity_ref * reference["Aref"]
+        )
+        if dynamic_pressure_area > 0:
+            coeff_cols = {
+                "Cd": [v / dynamic_pressure_area for v in drags],
+                "Cl": [v / dynamic_pressure_area for v in downforces],
+            }
+            coeff_times = times
+            coeff_source = "computed"
+
+    coeff_summary: dict[str, dict[str, Optional[float]]] = {}
+    for name in ("Cd", "Cl", "Cs", "CmPitch", "CmRoll", "CmYaw"):
+        values = coeff_cols.get(name)
+        if values:
+            avg, pct = window_stats(values)
+            coeff_summary[name] = {
+                "current": round(values[-1], 5),
+                "avg": round(avg, 5) if avg is not None else None,
+                "pct": round(pct, 3) if pct is not None else None,
+            }
+
+    sub_indices = _subsample_indices(len(times))
+    coeff_sub_indices = _subsample_indices(len(coeff_times)) if coeff_times else []
+
+    # ---- Force & moment component breakdown ----
+    moment_sub_indices = _subsample_indices(len(moment_times)) if moment_times else []
+
+    force_components = {
+        "available": bool(force_cols),
+        "iterations": [times[i] for i in sub_indices],
+        "series": _downsample_columns(force_cols, sub_indices),
+        "latest": {
+            "total": _latest_vector(force_cols, "total"),
+            "pressure": _latest_vector(force_cols, "pressure"),
+            "viscous": _latest_vector(force_cols, "viscous"),
+        },
+    }
+    moment_components = {
+        "available": bool(moment_cols),
+        "iterations": [moment_times[i] for i in moment_sub_indices],
+        "series": _downsample_columns(moment_cols, moment_sub_indices),
+        "latest": {
+            "total": _latest_vector(moment_cols, "total"),
+            "pressure": _latest_vector(moment_cols, "pressure"),
+            "viscous": _latest_vector(moment_cols, "viscous"),
+        },
+    }
 
     return {
         "has_data": True,
@@ -946,12 +1225,84 @@ async def api_telemetry_forces(case_name: str) -> dict[str, Any]:
         "drag_pct": round(d_pct, 3),
         "downforce_pct": round(f_pct, 3),
         "ld_ratio": round(ld_ratio, 3),
+        "reference": reference,
         "series": {
-            "iterations": times_sub,
-            "drag": [round(v, 3) for v in drags_sub],
-            "downforce": [round(v, 3) for v in downforces_sub],
+            "iterations": [times[i] for i in sub_indices],
+            "drag": [round(drags[i], 3) for i in sub_indices],
+            "downforce": [round(downforces[i], 3) for i in sub_indices],
+        },
+        "coefficients": {
+            "available": bool(coeff_cols),
+            "source": coeff_source if coeff_cols else None,
+            "summary": coeff_summary,
+            "series": {
+                "iterations": [coeff_times[i] for i in coeff_sub_indices],
+                **_downsample_columns(coeff_cols, coeff_sub_indices),
+            },
+        },
+        "components": {
+            "available": bool(force_cols) or bool(moment_cols),
+            "force": force_components,
+            "moment": moment_components,
         },
     }
+
+
+@app.get("/api/telemetry/export")
+async def api_telemetry_export(case_name: str, format: str = "csv") -> Response:
+    """Export the telemetry histories as CSV or JSON for offline analysis."""
+    if not CASE_NAME_REGEX.match(case_name):
+        raise HTTPException(status_code=400, detail="Invalid case_name")
+
+    data = await api_telemetry_forces(case_name)
+    if not data.get("has_data"):
+        raise HTTPException(status_code=404, detail=f"No telemetry available for case '{case_name}'")
+
+    if format.lower() == "json":
+        payload = json.dumps(data, indent=2)
+        return Response(
+            content=payload,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{case_name}_telemetry.json"'},
+        )
+
+    series = data.get("series", {})
+    iterations = series.get("iterations", [])
+    drags = series.get("drag", [])
+    downforces = series.get("downforce", [])
+
+    coeff_series = (data.get("coefficients") or {}).get("series", {})
+    coeff_names = [name for name in ("Cd", "Cl", "Cs", "CmPitch", "CmRoll", "CmYaw") if name in coeff_series]
+    coeff_lookup: dict[str, dict[float, Optional[float]]] = {}
+    for name in coeff_names:
+        coeff_lookup[name] = {
+            round(t, 8): v
+            for t, v in zip(coeff_series.get("iterations", []), coeff_series[name])
+        }
+
+    header = ["iteration", "drag_N", "downforce_N", "L_over_D"] + coeff_names
+    lines = [",".join(header)]
+    for index, iteration in enumerate(iterations):
+        drag = drags[index] if index < len(drags) else None
+        downforce = downforces[index] if index < len(downforces) else None
+        ld = abs(downforce / drag) if drag not in (None, 0) and downforce is not None else None
+        row = [
+            str(iteration),
+            "" if drag is None else f"{drag:.4f}",
+            "" if downforce is None else f"{downforce:.4f}",
+            "" if ld is None else f"{ld:.4f}",
+        ]
+        key = round(float(iteration), 8)
+        for name in coeff_names:
+            value = coeff_lookup[name].get(key)
+            row.append("" if value is None else f"{value:.6f}")
+        lines.append(",".join(row))
+
+    return Response(
+        content="\n".join(lines) + "\n",
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{case_name}_telemetry.csv"'},
+    )
 
 
 def parse_residuals_from_log(log_text: str) -> dict[float, dict[str, float]]:
