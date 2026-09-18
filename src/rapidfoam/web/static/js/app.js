@@ -104,6 +104,8 @@ class CFDApp {
     this.pollInterval = null;
     this.telemetryPollingActive = true;
     this.telemetryRefOverrides = {};
+    this.telemetryRequestId = 0;
+    this.telemetryInFlight = false;
     this.archiveCases = [];
     this.currentArchiveFilter = 'all';
     this.archiveSearchTerm = '';
@@ -229,7 +231,7 @@ class CFDApp {
         this.refreshQueue();
       }
       const activeTab = document.querySelector('.nav-tab.active');
-      if (this.telemetryPollingActive && activeTab && activeTab.dataset.tab === 'telemetry-tab') {
+      if (this.telemetryPollingActive && !this.telemetryInFlight && activeTab && activeTab.dataset.tab === 'telemetry-tab') {
         this.pollTelemetry();
       }
     }, 5000);
@@ -1710,9 +1712,10 @@ class CFDApp {
         } else {
           this.showToast(`Generated case ${data.case_name} on cluster!`, 'success');
         }
-        // Switch to Telemetry tab to monitor
-        document.getElementById('tab-btn-telemetry')?.click();
+        // Switch to Telemetry tab to monitor (set the case first so the tab
+        // activation fetches the newly generated case).
         this.addTelemetryCase(data.case_name);
+        document.getElementById('tab-btn-telemetry')?.click();
         this.refreshQueue();
       } else {
         this.showToast(`Config saved locally for ${data.case_name}`, 'success');
@@ -2251,7 +2254,7 @@ class CFDApp {
   // -------------------------------------------------------------
   bindTelemetryEvents() {
     document.getElementById('btn-refresh-telemetry')?.addEventListener('click', () => this.pollTelemetry());
-    document.getElementById('telemetry-case-select')?.addEventListener('change', () => this.pollTelemetry());
+    document.getElementById('telemetry-case-select')?.addEventListener('change', () => this.onTelemetryCaseChange());
     document.getElementById('btn-tail-log')?.addEventListener('click', () => this.fetchLogTail());
     document.getElementById('select-log-type')?.addEventListener('change', () => this.fetchLogTail());
     document.getElementById('btn-export-telemetry')?.addEventListener('click', () => this.exportTelemetry());
@@ -2408,12 +2411,98 @@ class CFDApp {
       select.appendChild(opt);
     }
     select.value = caseName;
+    // The select's change event does not fire for programmatic changes, so
+    // prepare the switch here; the caller triggers the fetch.
+    this.beginTelemetryCaseSwitch(caseName);
+  }
+
+  onTelemetryCaseChange() {
+    const select = document.getElementById('telemetry-case-select');
+    const caseName = select ? select.value : '';
+    this.beginTelemetryCaseSwitch(caseName);
+    if (caseName) this.pollTelemetry();
+    else this.clearTelemetryView('');
+  }
+
+  beginTelemetryCaseSwitch(caseName) {
+    // Invalidate any in-flight poll so the previous case's response is dropped.
+    this.telemetryRequestId += 1;
+    this.clearTelemetryRefOverrides();
+    this.clearTelemetryView(caseName);
+  }
+
+  clearTelemetryRefOverrides() {
+    this.telemetryRefOverrides = {};
+    ['ref-aref', 'ref-lref', 'ref-rho', 'ref-velocity', 'ref-cofr-x', 'ref-cofr-y', 'ref-cofr-z']
+      .forEach((id) => this.setVal(id, ''));
+  }
+
+  clearTelemetryView(caseName) {
+    if (this.charts) this.charts.clear();
+
+    this.setValText('kpi-downforce-title', 'Downforce');
+    this.setValText('kpi-drag-title', 'Drag');
+    this.setValText('kpi-ld-title', 'Aero Efficiency');
+    this.setKpiVal('kpi-downforce', '--', 'N');
+    this.setValText('kpi-downforce-variation', '±--% variation');
+    this.setKpiVal('kpi-drag', '--', 'N');
+    this.setValText('kpi-drag-variation', '±--% variation');
+    this.setValText('kpi-ld', '--');
+    this.setValText('kpi-cd', '--');
+    this.setValText('kpi-cd-sub', 'Cd window avg --');
+    this.setValText('kpi-cl', '--');
+    this.setValText('kpi-cl-sub', 'Cl window avg --');
+    this.setValText('kpi-iter', '0');
+    this.setValText('kpi-status-sub', caseName ? `Status: Loading ${caseName}…` : 'Status: Standby');
+    this.setValText('chart-force-axes', 'Downforce: -- | Drag: --');
+    this.setValText('coeff-source-badge', 'Source: --');
+    this.setValText('ref-source-badge', 'Normalization: --');
+    this.setValText('reference-conditions', 'ρ -- · U -- · Aref --');
+    this.setValText('ref-effective-summary', 'Effective: ρ -- · V -- · Aref -- · lRef --');
+
+    const coeffTbody = document.getElementById('coeff-summary-tbody');
+    if (coeffTbody) {
+      coeffTbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">${caseName ? 'Loading…' : 'No coefficient data'}</td></tr>`;
+    }
+    const compTbody = document.getElementById('component-breakdown-tbody');
+    if (compTbody) {
+      compTbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">${caseName ? 'Loading…' : 'No component data'}</td></tr>`;
+    }
+
+    this.resetSolverHealth();
+
+    // Hide overlays while loading so a stale "no data" state is not shown.
+    ['forces-empty-overlay', 'residuals-empty-overlay', 'coeff-empty-overlay',
+      'components-empty-overlay', 'solver-health-empty-overlay'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+
+    const consoleBox = document.getElementById('console-output');
+    if (consoleBox) consoleBox.textContent = caseName ? `Loading ${caseName}…` : 'Waiting for solver output...';
+    this.setValText('console-log-status', caseName ? `Loading ${caseName}…` : 'Showing latest lines');
+
+    const pill = document.getElementById('telemetry-convergence-pill');
+    if (pill) {
+      pill.className = 'convergence-status-pill standby';
+      const text = pill.querySelector('.pill-text');
+      if (text) text.textContent = caseName ? `LOADING ${caseName}` : 'Awaiting Data';
+    }
   }
 
   async pollTelemetry() {
     const select = document.getElementById('telemetry-case-select');
     const caseName = select ? select.value : '';
-    if (!caseName) return;
+    if (!caseName) {
+      this.clearTelemetryView('');
+      return;
+    }
+
+    // Correlate every response with the currently selected case so a slow
+    // response from a previous case can never render.
+    const reqId = ++this.telemetryRequestId;
+    const isStale = () => reqId !== this.telemetryRequestId || (select && select.value !== caseName);
+    this.telemetryInFlight = true;
 
     const pill = document.getElementById('telemetry-convergence-pill');
     const forcesOverlay = document.getElementById('forces-empty-overlay');
@@ -2425,149 +2514,156 @@ class CFDApp {
     const emptyAction = document.getElementById('forces-empty-action');
     const statusSub = document.getElementById('kpi-status-sub');
 
-    // 1. Fetch Forces / Coefficients / Components
     try {
-      const refQuery = this.telemetryRefQuery();
-      const res = await fetch(`/api/telemetry/forces?case_name=${encodeURIComponent(caseName)}${refQuery}`);
-      const data = await res.json();
+      // 1. Fetch Forces / Coefficients / Components
+      try {
+        const refQuery = this.telemetryRefQuery();
+        const res = await fetch(`/api/telemetry/forces?case_name=${encodeURIComponent(caseName)}${refQuery}`);
+        const data = await res.json();
+        if (isStale()) return;
 
-      if (data.has_data) {
-        if (forcesOverlay) forcesOverlay.style.display = 'none';
+        if (data.has_data) {
+          if (forcesOverlay) forcesOverlay.style.display = 'none';
 
-        const dragAxisLabel = data.drag_axis || '-z';
-        const dfAxisLabel = data.downforce_axis || '-y';
-        this.setValText('kpi-downforce-title', `Downforce (${dfAxisLabel})`);
-        this.setValText('kpi-drag-title', `Drag (${dragAxisLabel})`);
-        this.setValText('kpi-ld-title', `Aero Efficiency (${dfAxisLabel} / ${dragAxisLabel})`);
-        this.setValText('chart-force-axes', `Downforce: ${dfAxisLabel} | Drag: ${dragAxisLabel}`);
+          const dragAxisLabel = data.drag_axis || '-z';
+          const dfAxisLabel = data.downforce_axis || '-y';
+          this.setValText('kpi-downforce-title', `Downforce (${dfAxisLabel})`);
+          this.setValText('kpi-drag-title', `Drag (${dragAxisLabel})`);
+          this.setValText('kpi-ld-title', `Aero Efficiency (${dfAxisLabel} / ${dragAxisLabel})`);
+          this.setValText('chart-force-axes', `Downforce: ${dfAxisLabel} | Drag: ${dragAxisLabel}`);
 
-        this.setKpiVal('kpi-downforce', data.downforce_avg, 'N');
-        this.setValText('kpi-downforce-variation', `±${data.downforce_pct}% variation`);
-        this.setKpiVal('kpi-drag', data.drag_avg, 'N');
-        this.setValText('kpi-drag-variation', `±${data.drag_pct}% variation`);
-        this.setValText('kpi-ld', data.ld_ratio);
-        this.setValText('kpi-iter', data.latest_iteration);
-        if (statusSub) statusSub.textContent = data.converged ? 'Status: Converged' : 'Status: Solving';
+          this.setKpiVal('kpi-downforce', data.downforce_avg, 'N');
+          this.setValText('kpi-downforce-variation', `±${data.downforce_pct}% variation`);
+          this.setKpiVal('kpi-drag', data.drag_avg, 'N');
+          this.setValText('kpi-drag-variation', `±${data.drag_pct}% variation`);
+          this.setValText('kpi-ld', data.ld_ratio);
+          this.setValText('kpi-iter', data.latest_iteration);
+          if (statusSub) statusSub.textContent = data.converged ? 'Status: Converged' : 'Status: Solving';
 
-        if (pill) {
-          if (data.converged) {
-            pill.className = 'convergence-status-pill converged';
-            pill.querySelector('.pill-text').textContent = 'CONVERGED (±0.5%)';
-          } else {
-            pill.className = 'convergence-status-pill running';
-            pill.querySelector('.pill-text').textContent = `Solving (Iter ${data.latest_iteration})`;
+          if (pill) {
+            if (data.converged) {
+              pill.className = 'convergence-status-pill converged';
+              pill.querySelector('.pill-text').textContent = 'CONVERGED (±0.5%)';
+            } else {
+              pill.className = 'convergence-status-pill running';
+              pill.querySelector('.pill-text').textContent = `Solving (Iter ${data.latest_iteration})`;
+            }
+          }
+
+          this.renderCoefficientKpis(data);
+          this.renderTelemetryAnalysis(data);
+
+          if (this.charts) {
+            if (data.series) {
+              this.charts.updateForces(data.series, data.drag_axis, data.downforce_axis, {
+                downforceAvg: data.downforce_avg,
+                dragAvg: data.drag_avg,
+                threshold: 0.5,
+              });
+            }
+            const coeffAvailable = !!(data.coefficients && data.coefficients.available);
+            if (coeffOverlay) coeffOverlay.style.display = coeffAvailable ? 'none' : 'flex';
+            if (coeffAvailable && data.coefficients.series) {
+              this.charts.updateCoefficients(data.coefficients.series);
+            } else {
+              this.charts.updateCoefficients({ iterations: [] });
+            }
+            const compAvailable = !!(data.components && data.components.available);
+            if (componentsOverlay) componentsOverlay.style.display = compAvailable ? 'none' : 'flex';
+            if (compAvailable) {
+              this.charts.updateComponents(
+                data.components.force ? data.components.force.latest : null,
+                data.components.moment ? data.components.moment.latest : null,
+              );
+            } else {
+              this.charts.updateComponents(null, null);
+            }
+          }
+        } else {
+          // No forces data yet (case generated or meshed but simpleFoam not executed)
+          if (this.charts) {
+            this.charts.clear();
+          }
+
+          this.setValText('kpi-downforce-title', 'Downforce (-Fy)');
+          this.setValText('kpi-drag-title', 'Drag (-Fz)');
+          this.setValText('kpi-ld-title', 'Aero Efficiency (-Fy / -Fz)');
+          this.setValText('chart-force-axes', 'Downforce: -y | Drag: -z');
+
+          this.setKpiVal('kpi-downforce', '--', 'N');
+          this.setValText('kpi-downforce-variation', '±--% variation');
+          this.setKpiVal('kpi-drag', '--', 'N');
+          this.setValText('kpi-drag-variation', '±--% variation');
+          this.setValText('kpi-ld', '--');
+          this.setValText('kpi-iter', '0');
+          this.resetTelemetryKpis(data);
+          if (statusSub) statusSub.textContent = `Status: ${data.stage || 'Ready'}`;
+
+          const stage = data.stage || 'Generated';
+          if (pill) {
+            pill.className = 'convergence-status-pill standby';
+            pill.querySelector('.pill-text').textContent = stage.toUpperCase();
+          }
+
+          if (forcesOverlay) forcesOverlay.style.display = 'flex';
+          if (residualsOverlay) residualsOverlay.style.display = 'flex';
+          if (coeffOverlay) coeffOverlay.style.display = 'flex';
+          if (componentsOverlay) componentsOverlay.style.display = 'flex';
+          if (emptyDesc) {
+            emptyDesc.textContent = `Case is in '${stage}' state. Run the OpenFOAM solver to stream live forces and residuals.`;
+          }
+          if (emptyAction) {
+            emptyAction.innerHTML = `<code>${data.run_command || `./Allrun.parallel  # In cases/${caseName}`}</code>`;
           }
         }
-
-        this.renderCoefficientKpis(data);
-        this.renderTelemetryAnalysis(data);
-
-        if (this.charts) {
-          if (data.series) {
-            this.charts.updateForces(data.series, data.drag_axis, data.downforce_axis, {
-              downforceAvg: data.downforce_avg,
-              dragAvg: data.drag_avg,
-              threshold: 0.5,
-            });
-          }
-          const coeffAvailable = !!(data.coefficients && data.coefficients.available);
-          if (coeffOverlay) coeffOverlay.style.display = coeffAvailable ? 'none' : 'flex';
-          if (coeffAvailable && data.coefficients.series) {
-            this.charts.updateCoefficients(data.coefficients.series);
-          } else {
-            this.charts.updateCoefficients({ iterations: [] });
-          }
-          const compAvailable = !!(data.components && data.components.available);
-          if (componentsOverlay) componentsOverlay.style.display = compAvailable ? 'none' : 'flex';
-          if (compAvailable) {
-            this.charts.updateComponents(
-              data.components.force ? data.components.force.latest : null,
-              data.components.moment ? data.components.moment.latest : null,
-            );
-          } else {
-            this.charts.updateComponents(null, null);
-          }
-        }
-      } else {
-        // No forces data yet (case generated or meshed but simpleFoam not executed)
-        if (this.charts) {
-          this.charts.clear();
-        }
-
-        this.setValText('kpi-downforce-title', 'Downforce (-Fy)');
-        this.setValText('kpi-drag-title', 'Drag (-Fz)');
-        this.setValText('kpi-ld-title', 'Aero Efficiency (-Fy / -Fz)');
-        this.setValText('chart-force-axes', 'Downforce: -y | Drag: -z');
-
-        this.setKpiVal('kpi-downforce', '--', 'N');
-        this.setValText('kpi-downforce-variation', '±--% variation');
-        this.setKpiVal('kpi-drag', '--', 'N');
-        this.setValText('kpi-drag-variation', '±--% variation');
-        this.setValText('kpi-ld', '--');
-        this.setValText('kpi-iter', '0');
-        this.resetTelemetryKpis(data);
-        if (statusSub) statusSub.textContent = `Status: ${data.stage || 'Ready'}`;
-
-        const stage = data.stage || 'Generated';
-        if (pill) {
-          pill.className = 'convergence-status-pill standby';
-          pill.querySelector('.pill-text').textContent = stage.toUpperCase();
-        }
-
-        if (forcesOverlay) forcesOverlay.style.display = 'flex';
-        if (residualsOverlay) residualsOverlay.style.display = 'flex';
-        if (coeffOverlay) coeffOverlay.style.display = 'flex';
-        if (componentsOverlay) componentsOverlay.style.display = 'flex';
-        if (emptyDesc) {
-          emptyDesc.textContent = `Case is in '${stage}' state. Run the OpenFOAM solver to stream live forces and residuals.`;
-        }
-        if (emptyAction) {
-          emptyAction.innerHTML = `<code>${data.run_command || `./Allrun.parallel  # In cases/${caseName}`}</code>`;
-        }
+      } catch (err) {
+        console.error('Forces telemetry poll failed:', err);
       }
-    } catch (err) {
-      console.error('Forces telemetry poll failed:', err);
-    }
 
-    // 2. Fetch Residuals
-    try {
-      const res = await fetch(`/api/telemetry/residuals?case_name=${encodeURIComponent(caseName)}`);
-      const resData = await res.json();
-      if (resData.has_data && this.charts) {
-        if (residualsOverlay) residualsOverlay.style.display = 'none';
-        this.charts.updateResiduals(resData.iterations, resData.residuals);
-      } else {
-        if (residualsOverlay) residualsOverlay.style.display = 'flex';
-        if (this.charts && this.charts.residualsChart) {
-          this.charts.residualsChart.data.labels = [];
-          this.charts.residualsChart.data.datasets.forEach(ds => { ds.data = []; });
-          this.charts.residualsChart.update('none');
+      // 2. Fetch Residuals
+      try {
+        const res = await fetch(`/api/telemetry/residuals?case_name=${encodeURIComponent(caseName)}`);
+        const resData = await res.json();
+        if (isStale()) return;
+        if (resData.has_data && this.charts) {
+          if (residualsOverlay) residualsOverlay.style.display = 'none';
+          this.charts.updateResiduals(resData.iterations, resData.residuals);
+        } else {
+          if (residualsOverlay) residualsOverlay.style.display = 'flex';
+          if (this.charts && this.charts.residualsChart) {
+            this.charts.residualsChart.data.labels = [];
+            this.charts.residualsChart.data.datasets.forEach(ds => { ds.data = []; });
+            this.charts.residualsChart.update('none');
+          }
         }
+      } catch (err) {
+        console.error('Residuals telemetry poll failed:', err);
       }
-    } catch (err) {
-      console.error('Residuals telemetry poll failed:', err);
-    }
 
-    // 3. Fetch Solver Health
-    try {
-      const res = await fetch(`/api/telemetry/solver?case_name=${encodeURIComponent(caseName)}`);
-      const solverData = await res.json();
-      if (solverData.has_data) {
-        if (solverOverlay) solverOverlay.style.display = 'none';
-        this.renderSolverHealth(solverData);
-        if (this.charts) {
-          this.charts.updateSolverHealth(solverData.series);
+      // 3. Fetch Solver Health
+      try {
+        const res = await fetch(`/api/telemetry/solver?case_name=${encodeURIComponent(caseName)}`);
+        const solverData = await res.json();
+        if (isStale()) return;
+        if (solverData.has_data) {
+          if (solverOverlay) solverOverlay.style.display = 'none';
+          this.renderSolverHealth(solverData);
+          if (this.charts) {
+            this.charts.updateSolverHealth(solverData.series);
+          }
+        } else {
+          if (solverOverlay) solverOverlay.style.display = 'flex';
+          this.resetSolverHealth();
         }
-      } else {
-        if (solverOverlay) solverOverlay.style.display = 'flex';
-        this.resetSolverHealth();
+      } catch (err) {
+        console.error('Solver health telemetry poll failed:', err);
       }
-    } catch (err) {
-      console.error('Solver health telemetry poll failed:', err);
-    }
 
-    // 4. Tail log
-    this.fetchLogTail();
+      // 4. Tail log (guarded against case switches)
+      await this.fetchLogTail(caseName, reqId);
+    } finally {
+      if (reqId === this.telemetryRequestId) this.telemetryInFlight = false;
+    }
   }
 
   formatDuration(seconds) {
@@ -2795,15 +2891,20 @@ class CFDApp {
     this.showToast('Exporting telemetry CSV...', 'success');
   }
 
-  async fetchLogTail() {
+  async fetchLogTail(expectedCase = null, reqId = null) {
     const select = document.getElementById('telemetry-case-select');
     const logType = document.getElementById('select-log-type')?.value || 'simpleFoam';
     const caseName = select ? select.value : '';
     if (!caseName) return;
+    if (expectedCase && caseName !== expectedCase) return;
 
     try {
       const res = await fetch(`/api/telemetry/logs?case_name=${encodeURIComponent(caseName)}&log_type=${logType}&lines=60`);
       const data = await res.json();
+      // Drop responses that belong to a case the user has already left.
+      if (reqId !== null && reqId !== this.telemetryRequestId) return;
+      if (select && select.value !== caseName) return;
+
       const consoleBox = document.getElementById('console-output');
       const autoscroll = document.getElementById('chk-console-autoscroll')?.checked;
 
@@ -2899,6 +3000,11 @@ class CFDApp {
             } else {
               select.value = this.archiveCases[0].name;
             }
+          }
+          // If the selection changed implicitly (e.g. the old case disappeared),
+          // drop any displayed telemetry so it cannot be mistaken for the new case.
+          if (select.value !== currentVal) {
+            this.beginTelemetryCaseSwitch(select.value);
           }
         }
       }
@@ -3065,9 +3171,8 @@ class CFDApp {
 
       // Bind actions
       tr.querySelector('.btn-inspect-case')?.addEventListener('click', () => {
-        document.querySelector('.nav-tab[data-tab="telemetry-tab"]')?.click();
         this.addTelemetryCase(c.name);
-        this.pollTelemetry();
+        document.querySelector('.nav-tab[data-tab="telemetry-tab"]')?.click();
       });
 
       tr.querySelector('.btn-download-case')?.addEventListener('click', () => this.downloadCase(c.name));
