@@ -915,8 +915,19 @@
             <span class="panel-subtitle" id="telemetry-2d-status">Drag · Downforce · Pitch moment at CofR</span>
           </div>
           <div class="panel-header-actions">
+            <label class="td-toggle"><input type="checkbox" id="td2-model" checked> Model</label>
+            <label class="td-toggle"><input type="checkbox" id="td2-flow" checked> Flow</label>
+            <label class="td-toggle"><input type="checkbox" id="td2-drag" checked> Drag</label>
+            <label class="td-toggle"><input type="checkbox" id="td2-downforce" checked> Downforce</label>
+            <label class="td-toggle"><input type="checkbox" id="td2-pitch" checked> Pitch</label>
+            <label class="td-toggle"><input type="checkbox" id="td2-cop" checked> CoP</label>
             <label class="td-scale">Scale <input type="range" id="td2-scale" min="0.2" max="3" step="0.1" value="1"></label>
           </div>
+        </div>
+        <div class="telemetry-2d-balance">
+          <label class="td-scale">Wheelbase (m) <input type="number" step="any" id="ab-wheelbase" class="input input-xs"></label>
+          <label class="td-scale">Front weight % <input type="number" step="any" id="ab-front-pct" class="input input-xs"></label>
+          <span class="ab-result" id="ab-result">Set wheelbase and front weight % to compute aero balance</span>
         </div>
         <div class="telemetry-2d-viewport" id="telemetry-2d-viewport">
           <canvas id="telemetry-2d-canvas"></canvas>

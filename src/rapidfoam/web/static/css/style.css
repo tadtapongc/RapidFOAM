@@ -1595,6 +1595,28 @@ body.dark-theme {
   overflow: hidden;
 }
 
+.telemetry-2d-balance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface-raised);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.telemetry-2d-balance .input-xs {
+  width: 74px;
+  padding: 2px 6px;
+}
+
+.telemetry-2d-balance .ab-result {
+  color: var(--text-secondary);
+}
+
 .telemetry-2d-viewport canvas {
   display: block;
   width: 100%;

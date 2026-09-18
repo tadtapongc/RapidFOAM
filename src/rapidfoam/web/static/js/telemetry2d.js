@@ -17,13 +17,18 @@ class Aero2DView {
     this.data = null;      // { force, moment, cofr, dragVec, dfVec }
     this.scale = 1;
     this.contentScale = 0.8; // overall shrink of everything drawn in the box
-
+    this.show = { model: true, flow: true, drag: true, downforce: true, pitch: true, cop: true };
     this._sil = null;      // cached offscreen silhouette
     this._silFor = null;
     this._silW = 0;
     this._silH = 0;
     this._silFlow = -1;
     this._silUp = -1;
+  }
+
+  setShow(show) {
+    this.show = { ...this.show, ...(show || {}) };
+    this.draw();
   }
 
   setGeometry(positions) {
@@ -215,7 +220,7 @@ class Aero2DView {
       this._silUp = upIdx;
     }
     const { canvas: silCanvas, toX, toY, vMin } = this._sil;
-    ctx.drawImage(silCanvas, 0, 0, cssW, cssH);
+    if (this.show.model) ctx.drawImage(silCanvas, 0, 0, cssW, cssH);
 
     // Ground reference: configured ground plane, else clearance below the
     // model's lowest point, else the model bottom.
@@ -233,16 +238,43 @@ class Aero2DView {
     ctx.lineTo(cssW, toY(groundV));
     ctx.stroke();
 
+    // Center of pressure: vertical dashed line + ground marker.
+    const balance = payload.balance;
+    if (this.show.cop && balance && balance.available && balance.cop) {
+      const xCop = Math.min(Math.max(toX(balance.cop[flowIdx]), 6), cssW - 6);
+      const yGround = toY(groundV);
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(xCop, 8);
+      ctx.lineTo(xCop, yGround);
+      ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.moveTo(xCop, yGround);
+      ctx.lineTo(xCop - 5, yGround + 8);
+      ctx.lineTo(xCop + 5, yGround + 8);
+      ctx.closePath();
+      ctx.fill();
+      this._label(ctx, xCop + 6, Math.max(26, yGround - 6),
+        `CoP ${balance.cop_pct_wheelbase}% WB`, '#f59e0b');
+    }
+
     // Freestream flow direction indicator (air travel direction).
-    const flowSign = Math.sign(dragVec[flowIdx] || -1) || -1;
-    const flowY = 26;
-    const flowLen = 64 * this.contentScale;
-    const flowStartX = flowSign > 0 ? 28 : cssW - 28;
-    const flowEndX = flowStartX + flowSign * flowLen;
-    this._arrow(ctx, flowStartX, flowY, flowEndX, flowY, 'rgba(56, 189, 248, 0.85)', 2);
-    // Label below the arrow so it never clips at the top edge.
-    this._label(ctx, Math.max(6, Math.min(flowStartX, flowEndX)), flowY + 22,
-      'flow', 'rgba(56, 189, 248, 0.95)');
+    if (this.show.flow) {
+      const flowSign = Math.sign(dragVec[flowIdx] || -1) || -1;
+      const flowY = 26;
+      const flowLen = 64 * this.contentScale;
+      const flowStartX = flowSign > 0 ? 28 : cssW - 28;
+      const flowEndX = flowStartX + flowSign * flowLen;
+      this._arrow(ctx, flowStartX, flowY, flowEndX, flowY, 'rgba(56, 189, 248, 0.85)', 2);
+      // Label below the arrow so it never clips at the top edge.
+      this._label(ctx, Math.max(6, Math.min(flowStartX, flowEndX)), flowY + 22,
+        'flow', 'rgba(56, 189, 248, 0.95)');
+    }
 
     if (!this.data || !this.data.force || !this.data.cofr) return;
     const F = this.data.force;
@@ -268,7 +300,7 @@ class Aero2DView {
 
     const dragAvail = Fflow >= 0 ? (cssW - margin - cx) : (cx - margin);
     const dragLen = Math.min(Math.abs(Fflow) * unitPx, Math.max(0, dragAvail));
-    if (dragLen > 2) {
+    if (this.show.drag && dragLen > 2) {
       const ex = cx + Math.sign(Fflow) * dragLen;
       this._arrow(ctx, cx, cy, ex, cy, '#f43f5e', 2.4);
       this._label(ctx, clampX(Math.min(cx, ex)), clampY(cy - 10),
@@ -277,14 +309,14 @@ class Aero2DView {
 
     const dfAvail = Fup >= 0 ? (cy - margin) : (cssH - margin - cy);
     const dfLen = Math.min(Math.abs(Fup) * unitPx, Math.max(0, dfAvail));
-    if (dfLen > 2) {
+    if (this.show.downforce && dfLen > 2) {
       const ey = cy - Math.sign(Fup) * dfLen;
       this._arrow(ctx, cx, cy, cx, ey, '#00d2ff', 2.4);
       this._label(ctx, clampX(cx + 8), clampY(Math.min(cy, ey)),
         `Downforce ${Math.abs(Fup).toFixed(0)} N`, '#00d2ff');
     }
 
-    if (M) {
+    if (this.show.pitch && M) {
       const pitchValue = M[latIdx] * pitchSign;
       const maxRadius = Math.min(cx, cssW - cx, cy, cssH - cy) - margin;
       const radius = Math.max(14, Math.min(0.16 * cssH * this.contentScale, maxRadius));

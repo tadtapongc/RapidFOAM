@@ -111,6 +111,7 @@ const TELEMETRY_HELP = {
         <li><strong>Drag</strong> (red, horizontal) and <strong>Downforce</strong> (cyan, vertical) arrows on the flow–vertical plane.</li>
         <li><strong>Pitch</strong> (violet arc) — the pitching moment about the lateral axis [N·m]; direction shows the rotation sense.</li>
         <li>The silhouette is the actual STL projected onto the side plane; the blue dot is CofR.</li>
+        <li><strong>CoP / Aero balance</strong> (amber line): enter the <em>wheelbase</em> and <em>static front weight %</em> (or set them in the case config) to compute the center of pressure and the front/rear aero load split. Assumes CofR is at the CoG.</li>
         <li>Forces are full-car (symmetry-corrected). Use <strong>Scale</strong> to resize the arrows.</li>
       </ul>`,
   },
@@ -124,6 +125,7 @@ class CFDApp {
     this.pollInterval = null;
     this.telemetryPollingActive = true;
     this.telemetryRefOverrides = {};
+    this.balanceOverrides = {};
     this.telemetryRequestId = 0;
     this.telemetryInFlight = false;
     this.telemetryViewer = null;
@@ -2318,6 +2320,17 @@ class CFDApp {
       this.telemetry2dView?.setScale(parseFloat(this.getVal('td2-scale')) || 1);
     });
     window.addEventListener('resize', () => this.telemetry2dView?.resize());
+    document.getElementById('ab-wheelbase')?.addEventListener('change', () => {
+      this.balanceOverrides.wheelbase = this.getVal('ab-wheelbase');
+      this.pollTelemetry();
+    });
+    document.getElementById('ab-front-pct')?.addEventListener('change', () => {
+      this.balanceOverrides.front_pct = this.getVal('ab-front-pct');
+      this.pollTelemetry();
+    });
+    ['td2-model', 'td2-flow', 'td2-drag', 'td2-downforce', 'td2-pitch', 'td2-cop'].forEach((id) => {
+      document.getElementById(id)?.addEventListener('change', () => this.updateTelemetry2DShow());
+    });
 
     // Post-run reference editor
     document.getElementById('btn-toggle-ref-editor')?.addEventListener('click', () => {
@@ -2488,6 +2501,7 @@ class CFDApp {
     // Invalidate any in-flight poll so the previous case's response is dropped.
     this.telemetryRequestId += 1;
     this.clearTelemetryRefOverrides();
+    this.clearBalanceOverrides();
     this.clearTelemetryView(caseName);
 
     // Reset the 3D aero-load layer; geometry reloads with the next poll.
@@ -2573,7 +2587,20 @@ class CFDApp {
     if (this.telemetry2dView || typeof Aero2DView === 'undefined') return;
     this.telemetry2dView = new Aero2DView('telemetry-2d-canvas');
     this.telemetry2dView.setScale(parseFloat(this.getVal('td2-scale')) || 1);
+    this.updateTelemetry2DShow();
     this.telemetry2dView.resize();
+  }
+
+  updateTelemetry2DShow() {
+    if (!this.telemetry2dView) return;
+    this.telemetry2dView.setShow({
+      model: this.getCheck('td2-model'),
+      flow: this.getCheck('td2-flow'),
+      drag: this.getCheck('td2-drag'),
+      downforce: this.getCheck('td2-downforce'),
+      pitch: this.getCheck('td2-pitch'),
+      cop: this.getCheck('td2-cop'),
+    });
   }
 
   ensureTelemetry2D(caseName, stlFiles) {
@@ -2655,6 +2682,7 @@ class CFDApp {
     if (!comps.available || !forceVec || !forceVec.total) {
       this.telemetry2dView.clear();
       this.setValText('telemetry-2d-status', 'Drag · Downforce · Pitch moment at CofR');
+      this.renderAeroBalance(data);
       return;
     }
 
@@ -2668,7 +2696,9 @@ class CFDApp {
       dfVec,
       groundPlane: ref.ground_plane,
       groundClearance: ref.ground_clearance,
+      balance: (data && data.balance) || null,
     });
+    this.renderAeroBalance(data);
 
     const flowIdx = Math.max(0, dragVec.findIndex((v) => v !== 0));
     const upIdx = Math.max(0, dfVec.findIndex((v) => v !== 0));
@@ -2870,7 +2900,8 @@ class CFDApp {
       // 1. Fetch Forces / Coefficients / Components
       try {
         const refQuery = this.telemetryRefQuery();
-        const res = await fetch(`/api/telemetry/forces?case_name=${encodeURIComponent(caseName)}${refQuery}`);
+        const balQuery = this.telemetryBalanceQuery();
+        const res = await fetch(`/api/telemetry/forces?case_name=${encodeURIComponent(caseName)}${refQuery}${balQuery}`);
         const data = await res.json();
         if (isStale()) return;
 
@@ -3204,6 +3235,53 @@ class CFDApp {
     const params = new URLSearchParams(overrides);
     const query = params.toString();
     return query ? `&${query}` : '';
+  }
+
+  telemetryBalanceQuery() {
+    const overrides = this.balanceOverrides || {};
+    const params = new URLSearchParams();
+    if (overrides.wheelbase !== undefined && String(overrides.wheelbase).trim() !== '') {
+      params.set('wheelbase', String(overrides.wheelbase).trim());
+    }
+    if (overrides.front_pct !== undefined && String(overrides.front_pct).trim() !== '') {
+      params.set('front_pct', String(overrides.front_pct).trim());
+    }
+    const query = params.toString();
+    return query ? `&${query}` : '';
+  }
+
+  clearBalanceOverrides() {
+    this.balanceOverrides = {};
+    this.setVal('ab-wheelbase', '');
+    this.setVal('ab-front-pct', '');
+    this.setValText('ab-result', 'Set wheelbase and front weight % to compute aero balance');
+  }
+
+  renderAeroBalance(data) {
+    const balance = (data && data.balance) || {};
+    const vehicle = (data && data.vehicle) || {};
+    const wbEl = document.getElementById('ab-wheelbase');
+    const fpEl = document.getElementById('ab-front-pct');
+    if (wbEl && !wbEl.value && vehicle.wheelbase !== null && vehicle.wheelbase !== undefined) {
+      wbEl.placeholder = String(vehicle.wheelbase);
+    }
+    if (fpEl && !fpEl.value && vehicle.front_weight_pct !== null && vehicle.front_weight_pct !== undefined) {
+      fpEl.placeholder = String(vehicle.front_weight_pct);
+    }
+    const result = document.getElementById('ab-result');
+    if (!result) return;
+    if (balance.available) {
+      let text =
+        `CoP ${balance.cop_pct_wheelbase}% WB (${balance.cop_behind_front_axle} m behind front axle) · `
+        + `Front ${balance.front_pct}% (static ${balance.static_front_pct}%) · `
+        + `F_front ${balance.front_load} N / F_rear ${balance.rear_load} N`;
+      if (balance.inside_wheelbase === false) {
+        text += '  — Warning: CoP outside wheelbase; set CofR to the CoG';
+      }
+      result.textContent = text;
+    } else {
+      result.textContent = 'Set wheelbase and front weight % to compute aero balance';
+    }
   }
 
   applyTelemetryRefs() {
