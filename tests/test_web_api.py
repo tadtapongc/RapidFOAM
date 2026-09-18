@@ -78,7 +78,7 @@ class TestWebAPI(unittest.TestCase):
         self.assertIn("standard", res["fidelity_presets"])
         standard = res["fidelity_presets"]["standard"]
         self.assertEqual(standard.get("layers", {}).get("y_plus_target"), 40)
-        self.assertTrue(standard.get("layers", {}).get("ground_layers"))
+        self.assertFalse(standard.get("layers", {}).get("ground_layers"))
         self.assertEqual(standard.get("mesh", {}).get("cells_per_length"), 30)
         self.assertIn("mesh", standard)
         self.assertIn("solver", standard)

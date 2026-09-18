@@ -300,7 +300,8 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
                   f"{cfg['layers'].get('expansion_ratio')}, "
                   f"stack {layer_resolution['stack'] * 1000:.3f} mm")
         ground_state = "on" if cfg["layers"].get("ground_layers") else "off"
-        print(f"    ground layers:  {ground_state}")
+        ground_note = layer_resolution.get("ground_layers_note")
+        print(f"    ground layers:  {ground_state}" + (f" ({ground_note})" if ground_note else ""))
         if (layer_resolution.get("min_thickness") is not None
                 and layer_resolution.get("stack") is not None
                 and layer_resolution["min_thickness"] > layer_resolution["stack"]):

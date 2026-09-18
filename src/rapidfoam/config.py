@@ -185,6 +185,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "detectExtrusionIsland": True,
         "nRelaxedIter": 20,
         "ground_layers": False,
+        "ground_n_layers": 2,
     },
 
     # Feature extraction (140° captures real aero edges without cosmetic CAD seams)
@@ -405,6 +406,7 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
     for key in ("edge_level", "near_wake_level", "far_wake_level", "wake_level", "minRefinementCells"):
         positive("mesh_params", key, integer=True, allow_zero=True)
     positive("layers", "n_layers", integer=True, allow_zero=True)
+    positive("layers", "ground_n_layers", integer=True, allow_zero=True)
     positive("solver", "purge_write", integer=True, allow_zero=True)
     for key in cfg.get("domain", {}):
         if key.endswith("_factor"):

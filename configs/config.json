@@ -103,7 +103,8 @@
             "_relativeSizes": "false = first_layer_thickness/min_thickness are metres; true = fractions of the local cell size",
             "_first_layer_thickness": "Metres when relativeSizes is false, fraction of cell size when true",
             "_min_thickness": "Same units as first_layer_thickness. Must not exceed the total layer stack.",
-            "_ground_layers": "true adds prism layers on the moving ground patch (floor and diffuser sensitive)"
+            "_ground_layers": "Off by default. Opt-in prism layers on the moving ground patch; requires at least max(2 mm, 2x first layer) clearance and is capped by ground_n_layers.",
+            "_ground_n_layers": "Maximum ground layer count (default 2, never more than n_layers)"
         },
         "fluid": {
             "_rho": 1.225,

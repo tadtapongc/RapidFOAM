@@ -147,9 +147,9 @@ class TestPresetSchema(unittest.TestCase):
         self.assertGreaterEqual(FIDELITY_PRESETS["fast"]["y_plus_target"], 30)
         self.assertGreaterEqual(FIDELITY_PRESETS["standard"]["y_plus_target"], 30)
         self.assertLessEqual(FIDELITY_PRESETS["fine"]["y_plus_target"], 5)
-        self.assertFalse(FIDELITY_PRESETS["fast"]["ground_layers"])
-        self.assertTrue(FIDELITY_PRESETS["standard"]["ground_layers"])
-        self.assertTrue(FIDELITY_PRESETS["fine"]["ground_layers"])
+        for name, preset in FIDELITY_PRESETS.items():
+            with self.subTest(preset=name):
+                self.assertFalse(preset["ground_layers"])
 
     def test_fine_uses_budget_friendly_tangential_levels(self):
         self.assertLessEqual(FIDELITY_PRESETS["fine"]["maxGlobalCells"], 32_000_000)
@@ -183,7 +183,7 @@ class TestMeshParamsScaling(unittest.TestCase):
 
 
 class TestGroundLayerEmission(unittest.TestCase):
-    def _dict_text(self, ground):
+    def _dict_text(self, ground, ground_n=None):
         cfg = deep_merge(DEFAULT_CONFIG, {
             "stl_files": ["body.stl"],
             "flow": {"velocity": U, "direction": "-z", "ground": True},
@@ -197,6 +197,8 @@ class TestGroundLayerEmission(unittest.TestCase):
             n_layers=3,
             expansion_ratio=1.2,
         )
+        if ground_n is not None:
+            cfg["layers"]["ground_n_layers"] = ground_n
         cfg["mesh_params"] = compute_mesh_params(cfg, ((-0.5, 0.0, -1.5), (0.5, 1.0, 1.5)))
         with tempfile.TemporaryDirectory() as tmp:
             case = Path(tmp)
@@ -204,11 +206,59 @@ class TestGroundLayerEmission(unittest.TestCase):
             write_snappy_hex_mesh_dict(cfg, case)
             return (case / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
 
-    def test_ground_layers_emitted_when_enabled(self):
-        self.assertIn('"ground" { nSurfaceLayers 3; }', self._dict_text(True))
+    def test_ground_layers_capped_by_default(self):
+        text = self._dict_text(True)
+        self.assertIn('"ground" { nSurfaceLayers 2; }', text)
+        self.assertIn('"body" { nSurfaceLayers 3; }', text)
+
+    def test_ground_n_layers_override(self):
+        self.assertIn('"ground" { nSurfaceLayers 1; }', self._dict_text(True, ground_n=1))
 
     def test_ground_layers_absent_when_disabled(self):
         self.assertNotIn('"ground" { nSurfaceLayers', self._dict_text(False))
+
+
+class TestGroundLayerGuard(unittest.TestCase):
+    def _cfg(self, ground_clearance=None, n_layers=3):
+        cfg = full_cfg("standard")
+        cfg["layers"] = dict(
+            cfg["layers"],
+            ground_layers=True,
+            y_plus_target=40,
+            n_layers=n_layers,
+            expansion_ratio=1.2,
+        )
+        if ground_clearance is not None:
+            cfg["ground_clearance"] = ground_clearance
+        return cfg
+
+    def test_touching_ground_disables_optin(self):
+        cfg = self._cfg()
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertFalse(cfg["layers"]["ground_layers"])
+        self.assertFalse(res["ground_layers"])
+        self.assertIn("clearance", res["ground_layers_note"])
+
+    def test_clearance_keeps_optin_capped(self):
+        cfg = self._cfg(ground_clearance=0.05)
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertTrue(cfg["layers"]["ground_layers"])
+        self.assertEqual(res["ground_n_layers"], 2)
+        self.assertIn("capped", res["ground_layers_note"])
+
+    def test_ground_n_layers_override_kept(self):
+        cfg = self._cfg(ground_clearance=0.05)
+        cfg["layers"]["ground_n_layers"] = 1
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertTrue(cfg["layers"]["ground_layers"])
+        self.assertEqual(res["ground_n_layers"], 1)
+
+    def test_ground_layers_off_by_default_no_note(self):
+        cfg = full_cfg("standard")
+        cfg["layers"].pop("ground_layers", None)
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertFalse(res["ground_layers"])
+        self.assertEqual(res["ground_layers_note"], "")
 
 
 if __name__ == "__main__":

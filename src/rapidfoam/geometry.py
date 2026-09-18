@@ -278,7 +278,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "n_layers": 3,
         "expansion_ratio": 1.2,
         "y_plus_target": 40,
-        "ground_layers": True,
+        "ground_layers": False,
         "end_time": 1500,
         "write_interval": 500,
         "maxGlobalCells": 20_000_000,
@@ -310,7 +310,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "n_layers": 12,
         "expansion_ratio": 1.2,
         "y_plus_target": 1,
-        "ground_layers": True,
+        "ground_layers": False,
         "end_time": 2500,
         "write_interval": 500,
         "maxGlobalCells": 32_000_000,
@@ -569,6 +569,66 @@ def first_layer_height(y_plus: float, u_tau: float, nu: float) -> float:
     return 2.0 * float(y_plus) * nu / u_tau
 
 
+def _apply_ground_layer_policy(
+    cfg: dict[str, Any],
+    combined_bounds: BBox,
+    layers: dict[str, Any],
+    resolved: dict[str, Any],
+) -> None:
+    """Guard ground-patch layers: opt-in only, needs clearance, count capped.
+
+    Ground layers act on the whole road patch, including far-field cells, and
+    collide with the body layer fronts when the model touches the ground, so
+    they are disabled unless the config explicitly asks and the geometry has
+    at least max(2mm, 2 x first layer) of clearance. The stack is capped by
+    layers.ground_n_layers (default 2) regardless of the body layer count.
+    """
+    up_idx = up_axis_index(cfg)
+    smin_up = float(combined_bounds[0][up_idx])
+    if cfg.get("ground_plane") is not None:
+        clearance = smin_up - float(cfg["ground_plane"])
+    elif cfg.get("ground_clearance") is not None:
+        clearance = float(cfg["ground_clearance"])
+    else:
+        clearance = 0.0
+
+    requested = bool(layers.get("ground_layers", False))
+    n_layers = int(layers.get("n_layers", 0) or 0)
+    cap = int(layers.get("ground_n_layers", min(max(n_layers, 0), 2)) or 0)
+    ground_n = max(0, min(cap, n_layers)) if n_layers > 0 else 0
+
+    resolved["ground_layers"] = requested
+    resolved["ground_n_layers"] = ground_n
+    resolved["ground_clearance"] = clearance
+    resolved["ground_layers_note"] = ""
+
+    if not requested:
+        return
+
+    first = resolved.get("first_layer_thickness") if resolved.get("mode") == "absolute" else None
+    try:
+        first = float(first) if first is not None else 0.0
+    except (TypeError, ValueError):
+        first = 0.0
+    required = max(2.0e-3, 2.0 * first)
+
+    if ground_n <= 0:
+        layers["ground_layers"] = False
+        resolved["ground_layers"] = False
+        resolved["ground_layers_note"] = "disabled: no layers configured"
+        return
+    if clearance < required:
+        layers["ground_layers"] = False
+        resolved["ground_layers"] = False
+        resolved["ground_layers_note"] = (
+            f"disabled: ground clearance {clearance * 1000:.1f} mm < "
+            f"{required * 1000:.1f} mm required"
+        )
+        return
+    if ground_n < n_layers:
+        resolved["ground_layers_note"] = f"capped at {ground_n} of {n_layers} layers"
+
+
 def resolve_layers(
     cfg: dict[str, Any],
     combined_bounds: BBox,
@@ -618,41 +678,38 @@ def resolve_layers(
         try:
             target_value = float(target)
         except (TypeError, ValueError):
-            return resolved
-        if not math.isfinite(target_value) or target_value <= 0 or u_tau <= 0:
-            return resolved
-        thickness = first_layer_height(target_value, u_tau, nu)
+            target_value = None
+        if target_value is not None and math.isfinite(target_value) and target_value > 0 and u_tau > 0:
+            thickness = first_layer_height(target_value, u_tau, nu)
 
-        mesh = cfg.get("mesh_params", {})
-        base_cell = float(mesh.get("base_cell_size", 0.0) or 0.0)
-        levels = mesh.get("surface_level") or [0, 0]
-        ratio_limit = float(layers.get("maxFaceThicknessRatio", 0.5) or 0.5)
-        if base_cell > 0 and len(levels) == 2:
-            cell_fine = base_cell / (2 ** int(levels[1]))
-            thickness_max = ratio_limit * cell_fine
-            if thickness > thickness_max:
-                thickness = thickness_max
-                resolved["clamped"] = True
+            mesh = cfg.get("mesh_params", {})
+            base_cell = float(mesh.get("base_cell_size", 0.0) or 0.0)
+            levels = mesh.get("surface_level") or [0, 0]
+            ratio_limit = float(layers.get("maxFaceThicknessRatio", 0.5) or 0.5)
+            if base_cell > 0 and len(levels) == 2:
+                cell_fine = base_cell / (2 ** int(levels[1]))
+                thickness_max = ratio_limit * cell_fine
+                if thickness > thickness_max:
+                    thickness = thickness_max
+                    resolved["clamped"] = True
 
-        layers["relativeSizes"] = False
-        layers["first_layer_thickness"] = thickness
-        if not explicit_min_thickness:
-            layers["min_thickness"] = thickness
-        resolved.update(
-            y_plus_effective=thickness * u_tau / (2.0 * nu),
-            first_layer_thickness=thickness,
-            min_thickness=layers.get("min_thickness"),
-            stack=_stack(thickness),
-            mode="absolute",
-        )
-        return resolved
-
-    if not relative and first is not None:
+            layers["relativeSizes"] = False
+            layers["first_layer_thickness"] = thickness
+            if not explicit_min_thickness:
+                layers["min_thickness"] = thickness
+            resolved.update(
+                y_plus_effective=thickness * u_tau / (2.0 * nu),
+                first_layer_thickness=thickness,
+                min_thickness=layers.get("min_thickness"),
+                stack=_stack(thickness),
+                mode="absolute",
+            )
+    elif not relative and first is not None:
         try:
             thickness = float(first)
         except (TypeError, ValueError):
-            return resolved
-        if math.isfinite(thickness) and thickness > 0:
+            thickness = None
+        if thickness is not None and math.isfinite(thickness) and thickness > 0:
             resolved.update(
                 y_plus_effective=(thickness * u_tau / (2.0 * nu)) if u_tau > 0 else None,
                 first_layer_thickness=thickness,
@@ -660,6 +717,8 @@ def resolve_layers(
                 stack=_stack(thickness),
                 mode="absolute",
             )
+
+    _apply_ground_layer_policy(cfg, combined_bounds, layers, resolved)
     return resolved
 
 

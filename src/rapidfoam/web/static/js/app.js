@@ -1040,7 +1040,9 @@ class CFDApp {
     const yPlus = p.y_plus_effective != null ? p.y_plus_effective.toFixed(1) : '—';
     const stack = p.stack != null ? (p.stack * 1000).toFixed(3) : '—';
     const clamped = p.clamped ? ' (clamped)' : '';
-    el.textContent = `u_tau ≈ ${uTau} m/s | first layer ${first} µm (y+ ${yPlus}${clamped}) | stack ${stack} mm`;
+    let text = `u_tau ≈ ${uTau} m/s | first layer ${first} µm (y+ ${yPlus}${clamped}) | stack ${stack} mm`;
+    if (p.ground_layers_note) text += ` | ground layers ${p.ground_layers_note}`;
+    el.textContent = text;
   }
 
   clearAllOverrides() {

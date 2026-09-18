@@ -180,7 +180,13 @@ def write_snappy_hex_mesh_dict(cfg: dict[str, Any], case_dir: Path) -> None:
     face_assignments = _get_face_assignments(cfg)
     active_patches = set(face_assignments.values())
     if layers.get("ground_layers", False) and patches["ground"] in active_patches:
-        layer_lines.append(f'        "{patches["ground"]}" {{ nSurfaceLayers {n_layers}; }}')
+        try:
+            ground_n = int(layers.get("ground_n_layers", 2) or 2)
+        except (TypeError, ValueError):
+            ground_n = 2
+        ground_n = max(0, min(ground_n, n_layers))
+        if ground_n > 0:
+            layer_lines.append(f'        "{patches["ground"]}" {{ nSurfaceLayers {ground_n}; }}')
 
     # Location in mesh — inlet-ceiling-farwall corner (always outside geometry)
     #
