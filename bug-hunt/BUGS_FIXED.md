@@ -6,25 +6,26 @@ Source report: `bug-hunt/BUGS.md`
 
 | Outcome | Count |
 |---------|-------|
-| Fixed | 11 |
-| Confirmed but not fixed | 4 |
+| Fixed | 15 |
+| Confirmed but not fixed | 0 |
 | False positive | 0 |
 | **Total** | **15** |
 
 Verification: every referenced location was read on the checked-out tree
 (`d72a14f`). All 15 reports were confirmed as real defects (none were false
-positives). Eleven were fixed; the four left unfixed are low-severity /
-higher-risk refactors documented below.
+positives) and all 15 are now fixed. The only remaining item is a UX follow-up
+to #5 (surface telemetry HTTP errors in the UI), not a correctness defect;
+see the end of this report.
 
 Test status after fixes: **141 Python tests pass, 10 skipped** (`python -m
-unittest discover -s tests`), up from 136, plus **16 front-end tests pass**
-(`npm test`, JSDOM + `node:test`). Five Python and 16 JS regression tests were
+unittest discover -s tests`), up from 136, plus **24 front-end tests pass**
+(`npm test`, JSDOM + `node:test`). Five Python and 24 JS regression tests were
 added.
 
 A front-end test harness now exists under `tests/js/` (`harness.mjs`,
 `app.test.mjs`, `viewer.test.mjs`); it loads the browser sources into JSDOM and
-covers the fixed front-end defects (#1, #2, #3, #4, #5, #6, #7, #10, #13).
-Install once with `npm install`, then run `npm test`.
+covers the fixed front-end defects (#1, #2, #3, #4, #5, #6, #7, #9, #10, #11,
+#13). Install once with `npm install`, then run `npm test`.
 
 ---
 
@@ -141,19 +142,22 @@ Install once with `npm install`, then run `npm test`.
 ---
 
 ### Bug #9 – Half-initialised `STLViewer` object passed around as valid → null dereferences
-- **Status**: Confirmed but not fixed
-- **Reasoning**: Confirmed. The constructor returns early when the container is missing or
-  `THREE` is undefined, yet the object is still truthy and `app.js` calls methods on it.
-- **Why not fixed**: The obvious fix (throwing) would abort `CFDApp.init()` unless the
-  constructor call is wrapped, and `app.js` currently relies on the viewer degrading
-  silently so the rest of the UI (config, charts) still works when the Three.js CDN fails.
-  Making this fully correct requires a coordinated contract change (constructor returns a
-  usable object or `null`, plus guards at every `this.viewer?.`/`this.telemetryViewer?.`
-  call site). That is a larger, riskier refactor for a low-severity silent-failure issue.
-- **Changes made**: None.
-- **Risk / follow-up**: Viewer methods still throw `TypeError` when Three.js is unavailable;
-  `app.js` swallows them in broad `try/catch` blocks. Consider adding an `available` flag
-  and a user-visible warning.
+- **Status**: Fixed
+- **Reasoning**: Confirmed. The constructor returned early when the container was missing or
+  `THREE` was undefined, yet the object was still truthy and `app.js` called methods on it.
+- **Changes made**:
+  - `src/rapidfoam/web/static/js/viewer.js`: the constructor now sets
+    `this.available = false` up front and only flips it to `true` at the end of a successful
+    `init()`; a `disposed` flag and RAF/observer/listener handles are also initialised.
+  - `src/rapidfoam/web/static/js/app.js`: added `createSTLViewer(containerId)`, which returns
+    `null` for an unavailable viewer. Both `this.viewer` and `this.telemetryViewer` are built
+    through it, so every existing `if (this.viewer)` guard is now honest. Unguarded toggle /
+    framing / reset / angle handlers now use `this.viewer?.method(...)`.
+  - `src/rapidfoam/web/static/js/app.js`: `showViewerUnavailableWarning()` reports the
+    failure in the viewer placeholder and via a toast instead of failing silently.
+  - `tests/js/viewer.test.mjs`, `tests/js/app.test.mjs`: cover the unavailable constructor
+    paths and `createSTLViewer` returning `null`.
+- **Risk**: None material. Behaviour when Three.js loads normally is unchanged.
 
 ---
 
@@ -170,17 +174,22 @@ Install once with `npm install`, then run `npm test`.
 ---
 
 ### Bug #11 – Viewer never tears down its RAF loop, listeners, resize observer or renderer
-- **Status**: Confirmed but not fixed
-- **Reasoning**: Confirmed. `animate()` always re-schedules via `requestAnimationFrame`; the
-  resize listener is anonymous; there is no `dispose()`/`destroy()`; two viewers exist.
-- **Why not fixed**: Correct teardown requires storing the RAF handle, named listener
-  references, `resizeObserver.disconnect()` and `renderer.dispose()`, plus lifecycle wiring
-  in `app.js` for both viewer instances and the CDN-absent path. This is a structural
-  refactor with meaningful regression surface for a low-severity accumulation issue in a
-  single-page app where the UI is not normally re-initialised.
-- **Changes made**: None.
-- **Risk / follow-up**: WebGL contexts and RAF chains persist for the page lifetime. Add a
-  `dispose()` and call it if the app ever gains a re-init path.
+- **Status**: Fixed
+- **Reasoning**: Confirmed. `animate()` always re-scheduled via `requestAnimationFrame`; the
+  resize listener was anonymous; there was no `dispose()`/`destroy()`; two viewers exist.
+- **Changes made**:
+  - `src/rapidfoam/web/static/js/viewer.js`: the RAF handle is stored (`this._rafId`), the
+    resize handler is a named method reference, and a new `dispose()` cancels the loop,
+    removes the listener, disconnects the `ResizeObserver`, disposes scene objects, calls
+    `renderer.dispose()`, removes the canvas and nulls the fields. `animate()` returns
+    immediately once `disposed`, so it cannot reschedule.
+  - `src/rapidfoam/web/static/js/app.js`: `disposeTelemetryViewer()` releases the telemetry
+    viewer when the 3D panel is collapsed (rebuilt lazily on expand); `CFDApp.destroy()`
+    clears polling/timers and disposes both viewers, and is bound to `beforeunload`.
+  - `tests/js/viewer.test.mjs`, `tests/js/app.test.mjs`: cover RAF cancellation, listener
+    removal, renderer disposal and the app-level destroy path.
+- **Risk**: Disposing the telemetry viewer on collapse means a small re-init cost when the
+  panel is reopened; this is deliberate to bound WebGL context usage.
 
 ---
 
@@ -258,8 +267,16 @@ Install once with `npm install`, then run `npm test`.
 - `src/rapidfoam/web/server.py` — Bug #1 (model default), #8 (atomic reservation),
   #13 (explicit None check), #15 (symmetry projection guards).
 - `src/rapidfoam/web/ssh_client.py` — Bug #14 (staged, atomic download).
-- `src/rapidfoam/web/static/js/app.js` — Bug #1, #3, #4, #5, #7, #13.
-- `src/rapidfoam/web/static/js/viewer.js` — Bug #2, #6, #10.
+- `src/rapidfoam/web/static/js/app.js` — Bug #1, #3, #4, #5, #7, #9, #11, #13.
+- `src/rapidfoam/web/static/js/viewer.js` — Bug #2, #6, #9, #10, #11.
 - `src/rapidfoam/stl_utils.py` — Bug #12.
 - `tests/test_web_api.py` — Bug #1, #8, #14 regression tests.
 - `tests/test_regressions.py` — Bug #12, #15 regression tests.
+- `tests/js/` + `package.json` — Bug #1–#7, #9–#11, #13 front-end regression tests.
+
+## Remaining open item
+
+- **#5 (follow-up)** — the fetches now throw on a non-2xx response instead of
+  rendering a fake "no data" state, but the error is only logged to the console.
+  A visible error overlay/banner would tell the user *why* the telemetry went
+  blank. This is a UX enhancement, not a correctness defect.

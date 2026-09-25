@@ -159,3 +159,53 @@ test('pollTelemetry throws on a non-ok forces response instead of rendering empt
   assert.ok(calls.some((u) => String(u).includes('/api/telemetry/forces')));
   assert.ok(logged.some((line) => line.includes('Forces telemetry poll failed')));
 });
+
+// ---------------------------------------------------------------- Bug #9 / #11
+
+test('createSTLViewer returns null for a half-initialised viewer', async () => {
+  const app = await makeApp();
+  app._window.STLViewer = class { constructor() { this.available = false; } };
+  const originalWarn = app._window.console.warn;
+  app._window.console.warn = () => {};
+  try {
+    assert.equal(app.createSTLViewer('stl-viewer-container'), null);
+  } finally {
+    app._window.console.warn = originalWarn;
+  }
+});
+
+test('createSTLViewer returns a usable viewer when available', async () => {
+  const app = await makeApp();
+  const fake = { available: true };
+  app._window.STLViewer = class { constructor() { return fake; } };
+  assert.equal(app.createSTLViewer('stl-viewer-container'), fake);
+});
+
+test('disposeTelemetryViewer disposes and clears the telemetry viewer', async () => {
+  const app = await makeApp();
+  let disposed = false;
+  let cleared = false;
+  app.telemetryLayer = { clear() { cleared = true; } };
+  app.telemetryViewer = { dispose() { disposed = true; } };
+  app.telemetry3dCase = 'case_a';
+  app.disposeTelemetryViewer();
+  assert.equal(disposed, true);
+  assert.equal(cleared, true);
+  assert.equal(app.telemetryViewer, null);
+  assert.equal(app.telemetryLayer, null);
+  assert.equal(app.telemetry3dCase, null);
+});
+
+test('destroy clears timers and disposes both viewers', async () => {
+  const app = await makeApp();
+  let mainDisposed = false;
+  let telemetryDisposed = false;
+  app.pollInterval = setInterval(() => {}, 100000);
+  app.viewer = { dispose() { mainDisposed = true; } };
+  app.telemetryViewer = { dispose() { telemetryDisposed = true; } };
+  app.destroy();
+  assert.equal(mainDisposed, true);
+  assert.equal(telemetryDisposed, true);
+  assert.equal(app.viewer, null);
+  assert.equal(app.pollInterval, null);
+});

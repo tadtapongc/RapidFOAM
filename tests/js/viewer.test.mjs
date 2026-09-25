@@ -158,3 +158,75 @@ test('recomputeOverallBoundingBox scales far plane and maxDistance for large mod
   assert.ok(viewer.controls.maxDistance > 1500, `maxDistance should grow, got ${viewer.controls.maxDistance}`);
   assert.equal(viewer.camera.updated, true);
 });
+
+// ---------------------------------------------------------------- Bug #9
+
+test('constructor marks the viewer unavailable when the container is missing', () => {
+  const dom = createDom('<div id="something-else"></div>');
+  const window = loadScript(dom, 'viewer.js');
+  const originalWarn = window.console.warn;
+  window.console.warn = () => {};
+  try {
+    const viewer = new window.STLViewer('does-not-exist');
+    assert.equal(viewer.available, false);
+    assert.equal(viewer.scene, undefined);
+  } finally {
+    window.console.warn = originalWarn;
+  }
+});
+
+test('constructor marks the viewer unavailable when THREE is absent', () => {
+  const dom = createDom('<div id="viewer"></div>');
+  const window = loadScript(dom, 'viewer.js');
+  delete window.THREE;
+  const originalWarn = window.console.warn;
+  window.console.warn = () => {};
+  try {
+    const viewer = new window.STLViewer('viewer');
+    assert.equal(viewer.available, false);
+  } finally {
+    window.console.warn = originalWarn;
+  }
+});
+
+// ---------------------------------------------------------------- Bug #11
+
+test('dispose cancels the RAF loop, removes listeners and disposes the renderer', () => {
+  const viewer = makeViewer();
+  viewer._window.requestAnimationFrame = () => 1234;
+  viewer._window.cancelAnimationFrame = (id) => { viewer._window._cancelled = id; };
+  const listenerRemovals = [];
+  viewer._window.removeEventListener = (name) => listenerRemovals.push(name);
+  const windowListener = () => {};
+  viewer._onWindowResize = windowListener;
+  let disconnected = false;
+  viewer.resizeObserver = { disconnect() { disconnected = true; } };
+  let rendererDisposed = false;
+  viewer.renderer = {
+    domElement: { parentNode: { removeChild() {} } },
+    dispose() { rendererDisposed = true; },
+  };
+  viewer.stlGroup = { children: [], traverse() {}, remove() {} };
+  viewer.stlMeshes = new Map();
+  viewer._rafId = 42;
+
+  viewer.dispose();
+
+  assert.equal(viewer.disposed, true);
+  assert.equal(viewer.available, false);
+  assert.equal(viewer._rafId, null);
+  assert.equal(viewer._window._cancelled, 42);
+  assert.equal(disconnected, true);
+  assert.equal(rendererDisposed, true);
+  assert.ok(listenerRemovals.includes('resize'));
+});
+
+test('animate() stops rescheduling after dispose()', () => {
+  const viewer = makeViewer();
+  let calls = 0;
+  viewer._window.requestAnimationFrame = () => { calls += 1; return calls; };
+  viewer.container = { clientWidth: 0, clientHeight: 0 };
+  viewer.disposed = true;
+  viewer.animate();
+  assert.equal(calls, 0);
+});

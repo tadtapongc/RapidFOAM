@@ -15,8 +15,19 @@ const STL_PALETTE = [
 
 class STLViewer {
   constructor(containerId) {
+    // `available` distinguishes a usable viewer from a half-initialised one:
+    // callers should treat the instance as unusable unless this is true.
+    this.available = false;
+    this.disposed = false;
+    this._rafId = null;
+    this._onWindowResize = null;
+    this.resizeObserver = null;
+
     this.container = document.getElementById(containerId);
-    if (!this.container) return;
+    if (!this.container) {
+      console.warn(`STLViewer: container '${containerId}' not found; 3D viewer unavailable.`);
+      return;
+    }
 
     this.scene = null;
     this.camera = null;
@@ -53,6 +64,7 @@ class STLViewer {
   }
 
   init() {
+    if (!this.container) return;
     if (typeof THREE === 'undefined') {
       console.warn('Three.js not loaded. 3D viewer unavailable.');
       return;
@@ -120,14 +132,71 @@ class STLViewer {
     this.initGizmo();
 
     // Handle Resize (window and container observer)
-    window.addEventListener('resize', () => this.onResize());
+    this._onWindowResize = () => this.onResize();
+    window.addEventListener('resize', this._onWindowResize);
     if (window.ResizeObserver && this.container) {
       this.resizeObserver = new ResizeObserver(() => this.onResize());
       this.resizeObserver.observe(this.container);
     }
 
+    this.available = true;
+
     // Animation Loop
     this.animate();
+  }
+
+  /**
+   * Tear down the RAF loop, listeners, resize observer and WebGL context.
+   * Safe to call multiple times. After disposal the instance must not be used.
+   */
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.available = false;
+
+    if (this._rafId !== null) {
+      window.cancelAnimationFrame(this._rafId);
+      this._rafId = null;
+    }
+    if (this._onWindowResize) {
+      window.removeEventListener('resize', this._onWindowResize);
+      this._onWindowResize = null;
+    }
+    if (this.resizeObserver) {
+      try { this.resizeObserver.disconnect(); } catch (err) { /* already gone */ }
+      this.resizeObserver = null;
+    }
+
+    if (this.controls && typeof this.controls.dispose === 'function') {
+      try { this.controls.dispose(); } catch (err) { /* no-op */ }
+    }
+
+    [this.stlGroup, this.domainBoxGroup, this.originAxesGroup].forEach((group) => {
+      if (group) this.disposeGroup(group);
+    });
+    [this.bboxHelper, this.groundGrid, this.flowArrow].forEach((obj) => {
+      if (obj) {
+        this.scene?.remove(obj);
+        this.disposeObject(obj);
+      }
+    });
+    this.bboxHelper = null;
+    this.groundGrid = null;
+    this.flowArrow = null;
+    this.domainBoxGroup = null;
+    this.originAxesGroup = null;
+    this.stlMeshes.clear();
+
+    if (this.renderer) {
+      try { this.renderer.dispose(); } catch (err) { /* no-op */ }
+      const canvas = this.renderer.domElement;
+      if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas);
+      this.renderer = null;
+    }
+    this.scene = null;
+    this.camera = null;
+    this.controls = null;
+    this.stlGroup = null;
   }
 
   disposeObject(obj) {
@@ -1000,7 +1069,8 @@ class STLViewer {
   }
 
   animate() {
-    requestAnimationFrame(() => this.animate());
+    if (this.disposed) return;
+    this._rafId = window.requestAnimationFrame(() => this.animate());
     if (!this.container || this.container.clientWidth <= 0 || this.container.clientHeight <= 0) {
       return; // Skip rendering when tab is hidden or 0 size
     }

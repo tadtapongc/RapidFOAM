@@ -234,9 +234,35 @@ class CFDApp {
     this.init();
   }
 
+  /**
+   * Build an STLViewer only if it initialised fully. A half-initialised
+   * viewer (missing container or unavailable Three.js) has null scene/camera
+   * fields, so returning null here keeps every `if (this.viewer)` guard honest.
+   */
+  createSTLViewer(containerId) {
+    if (typeof STLViewer === 'undefined') return null;
+    const viewer = new STLViewer(containerId);
+    if (!viewer || !viewer.available) {
+      console.warn(`3D viewer '${containerId}' unavailable (Three.js or container missing).`);
+      return null;
+    }
+    return viewer;
+  }
+
+  showViewerUnavailableWarning() {
+    const msg = document.getElementById('viewer-empty-msg');
+    if (msg) {
+      msg.style.display = 'block';
+      msg.innerHTML = '<p>3D viewer unavailable — Three.js could not be loaded. '
+        + 'Geometry setup still works; only the interactive preview is disabled.</p>';
+    }
+    this.showToast('3D viewer unavailable (Three.js failed to load).', 'warning');
+  }
+
   async init() {
     // 1. Initialize components
-    this.viewer = new STLViewer('stl-viewer-container');
+    this.viewer = this.createSTLViewer('stl-viewer-container');
+    if (!this.viewer) this.showViewerUnavailableWarning();
     this.charts = new TelemetryCharts();
 
     // 2. Bind UI event listeners
@@ -273,6 +299,9 @@ class CFDApp {
         this.pollTelemetry();
       }
     }, 5000);
+
+    // 6. Release WebGL contexts / timers when the page goes away.
+    window.addEventListener('beforeunload', () => this.destroy());
   }
 
   // -------------------------------------------------------------
@@ -1020,19 +1049,19 @@ class CFDApp {
 
     // 3D Viewer overlay tool checkboxes
     document.getElementById('chk-show-axes')?.addEventListener('change', (e) => {
-      this.viewer.toggleAxes(e.target.checked);
+      this.viewer?.toggleAxes(e.target.checked);
     });
     document.getElementById('chk-show-domain')?.addEventListener('change', (e) => {
-      this.viewer.toggleDomain(e.target.checked);
+      this.viewer?.toggleDomain(e.target.checked);
     });
     document.getElementById('chk-show-bounds')?.addEventListener('change', (e) => {
-      this.viewer.toggleBounds(e.target.checked);
+      this.viewer?.toggleBounds(e.target.checked);
     });
     document.getElementById('chk-show-ground')?.addEventListener('change', (e) => {
-      this.viewer.toggleGround(e.target.checked);
+      this.viewer?.toggleGround(e.target.checked);
     });
     document.getElementById('chk-show-flow')?.addEventListener('change', (e) => {
-      this.viewer.toggleFlow(e.target.checked);
+      this.viewer?.toggleFlow(e.target.checked);
     });
 
     // Framing buttons: Fit Domain vs Fit Model
@@ -1040,27 +1069,27 @@ class CFDApp {
     const btnFitModel = document.getElementById('btn-fit-model');
 
     btnFitDomain?.addEventListener('click', () => {
-      this.viewer.fitView('domain');
+      this.viewer?.fitView('domain');
       btnFitDomain.classList.add('active');
       btnFitModel?.classList.remove('active');
     });
 
     btnFitModel?.addEventListener('click', () => {
-      this.viewer.fitView('model');
+      this.viewer?.fitView('model');
       btnFitModel.classList.add('active');
       btnFitDomain?.classList.remove('active');
     });
 
     // Camera Reset / Recenter
     document.getElementById('btn-reset-camera')?.addEventListener('click', () => {
-      this.viewer.resetCamera();
+      this.viewer?.resetCamera();
     });
 
     // Camera angle presets (Iso, Top, Side, Front)
     document.querySelectorAll('.btn-view-angle').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         const angle = e.target.dataset.angle;
-        this.viewer.setViewAngle(angle);
+        this.viewer?.setViewAngle(angle);
       });
     });
 
@@ -1072,7 +1101,7 @@ class CFDApp {
         const isMaximized = viewerPanel.classList.toggle('maximized');
         expandBtn.textContent = isMaximized ? 'Collapse' : 'Expand';
         expandBtn.className = isMaximized ? 'btn btn-primary btn-xs' : 'btn btn-secondary btn-xs';
-        setTimeout(() => this.viewer.onResize(), 150);
+        setTimeout(() => this.viewer?.onResize(), 150);
       });
     }
   }
@@ -2715,15 +2744,25 @@ class CFDApp {
     );
   }
 
+  disposeTelemetryViewer() {
+    if (this.telemetryLayer) {
+      this.telemetryLayer.clear();
+      this.telemetryLayer = null;
+    }
+    if (this.telemetryViewer) {
+      this.telemetryViewer.dispose();
+      this.telemetryViewer = null;
+    }
+    this.telemetry3dCase = null;
+    this._telemetry3dPayload = null;
+  }
+
   initTelemetryViewer() {
     if (this.telemetryViewer || typeof STLViewer === 'undefined') return;
     const container = document.getElementById('telemetry-viewer-container');
     if (!container) return;
-    this.telemetryViewer = new STLViewer('telemetry-viewer-container');
-    if (!this.telemetryViewer.scene) {
-      this.telemetryViewer = null;
-      return;
-    }
+    this.telemetryViewer = this.createSTLViewer('telemetry-viewer-container');
+    if (!this.telemetryViewer) return;
     // Clean scene: model + vectors only. Set flags directly to avoid touching
     // the shared setup-tab badges/legend DOM ids.
     this.telemetryViewer.showDomain = false;
@@ -2744,6 +2783,13 @@ class CFDApp {
     const btn = document.getElementById('td-toggle');
     if (panel) panel.classList.toggle('collapsed', !this.telemetry3dExpanded);
     if (btn) btn.textContent = this.telemetry3dExpanded ? 'Hide 3D' : 'Show 3D';
+
+    if (!this.telemetry3dExpanded) {
+      // Release the WebGL context when the panel is hidden; it is rebuilt lazily
+      // by initTelemetryViewer() on the next expand.
+      this.disposeTelemetryViewer();
+      return;
+    }
 
     if (this.telemetry3dExpanded) {
       this.initTelemetryViewer();
@@ -3722,6 +3768,27 @@ class CFDApp {
       toast.style.opacity = '0';
       setTimeout(() => toast.remove(), 300);
     }, 4000);
+  }
+
+  /** Tear down polling, timers and both WebGL viewers. */
+  destroy() {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+    if (this.downloadPollTimer) {
+      clearInterval(this.downloadPollTimer);
+      this.downloadPollTimer = null;
+    }
+    if (this.layerPreviewTimer) {
+      clearTimeout(this.layerPreviewTimer);
+      this.layerPreviewTimer = null;
+    }
+    this.disposeTelemetryViewer();
+    if (this.viewer) {
+      this.viewer.dispose();
+      this.viewer = null;
+    }
   }
 }
 
