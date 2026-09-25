@@ -10,7 +10,9 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import tarfile
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -312,9 +314,16 @@ class ClusterSSHClient:
             raise ConnectionError("Not connected to cluster SSH server.")
 
         remote_root = remote_dir.rstrip("/")
-        local_root = Path(local_dir)
-        local_root.mkdir(parents=True, exist_ok=True)
-        resolved_root = local_root.resolve()
+        local_root = Path(local_dir).resolve()
+        local_root.parent.mkdir(parents=True, exist_ok=True)
+
+        # Extract into a sibling staging directory and publish it atomically on
+        # success. A disconnect (or any read error) mid-stream then never leaves
+        # a partially written case at the destination path.
+        staging_root = Path(
+            tempfile.mkdtemp(prefix=f".{local_root.name}.download-", dir=local_root.parent)
+        )
+        resolved_root = staging_root.resolve()
 
         total_bytes = self._remote_dir_size(remote_root)
         stats = {"files": 0, "dirs": 0, "bytes": 0, "total_bytes": total_bytes}
@@ -322,8 +331,11 @@ class ClusterSSHClient:
             progress(dict(stats))
 
         cmd = f"tar -C {shlex.quote(remote_root)} -cf - ."
+        # Capture the client used for this transfer so a concurrent disconnect
+        # does not leave us dereferencing a closed/replaced session.
         with self._lock:
-            _stdin, stdout, stderr = self._client.exec_command(cmd)
+            client = self._client
+            _stdin, stdout, stderr = client.exec_command(cmd)
 
         exit_code: Optional[int] = None
         err_text = ""
@@ -358,26 +370,34 @@ class ClusterSSHClient:
                         if progress is not None:
                             progress(dict(stats))
                     # Symlinks and special files are skipped to avoid loops.
-        finally:
+            if progress is not None:
+                progress(dict(stats))
+            # recv_exit_status must be called after the stream is consumed.
             try:
                 exit_code = stdout.channel.recv_exit_status()
             except Exception:
                 exit_code = -1
-            try:
-                err_text = stderr.read().decode("utf-8", errors="replace").strip()
-            except Exception:
-                err_text = ""
+            if exit_code not in (0, None):
+                try:
+                    err_text = stderr.read().decode("utf-8", errors="replace").strip()
+                except Exception:
+                    err_text = ""
+                raise RuntimeError(err_text or f"remote tar failed (exit {exit_code})")
+
+            # Publish atomically: replace any previous (overwrite-approved) copy.
+            if local_root.exists():
+                shutil.rmtree(local_root, ignore_errors=True)
+            os.replace(staging_root, local_root)
+            staging_root = None  # type: ignore[assignment]
+            return stats
+        finally:
             for stream in (stdout, stderr):
                 try:
                     stream.close()
                 except Exception:
                     pass
-
-        if progress is not None:
-            progress(dict(stats))
-        if exit_code not in (0, None):
-            raise RuntimeError(err_text or f"remote tar failed (exit {exit_code})")
-        return stats
+            if staging_root is not None:
+                shutil.rmtree(staging_root, ignore_errors=True)
 
     @_synchronized
     def read_remote_text(self, remote_path: str, max_lines: Optional[int] = None) -> str:

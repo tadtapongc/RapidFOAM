@@ -6,18 +6,18 @@ Source report: `bug-hunt/BUGS.md`
 
 | Outcome | Count |
 |---------|-------|
-| Fixed | 10 |
-| Confirmed but not fixed | 5 |
+| Fixed | 11 |
+| Confirmed but not fixed | 4 |
 | False positive | 0 |
 | **Total** | **15** |
 
 Verification: every referenced location was read on the checked-out tree
 (`d72a14f`). All 15 reports were confirmed as real defects (none were false
-positives). Ten were fixed; the five left unfixed are low-severity /
+positives). Eleven were fixed; the four left unfixed are low-severity /
 higher-risk refactors documented below.
 
-Test status after fixes: **140 tests pass, 10 skipped** (`python -m unittest
-discover -s tests`), up from 136. Four new regression tests were added.
+Test status after fixes: **141 tests pass, 10 skipped** (`python -m unittest
+discover -s tests`), up from 136. Five new regression tests were added.
 
 ---
 
@@ -210,18 +210,23 @@ discover -s tests`), up from 136. Four new regression tests were added.
 ---
 
 ### Bug #14 – Tar-stream download races with SSH disconnect/close
-- **Status**: Confirmed but not fixed
+- **Status**: Fixed
 - **Reasoning**: Confirmed. `download_directory` intentionally releases `self._lock` while
   streaming, so a concurrent `disconnect()`/`connect()` closes the client and channel
   mid-transfer, leaving a partial local case and a generic error.
-- **Why not fixed**: The suggested remedies (per-transfer cancel event, or extract-to-temp +
-  atomic rename) change the transfer lifecycle and error semantics and need a way to
-  coordinate with `disconnect()`. That is a non-trivial concurrency change in the SSH client
-  trust boundary. Given low severity and the absence of a simple, safe target, it was left
-  for a dedicated hardening pass.
-- **Changes made**: None.
-- **Risk / follow-up**: Disconnecting during a large download can still produce a partially
-  written case. Implementing the temp-dir + atomic-rename approach is the recommended fix.
+- **Changes made**:
+  - `src/rapidfoam/web/ssh_client.py`: the transfer now extracts into a hidden sibling
+    staging directory (`.<case>.download-<rand>`, which `api_list_cases` already skips as a
+    dotfile) and publishes it with an atomic `os.replace` only after the archive is fully
+    consumed and a clean exit status is confirmed. On any exception (including a disconnect
+    mid-stream) the staging directory is removed, so the destination never contains a
+    partially written case. The client/channel used for the transfer is captured under the
+    lock. `shutil`, `tempfile` imports added.
+  - `tests/test_web_api.py`: added `test_download_directory_is_atomic_on_failure`, which
+    feeds a truncated tar and asserts the destination and staging area are both absent.
+- **Risk**: On success an overwrite-approved existing `cases/<case>/` is replaced wholesale
+  (the intended full-mirror semantic). Unlike per-file resumable sync, an interrupted
+  download now leaves the previous copy untouched rather than a half-updated one.
 
 ---
 
@@ -245,8 +250,9 @@ discover -s tests`), up from 136. Four new regression tests were added.
 
 - `src/rapidfoam/web/server.py` — Bug #1 (model default), #8 (atomic reservation),
   #13 (explicit None check), #15 (symmetry projection guards).
+- `src/rapidfoam/web/ssh_client.py` — Bug #14 (staged, atomic download).
 - `src/rapidfoam/web/static/js/app.js` — Bug #1, #3, #4, #5, #7, #13.
 - `src/rapidfoam/web/static/js/viewer.js` — Bug #2, #6, #10.
 - `src/rapidfoam/stl_utils.py` — Bug #12.
-- `tests/test_web_api.py` — Bug #1, #8 regression tests.
+- `tests/test_web_api.py` — Bug #1, #8, #14 regression tests.
 - `tests/test_regressions.py` — Bug #12, #15 regression tests.

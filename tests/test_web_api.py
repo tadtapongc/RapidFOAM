@@ -1604,6 +1604,54 @@ class TestWebAPI(unittest.TestCase):
             self.assertEqual((Path(tmp) / "log.simpleFoam").read_bytes(), b"hello")
             self.assertEqual((Path(tmp) / "system" / "controlDict").read_bytes(), b"abc")
 
+    def test_download_directory_is_atomic_on_failure(self):
+        """A mid-stream failure must not leave a partial case at the destination."""
+        import io
+        import tarfile
+        import tempfile
+
+        def make_partial_tar():
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as t:
+                data = b"partial"
+                info = tarfile.TarInfo("system/controlDict")
+                info.size = len(data)
+                t.addfile(info, io.BytesIO(data))
+            return buf.getvalue()
+
+        class FakeChannel:
+            def recv_exit_status(self):
+                return 0
+
+        class FakeStream(io.BytesIO):
+            def __init__(self, data):
+                super().__init__(data)
+                self.channel = FakeChannel()
+
+        class FakeClient:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def exec_command(self, command, timeout=None):
+                return io.BytesIO(), FakeStream(self.payload), io.BytesIO()
+
+        # Truncate the tar so extraction fails partway through, simulating an
+        # interrupted stream.
+        client = FakeClient(make_partial_tar()[: 512 + 40])
+        c = ClusterSSHClient()
+        c._client = client
+        with tempfile.TemporaryDirectory() as parent:
+            dest = Path(parent) / "case_atomic"
+            with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+                with self.assertRaises(Exception):
+                    c.download_directory("/repo/cases/c1", dest)
+            self.assertFalse(dest.exists())
+            # No staging leftovers either.
+            self.assertEqual(
+                [p for p in Path(parent).iterdir() if p.name.startswith(".case_atomic.download-")],
+                [],
+            )
+
     def test_download_case_endpoint(self):
         """Starting a download returns immediately and progress is tracked."""
         from rapidfoam.web.server import (
