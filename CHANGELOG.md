@@ -5,6 +5,26 @@ All notable changes to RapidFOAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Front-end test harness**: JSDOM + `node:test` suite under `tests/js/` covering the Web Studio browser logic (`npm install && npm test`).
+
+### Fixed
+- **Validate no longer mutates state**: the Studio "Validate" action sent no `generate_locally` flag, so the endpoint's `True` default silently overwrote `configs/<case>.json` and regenerated `cases/<case>/`. The request now sets `generate_locally: false` and the API model defaults to `false`, so a validation-only call can never write files.
+- **Large (millimetre-scale) STL viewing**: the 3D viewer's fixed far plane (2000) and orbit `maxDistance` (1500) clipped models exported in mm. Both now scale with the loaded geometry bounds.
+- **Telemetry auto-refresh stall**: switching the monitored case left `telemetryInFlight` set when a poll was in flight, permanently suppressing the 5 s interval; the flag is now cleared on case switch.
+- **Solver-health badge false "Healthy"**: missing continuity was coerced by `Number(null) === 0` and shown as "Healthy"; the badge now requires real, finite continuity data.
+- **Telemetry HTTP errors**: `pollTelemetry` ignored `res.ok` and rendered backend errors as a normal "no data" run; each fetch now rejects non-2xx responses.
+- **3D flow-arrow GPU leak**: the previous arrow was removed without disposing its geometries/materials, leaking GL buffers on every parameter edit.
+- **Stored XSS in the Studio**: filenames, case names and SLURM job fields were interpolated into `innerHTML` unescaped; all untrusted values are now escaped, with attributes set via `dataset`.
+- **Concurrent case downloads**: the active-check and reservation were separate critical sections, so two requests could both start and corrupt `cases/<case>/`; reservation is now atomic under the progress lock.
+- **Case downloads vs. SSH disconnect**: transfers now extract into a staging directory and publish atomically, so a mid-stream disconnect can no longer leave a partially written case.
+- **3D viewer lifecycle**: the viewer now exposes an `available` flag (unavailable instances are treated as absent with a user-visible notice) and a `dispose()` that cancels its RAF loop, listeners, resize observer and WebGL context.
+- **Symmetry telemetry on extended force files**: a non-`x/y/z` column (e.g. a magnitude) raised `ValueError` and returned HTTP 500; unknown columns now pass through.
+- **`copy_stl` multi-solid merging**: the byte-copy fast path could skip rewriting all `solid`/`endsolid` lines when the first solid happened to match the target name; merging is now always honoured.
+- **`iterations_per_second == 0`**: a legitimate zero rate was displayed and serialised as missing; explicit null checks now distinguish `0` from absent.
+
 ## [1.2.0] - 2026-09-18
 
 ### Added

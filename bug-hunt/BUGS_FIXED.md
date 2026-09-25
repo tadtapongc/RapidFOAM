@@ -13,13 +13,12 @@ Source report: `bug-hunt/BUGS.md`
 
 Verification: every referenced location was read on the checked-out tree
 (`d72a14f`). All 15 reports were confirmed as real defects (none were false
-positives) and all 15 are now fixed. The only remaining item is a UX follow-up
-to #5 (surface telemetry HTTP errors in the UI), not a correctness defect;
-see the end of this report.
+positives) and all 15 are now fixed, including the #5 error-surfacing UX
+follow-up.
 
 Test status after fixes: **141 Python tests pass, 10 skipped** (`python -m
-unittest discover -s tests`), up from 136, plus **24 front-end tests pass**
-(`npm test`, JSDOM + `node:test`). Five Python and 24 JS regression tests were
+unittest discover -s tests`), up from 136, plus **25 front-end tests pass**
+(`npm test`, JSDOM + `node:test`). Five Python and 25 JS regression tests were
 added.
 
 A front-end test harness now exists under `tests/js/` (`harness.mjs`,
@@ -90,10 +89,13 @@ covers the fixed front-end defects (#1, #2, #3, #4, #5, #6, #7, #9, #10, #11,
   Ready" presentation.
 - **Changes made**:
   - `src/rapidfoam/web/static/js/app.js`: added `if (!res.ok) throw new Error(...)` before
-    parsing in the forces, residuals and solver-health fetches. Each is already wrapped in
-    its own `try/catch` that logs the failure.
-- **Risk**: None; errors are now surfaced to the console rather than shown as empty data.
-  Follow-up: could surface an explicit error overlay instead of only logging.
+    parsing in the forces, residuals and solver-health fetches.
+  - `src/rapidfoam/web/static/index.html` + `style.css`: added a dismissable
+    `#telemetry-error-banner` alert and an `.error` state for the convergence pill.
+  - `src/rapidfoam/web/static/js/app.js`: `showTelemetryError()` / `clearTelemetryError()`
+    display the reason (e.g. "Forces request failed (HTTP 500)") and reset the pill; the
+    banner clears on a healthy poll and on case switch.
+- **Risk**: None. Error messages are server/JS-generated and inserted via `textContent`.
 
 ---
 
@@ -273,10 +275,4 @@ covers the fixed front-end defects (#1, #2, #3, #4, #5, #6, #7, #9, #10, #11,
 - `tests/test_web_api.py` — Bug #1, #8, #14 regression tests.
 - `tests/test_regressions.py` — Bug #12, #15 regression tests.
 - `tests/js/` + `package.json` — Bug #1–#7, #9–#11, #13 front-end regression tests.
-
-## Remaining open item
-
-- **#5 (follow-up)** — the fetches now throw on a non-2xx response instead of
-  rendering a fake "no data" state, but the error is only logged to the console.
-  A visible error overlay/banner would tell the user *why* the telemetry went
-  blank. This is a UX enhancement, not a correctness defect.
+- `src/rapidfoam/web/static/index.html`, `css/style.css` — Bug #5 error banner and pill state.

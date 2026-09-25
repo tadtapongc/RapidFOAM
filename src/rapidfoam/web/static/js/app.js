@@ -2605,6 +2605,7 @@ class CFDApp {
       const el = document.getElementById(id);
       if (el) el.style.display = 'none';
     });
+    this.clearTelemetryError();
 
     const consoleBox = document.getElementById('console-output');
     if (consoleBox) consoleBox.textContent = caseName ? `Loading ${caseName}…` : 'Waiting for solver output...';
@@ -2615,6 +2616,28 @@ class CFDApp {
       pill.className = 'convergence-status-pill standby';
       const text = pill.querySelector('.pill-text');
       if (text) text.textContent = caseName ? `LOADING ${caseName}` : 'Awaiting Data';
+    }
+  }
+
+  showTelemetryError(message) {
+    const banner = document.getElementById('telemetry-error-banner');
+    if (banner) {
+      banner.textContent = `Telemetry unavailable: ${message}`;
+      banner.style.display = 'block';
+    }
+    const pill = document.getElementById('telemetry-convergence-pill');
+    if (pill) {
+      pill.className = 'convergence-status-pill error';
+      const text = pill.querySelector('.pill-text');
+      if (text) text.textContent = 'TELEMETRY ERROR';
+    }
+  }
+
+  clearTelemetryError() {
+    const banner = document.getElementById('telemetry-error-banner');
+    if (banner) {
+      banner.style.display = 'none';
+      banner.textContent = '';
     }
   }
 
@@ -2957,6 +2980,7 @@ class CFDApp {
         if (!res.ok) throw new Error(`Forces request failed (HTTP ${res.status})`);
         const data = await res.json();
         if (isStale()) return;
+        this.clearTelemetryError();
 
         this.ensureTelemetry3D(caseName, data.stl_files);
         this.ensureTelemetry2D(caseName, data.stl_files);
@@ -3060,6 +3084,7 @@ class CFDApp {
         this.updateTelemetry2D(data);
       } catch (err) {
         console.error('Forces telemetry poll failed:', err);
+        if (!isStale()) this.showTelemetryError(err.message);
       }
 
       // 2. Fetch Residuals
@@ -3081,6 +3106,7 @@ class CFDApp {
         }
       } catch (err) {
         console.error('Residuals telemetry poll failed:', err);
+        if (!isStale()) this.showTelemetryError(err.message);
       }
 
       // 3. Fetch Solver Health
@@ -3101,6 +3127,7 @@ class CFDApp {
         }
       } catch (err) {
         console.error('Solver health telemetry poll failed:', err);
+        if (!isStale()) this.showTelemetryError(err.message);
       }
 
       // 4. Tail log (guarded against case switches)

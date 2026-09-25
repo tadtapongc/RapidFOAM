@@ -1387,6 +1387,17 @@ body.dark-theme {
   color: var(--text-tertiary);
 }
 
+.convergence-status-pill.error {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+}
+
+.convergence-status-pill.error .pill-dot {
+  background: #f87171;
+  box-shadow: 0 0 6px #f87171;
+}
+
 /* KPI Metric Cards */
 .kpi-grid {
   display: grid;

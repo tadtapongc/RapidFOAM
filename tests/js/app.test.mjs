@@ -134,9 +134,11 @@ test('validateCurrentConfig sends generate_locally:false', async () => {
 
 // ---------------------------------------------------------------- Bug #5
 
-test('pollTelemetry throws on a non-ok forces response instead of rendering empty data', async () => {
+test('pollTelemetry surfaces a non-ok forces response instead of rendering empty data', async () => {
   const app = await makeApp(`
     <select id="telemetry-case-select"><option value="case_a" selected>case_a</option></select>
+    <div id="telemetry-error-banner" style="display:none"></div>
+    <div id="telemetry-convergence-pill"><span class="pill-text"></span></div>
   `);
   const calls = [];
   app._window.fetch = async (url) => {
@@ -158,6 +160,19 @@ test('pollTelemetry throws on a non-ok forces response instead of rendering empt
   }
   assert.ok(calls.some((u) => String(u).includes('/api/telemetry/forces')));
   assert.ok(logged.some((line) => line.includes('Forces telemetry poll failed')));
+  const banner = app._window.document.getElementById('telemetry-error-banner');
+  assert.equal(banner.style.display, 'block');
+  assert.ok(banner.textContent.includes('Forces request failed (HTTP 500)'));
+  const pill = app._window.document.getElementById('telemetry-convergence-pill');
+  assert.ok(pill.className.includes('error'));
+});
+
+test('clearTelemetryError hides the banner', async () => {
+  const app = await makeApp('<div id="telemetry-error-banner" style="display:block">Telemetry unavailable: x</div>');
+  app.clearTelemetryError();
+  const banner = app._window.document.getElementById('telemetry-error-banner');
+  assert.equal(banner.style.display, 'none');
+  assert.equal(banner.textContent, '');
 });
 
 // ---------------------------------------------------------------- Bug #9 / #11
