@@ -5,10 +5,11 @@ All notable changes to RapidFOAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - 2026-09-25
 
 ### Added
 - **Front-end test harness**: JSDOM + `node:test` suite under `tests/js/` covering the Web Studio browser logic (`npm install && npm test`).
+- **Telemetry error surfacing**: a visible banner and pill state now explain why telemetry is unavailable (e.g. HTTP 500) instead of silently showing an empty run.
 
 ### Fixed
 - **Validate no longer mutates state**: the Studio "Validate" action sent no `generate_locally` flag, so the endpoint's `True` default silently overwrote `configs/<case>.json` and regenerated `cases/<case>/`. The request now sets `generate_locally: false` and the API model defaults to `false`, so a validation-only call can never write files.
