@@ -16,8 +16,15 @@ Verification: every referenced location was read on the checked-out tree
 positives). Eleven were fixed; the four left unfixed are low-severity /
 higher-risk refactors documented below.
 
-Test status after fixes: **141 tests pass, 10 skipped** (`python -m unittest
-discover -s tests`), up from 136. Five new regression tests were added.
+Test status after fixes: **141 Python tests pass, 10 skipped** (`python -m
+unittest discover -s tests`), up from 136, plus **16 front-end tests pass**
+(`npm test`, JSDOM + `node:test`). Five Python and 16 JS regression tests were
+added.
+
+A front-end test harness now exists under `tests/js/` (`harness.mjs`,
+`app.test.mjs`, `viewer.test.mjs`); it loads the browser sources into JSDOM and
+covers the fixed front-end defects (#1, #2, #3, #4, #5, #6, #7, #10, #13).
+Install once with `npm install`, then run `npm test`.
 
 ---
 

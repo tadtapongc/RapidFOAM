@@ -1,0 +1,19 @@
+{
+  "name": "rapidfoam-frontend-tests",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Front-end (browser JS) unit tests for the RapidFOAM Web Studio",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-force-exit --test-reporter=spec tests/js/app.test.mjs tests/js/viewer.test.mjs",
+    "test:js": "node --test --test-force-exit --test-reporter=spec tests/js/app.test.mjs tests/js/viewer.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tadtapongc/RapidFOAM.git"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}
