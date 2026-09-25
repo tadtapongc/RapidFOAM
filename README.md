@@ -21,6 +21,8 @@ RapidFOAM streamlines the OpenFOAM workflow for external vehicle aerodynamics: C
 - **Mesh Fidelity Presets**: Predefined configuration presets (`fast`, `standard`, `fine`) targeting different cell count budgets and turnaround times.
 - **Symmetry Plane Support**: Half-car simulations (e.g. `x = 0`) cut mesh cell count roughly in half, with automatic 2x force scaling in summaries and comparison tables.
 - **Web Studio Interface**: Browser-based UI with Three.js 3D domain visualization, interactive parameter editor, real-time convergence charts, and remote SLURM cluster job submission over SSH.
+- **Full Aerodynamic Telemetry**: Force/moment component breakdown, coefficients (`Cd`, `Cl`, `Cs`, `CmPitch`, `CmRoll`, `CmYaw`), 2D/3D aero-load views, aero balance / center of pressure, and a post-run reference editor for recomputing coefficients without re-running the solver.
+- **Remote Case Management**: Submit, monitor and gracefully cancel SLURM jobs; download finished cases from the cluster with live progress (streamed and published atomically, so an interrupted transfer never leaves a partial case).
 - **Convergence Auto-Stop**: Background monitor tracks rolling force variation and signals `stopAt writeNow;` once drag and downforce stabilize within a user-defined threshold (default +/- 0.5%).
 - **Post-Processing CLI**: Tabulates aerodynamic forces (Drag, Downforce, L/D), plots live convergence curves, and compares multiple case iterations side-by-side.
 
@@ -309,7 +311,10 @@ RapidFOAM/
 │       ├── server.py   # FastAPI backend & static file server
 │       ├── ssh_client.py # Paramiko SSH/SFTP client for remote SLURM clusters
 │       └── static/     # Web Studio UI (Three.js 3D viewport, telemetry graphs)
-├── tests/              # Automated unit & regression tests
+├── tests/              # Python unit & regression tests
+│   └── js/             # JSDOM front-end tests (npm test)
+├── package.json        # Front-end test tooling (jsdom)
+├── CHANGELOG.md        # Release history
 ├── run_app.bat         # 1-click launcher for Windows
 ├── run_app.sh          # 1-click launcher for Linux / macOS
 ├── setup_case.py       # Case generator CLI script
@@ -320,11 +325,26 @@ RapidFOAM/
 
 ## Testing
 
-Run the automated test suite with Python's standard `unittest`:
+### Python (core, API, post-processing)
+
+Run the backend suite with Python's standard `unittest`:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+### Front-end (Web Studio)
+
+The browser logic is covered by a JSDOM + `node:test` suite. Node.js 18+ is required:
+
+```bash
+npm install
+npm test
+```
+
+Both suites are independent: the Python tests exercise the generator, API and
+post-processing, while the JS tests cover the Web Studio telemetry, viewer and
+rendering logic.
 
 ---
 
