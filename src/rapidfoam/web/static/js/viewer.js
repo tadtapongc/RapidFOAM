@@ -214,7 +214,13 @@ class STLViewer {
   }
 
   updateFlowArrow(direction = new THREE.Vector3(0, 0, -1), origin = new THREE.Vector3(0, 1.2, 8.0), length = 3.0) {
-    if (this.flowArrow) this.scene.remove(this.flowArrow);
+    if (this.flowArrow) {
+      this.scene.remove(this.flowArrow);
+      // ArrowHelper owns a line geometry/material and a cone geometry/material;
+      // removing it from the scene does not release GPU buffers.
+      this.flowArrow.traverse((child) => this.disposeObject(child));
+      this.flowArrow = null;
+    }
     const color = 0x00e5ff;
     const dirNorm = direction.clone().normalize();
     this.flowArrow = new THREE.ArrowHelper(dirNorm, origin, length, color, length * 0.25, length * 0.15);
@@ -330,6 +336,16 @@ class STLViewer {
 
     // Check scale warning (mm vs m)
     const maxDim = Math.max(size.x, size.y, size.z);
+
+    // Grow the view distance so large (e.g. millimetre-scale) models are not
+    // clipped by the default far plane or clamped by the orbit maxDistance.
+    if (this.camera && this.controls) {
+      const radius = Math.max(size.length() / 2, maxDim) || 1;
+      this.camera.far = Math.max(2000, radius * 20);
+      this.camera.updateProjectionMatrix();
+      this.controls.maxDistance = Math.max(1500, radius * 10);
+    }
+
     const warnEl = document.getElementById('scale-warning');
     if (warnEl) {
       warnEl.style.display = maxDim > 20.0 ? 'block' : 'none';
@@ -527,7 +543,12 @@ class STLViewer {
       this.domainBoxGroup = null;
     }
 
-    if (!domainMin || !domainMax) return;
+    if (!domainMin || !domainMax) {
+      this.domainMin = null;
+      this.domainMax = null;
+      this.symPlaneCoord = null;
+      return;
+    }
 
     this.domainMin = domainMin;
     this.domainMax = domainMax;

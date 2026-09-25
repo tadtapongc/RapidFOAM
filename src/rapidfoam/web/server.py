@@ -238,7 +238,9 @@ class GenerateCaseRequest(BaseModel):
     upload_to_cluster: bool = False
     generate_remotely: bool = False
     submit_slurm: bool = False
-    generate_locally: bool = True
+    # Default to a pure validation request so a caller that forgets to set an
+    # explicit action can never be surprised by filesystem mutation.
+    generate_locally: bool = False
 
 
 # -------------------------------------------------------------
@@ -768,24 +770,33 @@ async def api_case_download(req: CaseDownloadRequest) -> dict[str, Any]:
     if not await asyncio.to_thread(ssh_client.remote_file_exists, remote_case):
         raise HTTPException(status_code=404, detail=f"Case '{req.case_name}' not found on cluster")
 
-    if _get_download_progress(req.case_name).get("active"):
-        return {"success": True, "already_running": True, "case_name": req.case_name}
-
     local_dir = PROJECT_ROOT / "cases" / req.case_name
-    if not req.overwrite and local_dir.is_dir() and any(local_dir.iterdir()):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Case '{req.case_name}' already exists locally. Set overwrite to re-download.",
-        )
 
-    _set_download_progress(
-        req.case_name,
-        active=True, done=False, error=None,
-        files=0, dirs=0, bytes=0, total_bytes=0,
-    )
-    asyncio.get_running_loop().run_in_executor(
-        None, _run_download, req.case_name, remote_case, local_dir
-    )
+    # Reserve the case atomically: check-for-active and set-active must happen in
+    # one critical section, otherwise two concurrent POSTs can both see inactive
+    # and both start writing into the same local case directory.
+    with _download_progress_lock:
+        state = _download_progress.get(req.case_name, {})
+        if state.get("active"):
+            return {"success": True, "already_running": True, "case_name": req.case_name}
+        if not req.overwrite and local_dir.is_dir() and any(local_dir.iterdir()):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Case '{req.case_name}' already exists locally. Set overwrite to re-download.",
+            )
+        _download_progress[req.case_name] = {
+            **state,
+            "active": True, "done": False, "error": None,
+            "files": 0, "dirs": 0, "bytes": 0, "total_bytes": 0,
+        }
+
+    try:
+        asyncio.get_running_loop().run_in_executor(
+            None, _run_download, req.case_name, remote_case, local_dir
+        )
+    except Exception:
+        _set_download_progress(req.case_name, active=False, done=True, error="Failed to schedule download")
+        raise
     return {"success": True, "started": True, "case_name": req.case_name}
 
 
@@ -1114,26 +1125,35 @@ def _project_force_columns_for_symmetry(
     cols: dict[str, list[float]], lateral_idx: int
 ) -> dict[str, list[float]]:
     """Full-car forces: in-plane components double, the normal component cancels."""
-    return {
-        name: [
-            0.0 if "xyz".index(name[-1]) == lateral_idx else value * 2.0
-            for value in values
-        ]
-        for name, values in cols.items()
-    }
+    projected: dict[str, list[float]] = {}
+    for name, values in cols.items():
+        axis = name[-1] if name else ""
+        if axis not in "xyz":
+            # Unknown / derived column (e.g. a magnitude) has no defined
+            # orientation on the symmetry plane; leave it untouched.
+            projected[name] = list(values)
+        elif "xyz".index(axis) == lateral_idx:
+            projected[name] = [0.0 for _ in values]
+        else:
+            projected[name] = [value * 2.0 for value in values]
+    return projected
 
 
 def _project_moment_columns_for_symmetry(
     cols: dict[str, list[float]], lateral_idx: int
 ) -> dict[str, list[float]]:
     """Full-car moments (pseudovector): about-normal doubles, others cancel."""
-    return {
-        name: [
-            value * 2.0 if "xyz".index(name[-1]) == lateral_idx else 0.0
-            for value in values
-        ]
-        for name, values in cols.items()
-    }
+    projected: dict[str, list[float]] = {}
+    for name, values in cols.items():
+        axis = name[-1] if name else ""
+        if axis not in "xyz":
+            # Unknown / derived column has no defined orientation here.
+            projected[name] = list(values)
+        elif "xyz".index(axis) == lateral_idx:
+            projected[name] = [value * 2.0 for value in values]
+        else:
+            projected[name] = [0.0 for _ in values]
+    return projected
 
 
 # Force/moment coefficients perpendicular to the symmetry plane cancel for the
@@ -1960,7 +1980,7 @@ async def api_telemetry_solver(case_name: str) -> dict[str, Any]:
         "case_name": case_name,
         "total_iterations": len(iterations),
         "latest_iteration": iterations[-1],
-        "iterations_per_second": round(iterations_per_second, 4) if iterations_per_second else None,
+        "iterations_per_second": round(iterations_per_second, 4) if iterations_per_second is not None else None,
         "elapsed_seconds": round(elapsed, 2) if elapsed is not None else None,
         "end_time": end_time,
         "eta_seconds": round(eta_seconds, 1) if eta_seconds is not None else None,

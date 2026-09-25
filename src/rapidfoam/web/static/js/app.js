@@ -1489,7 +1489,7 @@ class CFDApp {
       chip.style.borderColor = `${color}55`;
       chip.innerHTML = `
         <span class="stl-chip-dot" style="background: ${color}; width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px;"></span>
-        <span>${filename}</span>
+        <span>${this.escapeHtml(filename)}</span>
         <span class="stl-chip-remove btn-remove" title="Remove">&times;</span>
       `;
 
@@ -1604,6 +1604,7 @@ class CFDApp {
           upload_to_cluster: false,
           generate_remotely: false,
           submit_slurm: false,
+          generate_locally: false,
         }),
       });
       const data = await res.json();
@@ -2097,17 +2098,17 @@ class CFDApp {
       const isRunning = job.state === 'RUNNING' || job.state === 'R';
       const stateBadge = isRunning
         ? '<span class="tag-running">RUNNING</span>'
-        : `<span class="tag-pending">${job.state}</span>`;
+        : `<span class="tag-pending">${this.escapeHtml(job.state)}</span>`;
 
       tr.innerHTML = `
-        <td><strong>${job.job_id}</strong></td>
-        <td>${job.name}</td>
-        <td>${job.partition}</td>
+        <td><strong>${this.escapeHtml(job.job_id)}</strong></td>
+        <td>${this.escapeHtml(job.name)}</td>
+        <td>${this.escapeHtml(job.partition)}</td>
         <td>${stateBadge}</td>
-        <td>${job.time_used}</td>
-        <td>${job.time_limit}</td>
-        <td>${job.nodes}</td>
-        <td><button class="btn btn-outline btn-xs btn-cancel-job" data-id="${job.job_id}">Cancel</button></td>
+        <td>${this.escapeHtml(job.time_used)}</td>
+        <td>${this.escapeHtml(job.time_limit)}</td>
+        <td>${this.escapeHtml(job.nodes)}</td>
+        <td><button class="btn btn-outline btn-xs btn-cancel-job" data-id="${this.escapeHtml(job.job_id)}">Cancel</button></td>
       `;
 
       tr.querySelector('.btn-cancel-job').addEventListener('click', () => {
@@ -2249,10 +2250,11 @@ class CFDApp {
 
       const row = document.createElement('div');
       row.className = 'download-row';
+      const safeName = this.escapeHtml(p.case_name);
       row.innerHTML = `
-        <span class="download-row-name" title="${p.case_name}">${p.case_name}</span>
+        <span class="download-row-name" title="${safeName}">${safeName}</span>
         <span class="download-row-track"><span class="download-row-fill${pct === null ? ' indeterminate' : ''}" style="width:${pct === null ? 100 : pct}%"></span></span>
-        <span class="download-row-stats">${statsText}</span>
+        <span class="download-row-stats">${this.escapeHtml(statsText)}</span>
       `;
       list.appendChild(row);
     });
@@ -2499,7 +2501,11 @@ class CFDApp {
 
   beginTelemetryCaseSwitch(caseName) {
     // Invalidate any in-flight poll so the previous case's response is dropped.
+    // Clearing the flag here is essential: the stale poll's `finally` only
+    // clears it when its id still matches, so without this the interval guard
+    // could suppress every future poll.
     this.telemetryRequestId += 1;
+    this.telemetryInFlight = false;
     this.clearTelemetryRefOverrides();
     this.clearBalanceOverrides();
     this.clearTelemetryView(caseName);
@@ -2902,6 +2908,7 @@ class CFDApp {
         const refQuery = this.telemetryRefQuery();
         const balQuery = this.telemetryBalanceQuery();
         const res = await fetch(`/api/telemetry/forces?case_name=${encodeURIComponent(caseName)}${refQuery}${balQuery}`);
+        if (!res.ok) throw new Error(`Forces request failed (HTTP ${res.status})`);
         const data = await res.json();
         if (isStale()) return;
 
@@ -3012,6 +3019,7 @@ class CFDApp {
       // 2. Fetch Residuals
       try {
         const res = await fetch(`/api/telemetry/residuals?case_name=${encodeURIComponent(caseName)}`);
+        if (!res.ok) throw new Error(`Residuals request failed (HTTP ${res.status})`);
         const resData = await res.json();
         if (isStale()) return;
         if (resData.has_data && this.charts) {
@@ -3032,6 +3040,7 @@ class CFDApp {
       // 3. Fetch Solver Health
       try {
         const res = await fetch(`/api/telemetry/solver?case_name=${encodeURIComponent(caseName)}`);
+        if (!res.ok) throw new Error(`Solver health request failed (HTTP ${res.status})`);
         const solverData = await res.json();
         if (isStale()) return;
         if (solverData.has_data) {
@@ -3067,7 +3076,12 @@ class CFDApp {
   }
 
   renderSolverHealth(data) {
-    this.setValText('solver-iter-rate', data.iterations_per_second ? `${data.iterations_per_second.toFixed(3)} it/s` : '--');
+    this.setValText(
+      'solver-iter-rate',
+      (data.iterations_per_second !== null && data.iterations_per_second !== undefined && isFinite(data.iterations_per_second))
+        ? `${data.iterations_per_second.toFixed(3)} it/s`
+        : '--',
+    );
     this.setValText('solver-elapsed', this.formatDuration(data.elapsed_seconds));
     this.setValText('solver-eta', data.eta_seconds === null ? '--' : this.formatDuration(data.eta_seconds));
     const continuity = data.latest_continuity_global;
@@ -3075,13 +3089,14 @@ class CFDApp {
       'solver-continuity',
       continuity === null || continuity === undefined ? '--' : Number(continuity).toExponential(2),
     );
-    const globalContinuity = Number(continuity);
+    const hasContinuity = continuity !== null && continuity !== undefined && isFinite(Number(continuity));
     const badge = document.getElementById('solver-health-badge');
     if (badge) {
       let health = 'No continuity data';
-      if (isFinite(globalContinuity)) {
-        if (Math.abs(globalContinuity) < 1e-4) health = 'Healthy';
-        else if (Math.abs(globalContinuity) < 1e-2) health = 'Fair';
+      if (hasContinuity) {
+        const globalContinuity = Math.abs(Number(continuity));
+        if (globalContinuity < 1e-4) health = 'Healthy';
+        else if (globalContinuity < 1e-2) health = 'Fair';
         else health = 'High continuity error';
       }
       const linear = data.latest_linear_iters;
@@ -3523,7 +3538,7 @@ class CFDApp {
         badgeClass = 'status-failed';
         statusIcon = '✕';
       }
-      const statusBadge = `<span class="status-badge ${badgeClass}">${statusIcon} ${c.status || 'Ready'}</span>`;
+      const statusBadge = `<span class="status-badge ${badgeClass}">${statusIcon} ${this.escapeHtml(c.status || 'Ready')}</span>`;
 
       // Flow conditions
       let velDisplay = '--';
@@ -3535,8 +3550,8 @@ class CFDApp {
       }
       const flowHtml = `
         <div class="flow-cell">
-          <span class="flow-vel">${velDisplay}</span>
-          <span class="flow-dir text-muted small">Dir: ${c.direction || '-z'}</span>
+          <span class="flow-vel">${this.escapeHtml(velDisplay)}</span>
+          <span class="flow-dir text-muted small">Dir: ${this.escapeHtml(c.direction || '-z')}</span>
         </div>
       `;
 
@@ -3554,7 +3569,7 @@ class CFDApp {
 
       // Progress
       const progressHtml = c.latest_iter > 0
-        ? `<span class="iter-count monospace"><strong>${c.latest_iter}</strong> iter</span>`
+        ? `<span class="iter-count monospace"><strong>${Number(c.latest_iter)}</strong> iter</span>`
         : `<span class="text-muted small">0 iter</span>`;
 
       // Location & Date
@@ -3572,23 +3587,24 @@ class CFDApp {
       const locDateHtml = `
         <div class="loc-date-cell">
           <div>${locBadge}</div>
-          <div class="date-cell text-muted small">${c.modified}</div>
+          <div class="date-cell text-muted small">${this.escapeHtml(c.modified)}</div>
         </div>
       `;
 
       // Case name & setup chips
+      const fidelityClass = String(c.fidelity || 'standard').toLowerCase().replace(/[^a-z0-9_-]/g, '');
       const setupChips = `
         <div class="case-spec-chips">
-          <span class="spec-chip fidelity-${(c.fidelity || 'standard').toLowerCase()}">${c.fidelity || 'standard'}</span>
-          ${c.n_procs ? `<span class="spec-chip">${c.n_procs}p</span>` : ''}
-          ${c.stl_name ? `<span class="spec-chip stl-chip-tag">${c.stl_name}</span>` : ''}
+          <span class="spec-chip fidelity-${fidelityClass}">${this.escapeHtml(c.fidelity || 'standard')}</span>
+          ${c.n_procs ? `<span class="spec-chip">${Number(c.n_procs)}p</span>` : ''}
+          ${c.stl_name ? `<span class="spec-chip stl-chip-tag">${this.escapeHtml(c.stl_name)}</span>` : ''}
         </div>
       `;
 
       tr.innerHTML = `
         <td>
           <div class="case-name-cell">
-            <strong class="case-title">${c.name}</strong>
+            <strong class="case-title">${this.escapeHtml(c.name)}</strong>
             ${setupChips}
           </div>
         </td>
@@ -3599,19 +3615,26 @@ class CFDApp {
         <td>${locDateHtml}</td>
         <td>
           <div class="action-btn-group">
-            <button class="btn btn-outline btn-xs btn-inspect-case" data-name="${c.name}" title="Inspect Live Telemetry">📊 Live Telemetry</button>
-            ${isClusterOnly ? `<button class="btn btn-outline btn-xs btn-download-case" data-name="${c.name}" title="Download case from cluster to local cases/">⬇ Download</button>` : ''}
+            <button class="btn btn-outline btn-xs btn-inspect-case" title="Inspect Live Telemetry">📊 Live Telemetry</button>
+            ${isClusterOnly ? `<button class="btn btn-outline btn-xs btn-download-case" title="Download case from cluster to local cases/">⬇ Download</button>` : ''}
           </div>
         </td>
       `;
 
       // Bind actions
-      tr.querySelector('.btn-inspect-case')?.addEventListener('click', () => {
-        this.addTelemetryCase(c.name);
-        document.querySelector('.nav-tab[data-tab="telemetry-tab"]')?.click();
-      });
-
-      tr.querySelector('.btn-download-case')?.addEventListener('click', () => this.downloadCase(c.name));
+      const inspectBtn = tr.querySelector('.btn-inspect-case');
+      if (inspectBtn) {
+        inspectBtn.dataset.name = c.name;
+        inspectBtn.addEventListener('click', () => {
+          this.addTelemetryCase(c.name);
+          document.querySelector('.nav-tab[data-tab="telemetry-tab"]')?.click();
+        });
+      }
+      const downloadBtn = tr.querySelector('.btn-download-case');
+      if (downloadBtn) {
+        downloadBtn.dataset.name = c.name;
+        downloadBtn.addEventListener('click', () => this.downloadCase(c.name));
+      }
 
       tbody.appendChild(tr);
     });
@@ -3620,6 +3643,18 @@ class CFDApp {
   // -------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------
+  escapeHtml(value) {
+    // Escape untrusted values (filenames, case names, cluster job fields)
+    // before interpolating them into innerHTML.
+    if (value === null || value === undefined) return '';
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   getVal(id) {
     const el = document.getElementById(id);
     return el ? el.value : '';
@@ -3680,7 +3715,7 @@ class CFDApp {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     const icon = type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ';
-    toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
+    toast.innerHTML = `<span>${icon}</span> <span>${this.escapeHtml(message)}</span>`;
 
     container.appendChild(toast);
     setTimeout(() => {

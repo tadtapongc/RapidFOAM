@@ -427,6 +427,41 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual([ln for ln in lines if ln.startswith("solid")], ["solid merged", "solid merged"])
         self.assertEqual([ln for ln in lines if ln.startswith("endsolid")], ["endsolid merged", "endsolid merged"])
 
+    def test_multi_solid_stl_rename_when_first_solid_matches_is_still_merged(self):
+        """A rename is required whenever *any* solid differs, even if the first matches."""
+        src = self.root / "stl/multi_named.stl"
+        dst = self.root / "stl/merged_named.stl"
+        src.write_text(
+            "solid merged\n  facet normal 0 0 1\n    outer loop\n      vertex 0 0 0\n"
+            "      vertex 1 0 0\n      vertex 0 1 0\n    endloop\n  endfacet\nendsolid merged\n"
+            "solid other\n  facet normal 0 0 1\n    outer loop\n      vertex 0 0 0\n"
+            "      vertex 1 0 0\n      vertex 0 1 0\n    endloop\n  endfacet\nendsolid other\n"
+        )
+        self.assertEqual(copy_stl(src, dst, "merged"), 2)
+        lines = dst.read_text().splitlines()
+        self.assertEqual([ln for ln in lines if ln.startswith("solid")], ["solid merged", "solid merged"])
+        self.assertEqual([ln for ln in lines if ln.startswith("endsolid")], ["endsolid merged", "endsolid merged"])
+
+    def test_symmetry_projection_ignores_non_axis_columns(self):
+        from rapidfoam.web.server import (
+            _project_force_columns_for_symmetry,
+            _project_moment_columns_for_symmetry,
+        )
+
+        force_cols = {"total_x": [1.0], "total_y": [2.0], "total_z": [3.0], "magnitude": [4.0]}
+        moment_cols = {"total_mx": [1.0], "total_my": [2.0], "total_mz": [3.0], "signed_magnitude": [5.0]}
+        # lateral_idx = 0 (x): in-plane (y/z) forces double, x cancels; the
+        # unknown derived column must pass through without raising.
+        projected_force = _project_force_columns_for_symmetry(force_cols, 0)
+        self.assertEqual(projected_force["total_x"], [0.0])
+        self.assertEqual(projected_force["total_y"], [4.0])
+        self.assertEqual(projected_force["total_z"], [6.0])
+        self.assertEqual(projected_force["magnitude"], [4.0])
+        projected_moment = _project_moment_columns_for_symmetry(moment_cols, 0)
+        self.assertEqual(projected_moment["total_mx"], [2.0])
+        self.assertEqual(projected_moment["total_my"], [0.0])
+        self.assertEqual(projected_moment["signed_magnitude"], [5.0])
+
     def test_symmetry_plane_null_falls_back_to_centerline(self):
         cfg = load_config(self.config(symmetry_plane=None, centerline=0.25))
         box = compute_domain_box(cfg, ((0.25, 0, 0), (1, 1, 3)))

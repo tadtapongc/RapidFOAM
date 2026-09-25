@@ -1435,6 +1435,64 @@ class TestWebAPI(unittest.TestCase):
             if cfg_path.exists():
                 cfg_path.unlink()
 
+    def test_generate_request_defaults_to_validation_only(self):
+        """Omitting generate_locally must not persist a config or generate a case."""
+        case_name = "test_default_validation_only"
+        cfg_path = Path("configs") / f"{case_name}.json"
+        case_dir = Path("cases") / case_name
+        try:
+            req = GenerateCaseRequest(
+                config={"case_name": case_name, "stl_files": ["sample_wing.stl"]},
+                upload_to_cluster=False, generate_remotely=False, submit_slurm=False,
+            )
+            self.assertFalse(req.generate_locally)
+            res = asyncio.run(api_case_generate_and_submit(req))
+            self.assertTrue(res["success"])
+            self.assertFalse(cfg_path.exists())
+            self.assertFalse(case_dir.exists())
+        finally:
+            if cfg_path.exists():
+                cfg_path.unlink()
+            shutil.rmtree(case_dir, ignore_errors=True)
+
+    def test_concurrent_downloads_reserve_case_atomically(self):
+        """Two concurrent download requests must not both start for the same case."""
+        import threading
+
+        case_name = "test_concurrent_download"
+        case_dir = Path("cases") / case_name
+        shutil.rmtree(case_dir, ignore_errors=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+        self.addCleanup(lambda: web_server._download_progress.pop(case_name, None))
+
+        # Keep the background worker parked so the reservation persists while the
+        # second request is processed.
+        release = threading.Event()
+
+        def fake_run(_name, _remote, _local, _progress=None):
+            release.wait(timeout=5.0)
+            return {"files": 0, "dirs": 0, "bytes": 0, "total_bytes": 0}
+
+        req = web_server.CaseDownloadRequest(case_name=case_name, overwrite=True)
+
+        async def run_two():
+            with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+                with patch.object(ssh_client, "remote_file_exists", return_value=True):
+                    with patch.object(ssh_client, "download_directory", side_effect=fake_run):
+                        responses = await asyncio.gather(
+                            web_server.api_case_download(req),
+                            web_server.api_case_download(req),
+                        )
+            # Release the parked worker *before* the loop shuts down so the
+            # executor does not wait for the timeout.
+            release.set()
+            await asyncio.sleep(0.05)
+            return responses
+
+        responses = list(asyncio.run(run_two()))
+        self.assertEqual(sum(1 for r in responses if r.get("started")), 1)
+        self.assertEqual(sum(1 for r in responses if r.get("already_running")), 1)
+
     def test_delete_missing_remote_case_returns_404(self):
         """Deleting a case that exists neither locally nor remotely must 404."""
         with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):

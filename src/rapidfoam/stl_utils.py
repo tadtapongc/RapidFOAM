@@ -209,8 +209,12 @@ def copy_stl(
 ) -> int:
     """Copy STL to destination, optionally rewriting solid name.
 
-    Uses zero-memory fast OS copy if name already matches, or streaming
-    header/footer substitution with verbatim coordinate preservation.
+    Uses a zero-memory fast OS copy only when no rename is requested; otherwise
+    streams header/footer substitution with verbatim coordinate preservation so
+    that every ``solid``/``endsolid`` line is rewritten. The fast path must not
+    be taken merely because the requested name equals the *first* solid name:
+    multi-body CAD exports can start with that solid while containing others,
+    and those must still be merged.
 
     Returns:
         Number of triangles.
@@ -221,9 +225,9 @@ def copy_stl(
 
     if info is None:
         info = stl_info(src)
-    original_name, n_triangles, _ = info
+    _, n_triangles, _ = info
 
-    if name is None or name == original_name:
+    if name is None:
         shutil.copy2(src, dst)
     else:
         # Stream lines directly, preserving exact CAD vertex representations.
