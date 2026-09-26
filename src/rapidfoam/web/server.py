@@ -179,6 +179,11 @@ def merge_config_with_defaults(raw_cfg: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def _local_stl_exists(name: str) -> bool:
+    """True when the named STL resolves inside the project's local stl/ folder."""
+    return find_stl(PROJECT_ROOT / "stl", Path(name).name) is not None
+
+
 def layer_preview(
     merged: dict[str, Any],
     raw_cfg: dict[str, Any],
@@ -640,6 +645,22 @@ async def api_case_generate_and_submit(req: GenerateCaseRequest) -> dict[str, An
     if errors:
         raise HTTPException(status_code=400, detail=f"Config validation errors: {', '.join(errors)}")
 
+    # Every referenced geometry must exist locally before we generate or ship
+    # anything: a silent skip would upload a config whose STL is missing (or a
+    # stale same-named STL) and only fail later on the cluster.
+    missing_stls = [
+        Path(sname).name for sname in cfg.get("stl_files", [])
+        if not _local_stl_exists(Path(sname).name)
+    ]
+    if missing_stls:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "STL not found in stl/: " + ", ".join(missing_stls) +
+                ". Upload the geometry before generating or submitting."
+            ),
+        )
+
     # 2. Save config locally only when an action actually uses it. A pure
     #    validation request must not create or overwrite a config file.
     local_cfg_path = PROJECT_ROOT / "configs" / f"{case_name}.json"
@@ -668,16 +689,22 @@ async def api_case_generate_and_submit(req: GenerateCaseRequest) -> dict[str, An
 
         remote_repo = ssh_client.remote_repo_path
 
-        # Upload STLs used in this config
+        # Upload STLs used in this config. Existence was verified above, so any
+        # miss here is a genuine race (file deleted mid-request) and must fail
+        # loudly instead of shipping a config with missing geometry.
         stl_files = cfg.get("stl_files", [])
         uploaded_stls = []
         for sname in stl_files:
             safe_sname = Path(sname).name
             local_stl = find_stl(PROJECT_ROOT / "stl", safe_sname)
-            if local_stl and local_stl.is_file():
-                remote_stl = f"{remote_repo}/stl/{local_stl.name}"
-                await asyncio.to_thread(ssh_client.upload_file, local_stl, remote_stl)
-                uploaded_stls.append(sname)
+            if not (local_stl and local_stl.is_file()):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"STL '{safe_sname}' disappeared before upload; re-upload the geometry.",
+                )
+            remote_stl = f"{remote_repo}/stl/{local_stl.name}"
+            await asyncio.to_thread(ssh_client.upload_file, local_stl, remote_stl)
+            uploaded_stls.append(sname)
 
         cluster_actions["uploaded_stls"] = uploaded_stls
 
