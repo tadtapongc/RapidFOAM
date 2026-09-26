@@ -91,6 +91,10 @@
         "mesh_params": {
             "_cells_per_length": "Auto base cell = longest STL extent / this number (fast 20, standard 30, fine 37.5)",
             "_base_cell_size": "Explicit metres; use 'auto' to derive from cells_per_length",
+            "_auto_size": "true (default) = feature-based auto-sizing: raise surface/edge refinement so the smallest geometry feature (robust low-percentile STL edge) is resolved. Never coarsens the preset. false = use the preset levels unchanged.",
+            "_feature_cells": "Target cells across the smallest feature (fast 3, standard 4, fine 5). Higher only affects the fine local refinement.",
+            "_max_surface_level": "Hard cap on auto-sizing refinement level (fast 6, standard 7, fine 8) to bound the cell budget. Auto-sizing reports a warning when it clamps here.",
+            "_feature_percentile": "Expert: edge-length percentile used as the small-feature estimate (default 5.0). Lower = ignores more CAD slivers.",
             "_surface_level": [4, 5],
             "_edge_level": 6,
             "_near_wake_level": 3,

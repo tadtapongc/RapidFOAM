@@ -197,13 +197,19 @@ def layer_preview(
     if not explicit_first and not user_set(raw_cfg, "layers", "y_plus_target"):
         if preset.get("y_plus_target") is not None:
             layers["y_plus_target"] = preset["y_plus_target"]
-    preview_cfg["mesh_params"] = compute_mesh_params(preview_cfg, bounds, feature_stats=feature_stats)
-    return resolve_layers(
+    mesh_params = compute_mesh_params(preview_cfg, bounds, feature_stats=feature_stats)
+    preview_cfg["mesh_params"] = mesh_params
+    resolved = resolve_layers(
         preview_cfg,
         bounds,
         explicit_first_layer=explicit_first,
         explicit_min_thickness=user_set(raw_cfg, "layers", "min_thickness"),
     )
+    if isinstance(resolved, dict):
+        resolved["auto_size"] = mesh_params.get("auto_size")
+        resolved["surface_level"] = mesh_params.get("surface_level")
+        resolved["edge_level"] = mesh_params.get("edge_level")
+    return resolved
 
 
 # -------------------------------------------------------------

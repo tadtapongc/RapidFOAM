@@ -1202,10 +1202,12 @@ class CFDApp {
   renderLayerPreview(p) {
     const el = document.getElementById('cfg-layer-preview');
     if (!el) return;
+    const auto = p && p.auto_size;
     if (!p || p.first_layer_thickness == null) {
       el.textContent = p && p.mode === 'relative'
         ? 'Relative layer sizing (fraction of local cell size)'
         : '';
+      this.renderAutoSizePreview(auto);
       return;
     }
     const uTau = p.u_tau != null ? p.u_tau.toFixed(2) : '—';
@@ -1215,6 +1217,24 @@ class CFDApp {
     const clamped = p.clamped ? ' (clamped)' : '';
     let text = `u_tau ≈ ${uTau} m/s | first layer ${first} µm (y+ ${yPlus}${clamped}) | stack ${stack} mm`;
     if (p.ground_layers_note) text += ` | ground layers ${p.ground_layers_note}`;
+    el.textContent = text;
+    this.renderAutoSizePreview(auto);
+  }
+
+  renderAutoSizePreview(auto) {
+    const el = document.getElementById('cfg-auto-size-preview');
+    if (!el) return;
+    if (!auto || auto.small_feature_m == null) {
+      el.textContent = '';
+      return;
+    }
+    const small = (auto.small_feature_m * 1000).toFixed(2);
+    const finest = (auto.finest_surface_cell_m * 1000).toFixed(2);
+    const level = Array.isArray(auto.surface_level) ? auto.surface_level[1] : '—';
+    const pct = auto.feature_percentile != null ? auto.feature_percentile : 5;
+    let text = `Auto-sizing: smallest feature ${small} mm (${pct}th pct edge) → ` +
+      `finest surface cell ${finest} mm (level ${level})`;
+    if (auto.capped) text += ` — capped at level ${auto.max_surface_level}`;
     el.textContent = text;
   }
 
@@ -1251,6 +1271,8 @@ class CFDApp {
     this.updateLayerModeUI();
     const preview = document.getElementById('cfg-layer-preview');
     if (preview) preview.textContent = '';
+    const autoPreview = document.getElementById('cfg-auto-size-preview');
+    if (autoPreview) autoPreview.textContent = '';
     this.buildConfigFromVisualForm();
     this.showToast('All overrides cleared. Falling back to fidelity presets & defaults.', 'info');
   }
