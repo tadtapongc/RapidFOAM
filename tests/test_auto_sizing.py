@@ -17,7 +17,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.config import DEFAULT_CONFIG, deep_merge, load_config, validate
 from rapidfoam.geometry import FIDELITY_PRESETS, compute_mesh_params
-from rapidfoam.stl_utils import EdgeStats, stl_analyze, stl_info, write_stl
+from rapidfoam.stl_utils import (
+    EdgeStats,
+    FeatureAngleStats,
+    _dihedral_angle_deg,
+    stl_analyze,
+    stl_analyze_full,
+    stl_info,
+    write_stl,
+)
 
 BOUNDS = ((-0.745, 0.0, -2.961), (0.745, 1.145, 0.296))
 BODY_TRIANGLES = [((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 3))]
@@ -164,6 +172,114 @@ class TestFeatureSizing(unittest.TestCase):
                 self.assertIn("feature_percentile", preset)
                 self.assertIn("feature_cells", preset)
                 self.assertIsInstance(preset["max_surface_level"], int)
+
+
+class TestFeatureAngleStats(unittest.TestCase):
+    def test_dihedral_flat_join_is_zero(self):
+        self.assertAlmostEqual(_dihedral_angle_deg((0, 0, 1), (0, 0, 1)), 0.0, places=4)
+
+    def test_dihedral_perpendicular_is_90(self):
+        self.assertAlmostEqual(_dihedral_angle_deg((0, 0, 1), (1, 0, 0)), 90.0, places=4)
+
+    def test_dihedral_inverted_is_180(self):
+        self.assertAlmostEqual(_dihedral_angle_deg((0, 0, 1), (0, 0, -1)), 180.0, places=4)
+
+    def test_histogram_and_percentile(self):
+        stats = FeatureAngleStats()
+        for _ in range(10):
+            stats.add(90.0)
+        for _ in range(10):
+            stats.add(10.0)
+        self.assertEqual(stats.n_angles, 20)
+        self.assertAlmostEqual(stats.min_angle, 10.0)
+        self.assertAlmostEqual(stats.max_angle, 90.0)
+        self.assertLessEqual(stats.percentile(25), 10.0)
+        self.assertGreaterEqual(stats.percentile(75), 90.0)
+
+    def test_merge_accumulates(self):
+        a = FeatureAngleStats()
+        a.add(90.0)
+        b = FeatureAngleStats()
+        b.add(10.0)
+        a.merge(b)
+        self.assertEqual(a.n_angles, 2)
+        self.assertAlmostEqual(a.min_angle, 10.0)
+
+
+class TestStlAnalyzeFull(unittest.TestCase):
+    def test_detects_shared_edge_angle(self):
+        # Two triangles sharing an edge, folded 90 deg: their normals differ by 90.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fold.stl"
+            write_stl(path, "fold", [
+                ((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 0)),   # normal +z
+                ((0, -1, 0), (0, 0, 0), (1, 0, 0), (0, 0, 1)),  # normal -y
+            ])
+            _, n_triangles, _, _, angles = stl_analyze_full(path)
+            self.assertEqual(n_triangles, 2)
+            self.assertEqual(angles.n_angles, 1)
+            self.assertAlmostEqual(angles.min_angle, 90.0, places=3)
+
+    def test_flat_pair_is_seamless(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flat.stl"
+            write_stl(path, "flat", [
+                ((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 0)),
+                ((0, 0, 1), (1, 0, 0), (1, 1, 0), (0, 1, 0)),
+            ])
+            _, _, _, _, angles = stl_analyze_full(path)
+            self.assertEqual(angles.n_angles, 1)
+            self.assertAlmostEqual(angles.min_angle, 0.0, places=3)
+
+
+class TestFeatureAngleDerivation(unittest.TestCase):
+    def _cfg(self, preset="standard", **mesh):
+        cfg = deep_merge(DEFAULT_CONFIG, {
+            "flow": {"velocity": 16.67, "direction": "-z", "ground": True},
+            "outputs": {"downforce_axis": "-y"},
+            "fidelity": preset,
+        })
+        cfg["mesh_params"] = dict(mesh)
+        return cfg
+
+    def _angles(self, normal_angle, count=30):
+        stats = FeatureAngleStats()
+        for _ in range(count):
+            stats.add(normal_angle)
+        return stats
+
+    def test_gentle_creases_sharpen_threshold(self):
+        # 160 deg normal crease -> 0.75*160 = 120 -> capped at band 80 -> min(80,35)=35
+        params = compute_mesh_params(self._cfg(), BOUNDS, angle_stats=self._angles(160.0))
+        self.assertEqual(params["resolveFeatureAngle"], 35.0)
+
+    def test_shallow_crease_keeps_preset(self):
+        # 20 deg normal crease -> 0.75*20 = 15 -> min(15,35)=15 (sharper)
+        params = compute_mesh_params(self._cfg(), BOUNDS, angle_stats=self._angles(20.0))
+        self.assertEqual(params["resolveFeatureAngle"], 15.0)
+        self.assertTrue(params["feature_angle"]["changed"])
+
+    def test_smooth_only_keeps_preset(self):
+        # 5 deg normal -> below the floor -> preset kept
+        params = compute_mesh_params(self._cfg(), BOUNDS, angle_stats=self._angles(5.0))
+        self.assertEqual(params["resolveFeatureAngle"], 35.0)
+        self.assertFalse(params["feature_angle"]["changed"])
+
+    def test_user_override_wins(self):
+        cfg = self._cfg(resolveFeatureAngle=50)
+        params = compute_mesh_params(cfg, BOUNDS, angle_stats=self._angles(20.0))
+        self.assertEqual(params["resolveFeatureAngle"], 50)
+        self.assertNotIn("feature_angle", params)
+
+    def test_auto_feature_angle_can_be_disabled(self):
+        cfg = self._cfg(auto_feature_angle=False)
+        params = compute_mesh_params(cfg, BOUNDS, angle_stats=self._angles(20.0))
+        self.assertEqual(params["resolveFeatureAngle"], 35)
+        self.assertNotIn("feature_angle", params)
+
+    def test_no_angle_stats_keeps_preset(self):
+        params = compute_mesh_params(self._cfg(), BOUNDS)
+        self.assertEqual(params["resolveFeatureAngle"], 35)
 
 
 class TestAutoSizeValidation(unittest.TestCase):

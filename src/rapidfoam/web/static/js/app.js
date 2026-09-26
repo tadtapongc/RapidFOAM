@@ -1224,11 +1224,12 @@ class CFDApp {
     const el = document.getElementById('cfg-layer-preview');
     if (!el) return;
     const auto = p && p.auto_size;
+    const fangle = p && p.feature_angle;
     if (!p || p.first_layer_thickness == null) {
       el.textContent = p && p.mode === 'relative'
         ? 'Relative layer sizing (fraction of local cell size)'
         : '';
-      this.renderAutoSizePreview(auto);
+      this.renderAutoSizePreview(auto, fangle);
       return;
     }
     const uTau = p.u_tau != null ? p.u_tau.toFixed(2) : '—';
@@ -1239,24 +1240,32 @@ class CFDApp {
     let text = `u_tau ≈ ${uTau} m/s | first layer ${first} µm (y+ ${yPlus}${clamped}) | stack ${stack} mm`;
     if (p.ground_layers_note) text += ` | ground layers ${p.ground_layers_note}`;
     el.textContent = text;
-    this.renderAutoSizePreview(auto);
+    this.renderAutoSizePreview(auto, fangle);
   }
 
-  renderAutoSizePreview(auto) {
+  renderAutoSizePreview(auto, fangle) {
     const el = document.getElementById('cfg-auto-size-preview');
     if (!el) return;
-    if (!auto || auto.small_feature_m == null) {
-      el.textContent = '';
-      return;
+    const parts = [];
+    if (auto && auto.small_feature_m != null) {
+      const small = (auto.small_feature_m * 1000).toFixed(2);
+      const finest = (auto.finest_surface_cell_m * 1000).toFixed(2);
+      const level = Array.isArray(auto.surface_level) ? auto.surface_level[1] : '—';
+      const pct = auto.feature_percentile != null ? auto.feature_percentile : 5;
+      let t = `Auto-sizing: smallest feature ${small} mm (${pct}th pct edge) → ` +
+        `finest surface cell ${finest} mm (level ${level})`;
+      if (auto.capped) t += ` — capped at level ${auto.max_surface_level}`;
+      parts.push(t);
     }
-    const small = (auto.small_feature_m * 1000).toFixed(2);
-    const finest = (auto.finest_surface_cell_m * 1000).toFixed(2);
-    const level = Array.isArray(auto.surface_level) ? auto.surface_level[1] : '—';
-    const pct = auto.feature_percentile != null ? auto.feature_percentile : 5;
-    let text = `Auto-sizing: smallest feature ${small} mm (${pct}th pct edge) → ` +
-      `finest surface cell ${finest} mm (level ${level})`;
-    if (auto.capped) text += ` — capped at level ${auto.max_surface_level}`;
-    el.textContent = text;
+    if (fangle && fangle.resolveFeatureAngle != null) {
+      const crease = fangle.sharpest_crease_normal_deg != null
+        ? `${fangle.sharpest_crease_normal_deg}°` : '—';
+      let t = `Feature angle: resolveFeatureAngle ${fangle.resolveFeatureAngle}° ` +
+        `(sharpest crease ${crease} normal)`;
+      if (fangle.changed) t += ` — preset ${fangle.preset_resolveFeatureAngle}°`;
+      parts.push(t);
+    }
+    el.textContent = parts.join('  |  ');
   }
 
   clearAllOverrides() {

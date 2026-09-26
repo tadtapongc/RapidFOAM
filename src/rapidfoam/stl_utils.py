@@ -32,6 +32,80 @@ _EDGE_LOG_MAX = 12.0
 _EDGE_BINS_PER_DECADE = 16
 _EDGE_BINS = int((_EDGE_LOG_MAX - _EDGE_LOG_MIN) * _EDGE_BINS_PER_DECADE)
 
+# Linear histogram of dihedral (included) angles between adjacent triangles,
+# in one-degree bins from 0..180 inclusive.
+_ANGLE_BINS = 181
+
+
+@dataclass
+class FeatureAngleStats:
+    """Streaming dihedral-angle statistics between adjacent triangles.
+
+    Every interior edge shared by exactly two triangles contributes the
+    included angle between them: 180 deg on a flat/seamless join, ~90 deg on a
+    box corner, smaller still on a sharp crease or a fold. ``surfaceFeatureExtract``
+    keeps edges whose included angle is *below* ``includedAngle`` and
+    snappyHexMesh treats intersections above ``resolveFeatureAngle`` as features,
+    so the histogram lets us pick a threshold that captures real creases
+    without following smooth tessellation.
+    """
+
+    n_angles: int = 0
+    min_angle: float = float("inf")
+    max_angle: float = 0.0
+    bins: list[int] = field(default_factory=lambda: [0] * _ANGLE_BINS)
+
+    def add(self, angle_deg: float) -> None:
+        if not math.isfinite(angle_deg):
+            return
+        angle_deg = min(max(angle_deg, 0.0), 180.0)
+        self.n_angles += 1
+        if angle_deg < self.min_angle:
+            self.min_angle = angle_deg
+        if angle_deg > self.max_angle:
+            self.max_angle = angle_deg
+        self.bins[int(round(angle_deg))] += 1
+
+    def merge(self, other: "FeatureAngleStats") -> None:
+        self.n_angles += other.n_angles
+        if other.min_angle < self.min_angle:
+            self.min_angle = other.min_angle
+        if other.max_angle > self.max_angle:
+            self.max_angle = other.max_angle
+        for i, count in enumerate(other.bins):
+            self.bins[i] += count
+
+    def percentile(self, pct: float) -> float:
+        """Included angle (deg) at the given percentile, low to high."""
+        if self.n_angles <= 0:
+            return 0.0
+        target = max(0.0, min(100.0, float(pct))) / 100.0 * self.n_angles
+        if target <= 0.0:
+            return self.min_angle
+        cumulative = 0
+        for i, count in enumerate(self.bins):
+            cumulative += count
+            if cumulative >= target:
+                return float(i)
+        return self.max_angle
+
+
+def _dihedral_angle_deg(n1, n2) -> float:
+    """Angle between two outward normals, in degrees (0..180).
+
+    This is the *normal* angle: 0 deg on a seamless flat join, 90 deg at a box
+    corner, approaching 180 deg on a sharp fold. It is the quantity snappy's
+    ``resolveFeatureAngle`` thresholds (intersections whose angle exceeds it are
+    treated as features), and it is the complement of the *included* angle used
+    by ``surfaceFeatureExtract`` (included = 180 - normal).
+    """
+    dot = n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2]
+    length = math.sqrt((n1[0] ** 2 + n1[1] ** 2 + n1[2] ** 2) * (n2[0] ** 2 + n2[1] ** 2 + n2[2] ** 2))
+    if length <= 0.0:
+        return 0.0
+    cos_theta = min(max(dot / length, -1.0), 1.0)
+    return math.degrees(math.acos(cos_theta))
+
 
 @dataclass
 class EdgeStats:
@@ -136,6 +210,20 @@ def stl_analyze(filepath: str | Path) -> tuple[str, int, BBox, EdgeStats]:
         FileNotFoundError: If file doesn't exist.
         ValueError: If file is binary or malformed.
     """
+    name, n_triangles, bbox, stats, _ = _analyze(filepath)
+    return name, n_triangles, bbox, stats
+
+
+def stl_analyze_full(
+    filepath: str | Path,
+) -> tuple[str, int, BBox, EdgeStats, FeatureAngleStats]:
+    """Like :func:`stl_analyze` but also returns dihedral-angle statistics."""
+    return _analyze(filepath)
+
+
+def _analyze(
+    filepath: str | Path,
+) -> tuple[str, int, BBox, EdgeStats, FeatureAngleStats]:
     filepath = Path(filepath)
     if not filepath.exists():
         raise FileNotFoundError(f"STL file not found: {filepath}")
@@ -151,7 +239,31 @@ def stl_analyze(filepath: str | Path) -> tuple[str, int, BBox, EdgeStats]:
     max_x = max_y = max_z = float("-inf")
     n_triangles = 0
     stats = EdgeStats()
+    angles = FeatureAngleStats()
+    # Map a shared edge (sorted quantised vertex keys) to the normal of the
+    # first triangle that used it, so the second triangle yields a dihedral
+    # angle. Only edges seen exactly twice are interior; entries are removed on
+    # the second sighting so open/boundary edges never leak memory.
+    pending_edges: dict[tuple, tuple[float, float, float]] = {}
+    curr_normal = (0.0, 0.0, 0.0)
     triangle_vertices: list[tuple[float, float, float]] = []
+
+    def _key(v: tuple[float, float, float]) -> tuple[int, int, int]:
+        # 1e-7 m (0.1 um) quantisation tolerates CAD float noise on shared verts.
+        return (round(v[0] * 1e7), round(v[1] * 1e7), round(v[2] * 1e7))
+
+    def _flush(vertices: list[tuple[float, float, float]]) -> None:
+        if len(vertices) != 3:
+            return
+        a, b, c = vertices
+        for p, q in ((a, b), (b, c), (c, a)):
+            kp, kq = _key(p), _key(q)
+            key = (kp, kq) if kp <= kq else (kq, kp)
+            first = pending_edges.pop(key, None)
+            if first is None:
+                pending_edges[key] = curr_normal
+            else:
+                angles.add(_dihedral_angle_deg(first, curr_normal))
 
     with open(filepath, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -160,6 +272,13 @@ def stl_analyze(filepath: str | Path) -> tuple[str, int, BBox, EdgeStats]:
                 continue
             if name is None and line.startswith("solid"):
                 name = line[5:].strip() or filepath.stem
+            elif line.startswith("facet"):
+                parts = line.split()
+                if len(parts) >= 5 and parts[1] == "normal":
+                    try:
+                        curr_normal = (float(parts[2]), float(parts[3]), float(parts[4]))
+                    except ValueError:
+                        curr_normal = (0.0, 0.0, 0.0)
             elif line.startswith("vertex"):
                 parts = line.split()
                 if len(parts) >= 4:
@@ -179,6 +298,7 @@ def stl_analyze(filepath: str | Path) -> tuple[str, int, BBox, EdgeStats]:
                     if len(triangle_vertices) == 3:
                         n_triangles += 1
                         stats.add_triangle(*triangle_vertices)
+                        _flush(triangle_vertices)
                         triangle_vertices = []
             elif line.startswith("endfacet"):
                 triangle_vertices = []
@@ -189,7 +309,7 @@ def stl_analyze(filepath: str | Path) -> tuple[str, int, BBox, EdgeStats]:
         raise ValueError(f"No triangles found in {filepath}")
 
     bbox: BBox = ((min_x, min_y, min_z), (max_x, max_y, max_z))
-    return name, n_triangles, bbox, stats
+    return name, n_triangles, bbox, stats, angles
 
 
 def stl_info(filepath: str | Path) -> tuple[str, int, BBox]:

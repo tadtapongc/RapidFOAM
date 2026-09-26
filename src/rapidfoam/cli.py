@@ -110,7 +110,7 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         vec_str,
         velocity_vector,
     )
-    from rapidfoam.stl_utils import EdgeStats, copy_stl, stl_analyze
+    from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats, copy_stl, stl_analyze_full
 
     if not cfg_path.exists():
         sys.exit(f"ERROR: {cfg_path} not found")
@@ -158,11 +158,13 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
     all_max = [float("-inf")] * 3
     stl_info_map: dict[str, tuple[str, int, tuple[tuple[float, float, float], tuple[float, float, float]]]] = {}
     edge_stats = EdgeStats()
+    angle_stats = FeatureAngleStats()
     for stem, path in stl_pairs:
         try:
-            solid_name, n_triangles, bbox, stats = stl_analyze(path)
+            solid_name, n_triangles, bbox, stats, angles = stl_analyze_full(path)
             stl_info_map[stem] = (solid_name, n_triangles, bbox)
             edge_stats.merge(stats)
+            angle_stats.merge(angles)
             smin, smax = bbox
         except (OSError, ValueError) as exc:
             sys.exit(f"ERROR: {exc}")
@@ -216,7 +218,9 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
                   f"{axis_labels[i]}_max (clearance: {clearance_max:.3f} m)")
 
     # Derive mesh parameters from geometry (bounds + feature statistics)
-    cfg["mesh_params"] = compute_mesh_params(cfg, combined_bounds, feature_stats=edge_stats)
+    cfg["mesh_params"] = compute_mesh_params(
+        cfg, combined_bounds, feature_stats=edge_stats, angle_stats=angle_stats
+    )
     # Apply fidelity presets conditionally
     from rapidfoam.geometry import FIDELITY_PRESETS
     fidelity = cfg.get("fidelity", "standard")
@@ -297,6 +301,14 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         if sizing.get("capped"):
             print(f"    ⚠  capped at max_surface_level {sizing['max_surface_level']} — "
                   f"smallest features may be under-resolved")
+
+    fangle = mesh.get("feature_angle")
+    if fangle:
+        print("  Feature angle (geometry-derived):")
+        print(f"    sharpest crease: {fangle['sharpest_crease_normal_deg']:g}° normal angle "
+              f"({fangle['crease_percentile']:g}th pct of {fangle['n_angles']:,} edges)")
+        print(f"    resolveFeatureAngle: {fangle['resolveFeatureAngle']:g}°"
+              + (f" (preset {fangle['preset_resolveFeatureAngle']:g}°)" if fangle.get("changed") else ""))
 
     if layer_resolution.get("first_layer_thickness") is not None:
         print("  Boundary layers:")

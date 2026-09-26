@@ -416,6 +416,25 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
             not isinstance(max_surface_level, int) or isinstance(max_surface_level, bool)
             or max_surface_level < 1):
         errors.append("mesh_params.max_surface_level must be an integer >= 1")
+    auto_feature_angle = cfg.get("mesh_params", {}).get("auto_feature_angle")
+    if auto_feature_angle is not None and not isinstance(auto_feature_angle, bool):
+        errors.append("mesh_params.auto_feature_angle must be true or false")
+    crease_percentile = cfg.get("mesh_params", {}).get("crease_percentile")
+    if crease_percentile is not None and (
+            not finite(crease_percentile) or not (0.0 <= crease_percentile <= 50.0)):
+        errors.append("mesh_params.crease_percentile must be a number in [0, 50]")
+    feature_angle_ratio = cfg.get("mesh_params", {}).get("feature_angle_ratio")
+    if feature_angle_ratio is not None and (
+            not finite(feature_angle_ratio) or not (0.05 <= feature_angle_ratio <= 1.0)):
+        errors.append("mesh_params.feature_angle_ratio must be a number in (0, 1]")
+    crease_angle_floor = cfg.get("mesh_params", {}).get("crease_angle_floor")
+    if crease_angle_floor is not None and (
+            not finite(crease_angle_floor) or not (0.0 <= crease_angle_floor < 90.0)):
+        errors.append("mesh_params.crease_angle_floor must be a number in [0, 90)")
+    resolve_feature_angle = cfg.get("mesh_params", {}).get("resolveFeatureAngle")
+    if resolve_feature_angle is not None and (
+            not finite(resolve_feature_angle) or not (0.0 < resolve_feature_angle <= 180.0)):
+        errors.append("mesh_params.resolveFeatureAngle must be a number in (0, 180]")
     if "ground_layers" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["ground_layers"], bool):
         errors.append("layers.ground_layers must be true or false")
     for section, keys in {

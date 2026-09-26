@@ -51,7 +51,7 @@ from rapidfoam.postproc.forces import (
     window_stats,
 )
 from rapidfoam.postproc.residuals import find_residual_files, read_residuals
-from rapidfoam.stl_utils import EdgeStats, stl_analyze, stl_info
+from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats, stl_analyze_full, stl_info
 from rapidfoam.web.ssh_client import ClusterSSHClient
 
 log = logging.getLogger("rapidfoam.web")
@@ -189,6 +189,7 @@ def layer_preview(
     raw_cfg: dict[str, Any],
     bounds: tuple,
     feature_stats: EdgeStats | None = None,
+    angle_stats: FeatureAngleStats | None = None,
 ) -> dict[str, Any]:
     """Resolve the near-wall layer spec for the Studio preview without mutating it."""
     preview_cfg = copy.deepcopy(merged)
@@ -202,7 +203,9 @@ def layer_preview(
     if not explicit_first and not user_set(raw_cfg, "layers", "y_plus_target"):
         if preset.get("y_plus_target") is not None:
             layers["y_plus_target"] = preset["y_plus_target"]
-    mesh_params = compute_mesh_params(preview_cfg, bounds, feature_stats=feature_stats)
+    mesh_params = compute_mesh_params(
+        preview_cfg, bounds, feature_stats=feature_stats, angle_stats=angle_stats
+    )
     preview_cfg["mesh_params"] = mesh_params
     resolved = resolve_layers(
         preview_cfg,
@@ -212,6 +215,7 @@ def layer_preview(
     )
     if isinstance(resolved, dict):
         resolved["auto_size"] = mesh_params.get("auto_size")
+        resolved["feature_angle"] = mesh_params.get("feature_angle")
         resolved["surface_level"] = mesh_params.get("surface_level")
         resolved["edge_level"] = mesh_params.get("edge_level")
     return resolved
@@ -272,9 +276,10 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid configuration format: {exc}")
 
-    # Gather STL edge statistics for feature-based auto-sizing (and bounds when
-    # the caller did not supply them), in a single streaming pass per file.
+    # Gather STL edge and crease-angle statistics for feature-based auto-sizing
+    # (and bounds when the caller did not supply them), one streaming pass per file.
     feature_stats = EdgeStats()
+    angle_stats = FeatureAngleStats()
     have_stats = False
     computed_min = [float("inf")] * 3
     computed_max = [float("-inf")] * 3
@@ -283,10 +288,11 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
         p = find_stl(PROJECT_ROOT / "stl", safe_sname)
         if p and p.is_file():
             try:
-                _, _, b, stats = stl_analyze(p)
+                _, _, b, stats, angles = stl_analyze_full(p)
             except Exception:
                 continue
             feature_stats.merge(stats)
+            angle_stats.merge(angles)
             have_stats = True
             for i in range(3):
                 computed_min[i] = min(computed_min[i], b[0][i])
@@ -302,6 +308,7 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
         bounds_tuple = ([-0.7, 0.035, -1.8], [0.7, 1.1, 1.2])
 
     stats_for_sizing = feature_stats if have_stats else None
+    stats_for_angle = angle_stats if angle_stats.n_angles > 0 else None
 
     try:
         # If explicit domain_box coordinates are configured, use them for domain
@@ -319,7 +326,7 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
             "bounds": {"min": bounds_tuple[0], "max": bounds_tuple[1]},
             "auto_symmetry_plane": round(center_lateral, 4),
             "lateral_axis": "xyz"[lateral_idx],
-            "layer_preview": layer_preview(merged, cfg, bounds_tuple, stats_for_sizing),
+            "layer_preview": layer_preview(merged, cfg, bounds_tuple, stats_for_sizing, stats_for_angle),
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))

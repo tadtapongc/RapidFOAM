@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from rapidfoam.stl_utils import BBox, EdgeStats
+from rapidfoam.stl_utils import BBox, EdgeStats, FeatureAngleStats
 
 # ============================================================
 # AXIS UTILITIES
@@ -263,6 +263,11 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "feature_percentile": 5.0,
         "feature_cells": 3.0,
         "max_surface_level": 6,
+        # Feature-angle derivation: resolve creases in the high tail of the
+        # normal-angle histogram, keeping the threshold a ratio below them.
+        "crease_percentile": 99.0,
+        "feature_angle_ratio": 0.75,
+        "crease_angle_floor": 15.0,
         # Distance-based refinement shells, as multiples of the base cell
         "distance_shells": [
             (0.25, 3),    # quarter cell -> level 3
@@ -300,6 +305,11 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "feature_percentile": 5.0,
         "feature_cells": 4.0,
         "max_surface_level": 7,
+        # Feature-angle derivation: resolve creases in the high tail of the
+        # normal-angle histogram, keeping the threshold a ratio below them.
+        "crease_percentile": 99.0,
+        "feature_angle_ratio": 0.75,
+        "crease_angle_floor": 15.0,
         # Conforming distance shells, as multiples of the base cell
         "distance_shells": [
             (0.25, 4),    # quarter cell -> level 4 (6.25mm at ~3m model)
@@ -337,6 +347,11 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "feature_percentile": 5.0,
         "feature_cells": 5.0,
         "max_surface_level": 8,
+        # Feature-angle derivation: resolve creases in the high tail of the
+        # normal-angle histogram, keeping the threshold a ratio below them.
+        "crease_percentile": 99.0,
+        "feature_angle_ratio": 0.75,
+        "crease_angle_floor": 15.0,
         # Conforming distance shells, as multiples of the base cell
         "distance_shells": [
             (0.25, 5),    # 2.5mm at ~3m model
@@ -420,10 +435,69 @@ def _resolve_feature_sizing(
     }
 
 
+def _resolve_feature_angle(
+    user_mesh: dict[str, Any],
+    preset: dict[str, Any],
+    angle_stats: FeatureAngleStats,
+) -> dict[str, Any]:
+    """Derive ``resolveFeatureAngle`` from the crease (normal-angle) distribution.
+
+    snappyHexMesh treats intersections whose angle **exceeds**
+    ``resolveFeatureAngle`` as features (maximum refinement + snapping). The
+    statistic used here is the angle between adjacent face normals: 0 deg on a
+    seamless flat join, 90 deg at a box corner, larger on a sharp fold. Real
+    aero creases therefore sit in the high tail, while smooth tessellation sits
+    near 0.
+
+    Strategy: take a high percentile as the sharpest meaningful crease and set
+    the threshold a safety fraction *below* it, so that crease and everything
+    sharper is resolved while gentler tessellation is not. The threshold is
+    capped at the preset so this can only ever *add* feature detection (sharper
+    threshold), never drop features the preset already captured.
+    """
+    preset_angle = float(preset.get("resolveFeatureAngle", 35))
+    # Normal-angle percentile marking the sharpest meaningful crease.
+    crease_pct = float(user_mesh.get("crease_percentile", preset.get("crease_percentile", 99.0)))
+    # Fraction of the sharpest crease kept as the threshold (<1 = sharper).
+    ratio = float(user_mesh.get("feature_angle_ratio", preset.get("feature_angle_ratio", 0.75)))
+    # Normal angles below this are treated as smooth tessellation, not creases.
+    floor = float(user_mesh.get("crease_angle_floor", preset.get("crease_angle_floor", 15.0)))
+    band = (5.0, 80.0)
+
+    crease_normal = angle_stats.percentile(max(0.0, min(crease_pct, 100.0)))
+    if crease_normal <= floor:
+        # No creases sharper than the floor: keep the preset threshold.
+        derived = preset_angle
+    else:
+        derived = crease_normal * ratio
+
+    derived = min(max(derived, band[0]), band[1])
+    resolve = min(derived, preset_angle)
+    resolve = round(resolve, 1)
+
+    # Keep feature_extract consistent: included angle just above the crease.
+    included_recommended = round(min(max(180.0 - resolve, band[0]), band[1] + 100.0), 1)
+
+    return {
+        "resolveFeatureAngle": resolve,
+        "preset_resolveFeatureAngle": preset_angle,
+        "crease_percentile": crease_pct,
+        "sharpest_crease_normal_deg": round(crease_normal, 1),
+        "sharpest_crease_included_deg": round(180.0 - crease_normal, 1),
+        "crease_angle_floor": floor,
+        "feature_angle_ratio": ratio,
+        "min_angle_deg": round(angle_stats.min_angle, 1) if angle_stats.n_angles else None,
+        "n_angles": angle_stats.n_angles,
+        "included_angle_recommended": included_recommended,
+        "changed": resolve != preset_angle,
+    }
+
+
 def compute_mesh_params(
     cfg: dict[str, Any],
     combined_bounds: BBox,
     feature_stats: EdgeStats | None = None,
+    angle_stats: FeatureAngleStats | None = None,
 ) -> dict[str, Any]:
     """Derive all mesh parameters from geometry bounds.
 
@@ -435,6 +509,10 @@ def compute_mesh_params(
     resolved with a target number of cells across it (see
     :func:`_resolve_feature_sizing`). This only ever adds local refinement on
     top of the fidelity preset and never coarsens it.
+
+    When ``angle_stats`` (dihedral-angle statistics) is supplied,
+    ``resolveFeatureAngle`` is derived so real creases are snapped while smooth
+    tessellation is not (see :func:`_resolve_feature_angle`).
 
     Refinement strategy:
         - Distance-based shells around the STL surface.
@@ -504,6 +582,16 @@ def compute_mesh_params(
         distance_levels = [tuple(x) for x in distance_levels]
 
     resolve_feature_angle = user_mesh.get("resolveFeatureAngle", preset.get("resolveFeatureAngle", 35))
+
+    # Geometry-derived feature angle: pick resolveFeatureAngle from the crease
+    # distribution so sharp real edges are resolved but smooth tessellation is
+    # not. Never loosens below the preset (that would lose real features).
+    feature_angle_info: dict[str, Any] | None = None
+    if angle_stats is not None and angle_stats.n_angles > 0 \
+            and user_mesh.get("auto_feature_angle", True) \
+            and "resolveFeatureAngle" not in user_mesh:
+        feature_angle_info = _resolve_feature_angle(user_mesh, preset, angle_stats)
+        resolve_feature_angle = feature_angle_info["resolveFeatureAngle"]
 
     # Wake levels (uncoupled from surface level to prevent wake bloat)
     near_wake_level = user_mesh.get("near_wake_level", preset.get("near_wake_level", 3))
@@ -639,6 +727,8 @@ def compute_mesh_params(
     }
     if auto_size_info is not None:
         result["auto_size"] = auto_size_info
+    if feature_angle_info is not None:
+        result["feature_angle"] = feature_angle_info
     for key in ("location_in_mesh", "locationInMesh", "maxLoadUnbalance"):
         if key in user_mesh:
             result[key] = user_mesh[key]
