@@ -5,12 +5,25 @@ All notable changes to RapidFOAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-09-26
 
 ### Added
-- **Feature-based mesh auto-sizing**: STLs are now analyzed in a streaming pass for triangle edge statistics (`EdgeStats`); `compute_mesh_params` widens snappy surface/edge refinement so the smallest geometry feature (robust low-percentile edge, or thinnest extent) is resolved with a configurable number of cells, capped by `max_surface_level` to bound the cell budget. Never coarsens the fidelity preset; toggle with `mesh_params.auto_size`, tune with `feature_percentile`, `feature_cells`, `max_surface_level`. CLI reports the detected feature size and resulting finest surface cell; the Studio layer preview reflects it.
-- `stl_analyze()` unified streaming inspector (solid name, triangle count, bounding box, edge statistics); `stl_info()` now delegates to it.
-- Unit tests for edge statistics, STL analysis, feature sizing and validation (`tests/test_auto_sizing.py`).
+- **Feature-based mesh auto-sizing**: STLs are analyzed in a streaming pass for triangle edge statistics (`EdgeStats`); `compute_mesh_params` widens snappy surface/edge refinement so the smallest geometry feature (robust low-percentile edge, or thinnest extent) is resolved with a configurable number of cells, capped by `max_surface_level` to bound the cell budget. Never coarsens the fidelity preset; toggle with `mesh_params.auto_size`, tune with `feature_percentile`, `feature_cells`, `max_surface_level`. The CLI reports the detected feature size and resulting finest surface cell, and the Studio layer preview reflects it live.
+- **Geometry-derived `resolveFeatureAngle`**: a streaming dihedral (normal-angle) histogram (`FeatureAngleStats`) is built from each STL and used to derive the snappy feature threshold, so subtle creases are snapped while smooth tessellation is not. Only ever sharpens detection (never looser than the preset). Tune with `mesh_params.auto_feature_angle`, `crease_percentile`, `feature_angle_ratio`, `crease_angle_floor`.
+- **Near-wall y+ verification**: `rapidfoam.postproc.yplus` reads the `yPlus` function object output and compares per-patch averages against `layers.y_plus_target`, regime-aware for wall-function vs. wall-resolved targets. Exposed via `read_forces.py --yplus` (exit 0 met, 2 missed) and summarised in the standard force output.
+- **Studio auto-sizing controls**: Auto-Sizing On/Off, Cells Across Smallest Feature and Max Surface Level controls in the mesh override section, with the detected feature and derived feature angle shown next to the layer preview.
+- `stl_analyze_full()` unified streaming inspector (solid name, triangle count, bounding box, edge and crease-angle statistics); `stl_info()` and `stl_analyze()` delegate to it.
+- `mesh_params.auto_size`/`max_surface_level`/`feature_cells`/`feature_percentile` and `mesh_params.auto_feature_angle`/`crease_percentile`/`feature_angle_ratio`/`crease_angle_floor` documented in the config example and validated.
+
+### Fixed
+- **Missing STL before generate/submit**: the cluster upload path silently skipped STLs absent from local `stl/`, shipping a config with missing (or stale) geometry that only failed on the cluster. Every referenced STL is now validated up front with a clear 400, and the upload loop errors instead of skipping.
+- **Auto-sizing preview stale on geometry change**: `updateDomainBoxVisualization` fetched the domain-box payload (which carries the layer/auto-size preview) but only updated the 3D viewer, so changing the STL left the preview stale; it is now rendered from the same response.
+- **Ground-layer clearance consistency**: the guard measured clearance against the raw `ground_plane` while the mesh places the road at `ground_plane - GROUND_EMBED`; both now share the constant.
+- **`potentialFoam` failure visibility**: a failed init is logged as a visible warning in `Allrun`, `Allrun.parallel` and `run.sh` instead of being silently swallowed.
+- **Layer/cell size sanity**: validation warns when an absolute first-layer thickness exceeds half the finest surface cell (which makes snappy drop boundary layers silently).
+
+### Changed
+- **Wall-treatment labelling**: the `fine` preset targets y+ ~ 1 but uses Spalding-bridging wall functions, so it is now described as "wall-function-bridged at low y+" rather than wall-resolved. Added a README "Near-Wall y+ & Boundary Layers" section covering the sizing chain, wall-treatment tiers, and the flat-plate `u_tau` caveat.
 
 ## [1.3.0] - 2026-09-25
 
