@@ -279,3 +279,32 @@ test('renderLayerPreview shows auto-size text even without a resolved first laye
   const auto = app._window.document.getElementById('cfg-auto-size-preview').textContent;
   assert.ok(auto.includes('6.20 mm'), auto);
 });
+
+test('updateDomainBoxVisualization refreshes the auto-size preview from the payload', async () => {
+  const app = await makeApp('<span id="cfg-layer-preview"></span><span id="cfg-auto-size-preview"></span>');
+  let updated = false;
+  app.viewer = { updateDomainBox() { updated = true; } };
+  app.currentSTLBounds = { min: [0, 0, 0], max: [1, 1, 1] };
+  app._window.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      domain_box: { min: [-1, -1, -1], max: [2, 2, 2] },
+      layer_preview: {
+        first_layer_thickness: null,
+        mode: 'relative',
+        auto_size: {
+          small_feature_m: 0.0095,
+          finest_surface_cell_m: 0.004,
+          surface_level: [4, 6],
+          feature_percentile: 5,
+          capped: false,
+        },
+      },
+    }),
+  });
+  await app.updateDomainBoxVisualization(true);
+  assert.equal(updated, true);
+  const auto = app._window.document.getElementById('cfg-auto-size-preview').textContent;
+  assert.ok(auto.includes('9.50 mm'), auto);
+  assert.ok(auto.includes('level 6'), auto);
+});

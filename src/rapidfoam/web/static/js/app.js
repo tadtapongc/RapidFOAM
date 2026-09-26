@@ -1377,6 +1377,9 @@ class CFDApp {
       });
       if (!res.ok) return;
       const data = await res.json();
+      // A domain-box refresh happens whenever the geometry/config changes, so
+      // refresh the layer + feature auto-sizing preview from the same payload.
+      if (data.layer_preview) this.renderLayerPreview(data.layer_preview);
       if (data.domain_box && data.domain_box.min && data.domain_box.max) {
         const faces = this.activeConfig.domain_faces || {};
         const hasSymmetry = Object.values(faces).some((f) => String(f).toLowerCase().includes('symmetry'));
