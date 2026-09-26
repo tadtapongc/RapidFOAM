@@ -210,7 +210,14 @@ python read_forces.py --compare
 
 # Check convergence status (exit code 0 if converged, 1 if not):
 python read_forces.py --check
+
+# Verify near-wall y+ against the layer sizing target (exit 0 if met, 2 if missed):
+python read_forces.py --yplus
 ```
+
+The force summary also prints a one-line near-wall y+ note (patch averages vs. the
+configured `layers.y_plus_target`) whenever the `yPlus` function object has produced
+output, so a mesh that misses its near-wall target is visible without re-running.
 
 ---
 
@@ -243,6 +250,42 @@ Key settings available in `configs/config.json`:
 | `fine` | 0.08 m | [5, 6] | 7 | 6 | 3000 | ~12–16 M | ~2–4 hrs |
 
 *\* Rough guidance only — not benchmarked. Actual cell counts and solve times depend on geometry complexity, core count, and convergence rate.*
+
+---
+
+## Near-Wall y+ & Boundary Layers
+
+Boundary-layer sizing is driven by a near-wall `y+` target rather than a raw
+thickness. From the freestream velocity, fluid properties and model length,
+RapidFOAM estimates a flat-plate friction velocity (`u_tau`) and converts the
+target into an absolute first-cell height (`delta_1 = 2 * y+ * nu / u_tau`),
+written with `relativeSizes false`. The stack is clamped to
+`maxFaceThicknessRatio` of the finest surface cell so snappyHexMesh can actually
+extrude it.
+
+**Wall treatment.** All presets use the Spalding-bridging wall functions
+(`nutUSpaldingWallFunction`, `omegaWallFunction`, `kqRWallFunction`). These are
+valid across the whole y+ range, so:
+
+- `fast` (y+ ~ 100) and `standard` (y+ ~ 40) sit in the **wall-function** regime.
+- `fine` (y+ ~ 1) places the first cell in the viscous sublayer but still uses
+  the same wall functions — it is **wall-function-bridged at low y+**, not a
+  classical low-Re wall-resolved setup. Treat its near-wall solution as
+  higher-fidelity than the wall-function tiers, not as true LES/DNS-grade
+  resolution.
+
+**Verify, don't assume.** The `u_tau` estimate is a flat-plate correlation and
+is typically 30-40% off the local value on a real car. It also uses the *model
+length*, so short elements (front wing, gurney flaps, endplate edges) see a
+higher local y+ than the estimate predicts. Always check the realised values
+after solving:
+
+```bash
+python read_forces.py --yplus
+```
+
+This reads the `yPlus` function object output and reports per-patch min/max/average
+against the target, flagging patches that miss it.
 
 ---
 

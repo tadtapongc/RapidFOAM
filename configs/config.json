@@ -10,7 +10,7 @@
     "_stl_files": "ASCII STL geometry files located in the stl/ directory",
     "stl_files": ["geometry.stl"],
 
-    "_fidelity": "Presets: 'fast' (~2-4M cells, 10 min, y+~100), 'standard' (~6-9M cells, 45 min, y+~40, RECOMMENDED for general aerodynamics), 'fine' (~12-16M cells, 2-4 hrs, y+~1). Each preset carries a near-wall y+ target that is converted to an absolute first-layer thickness from the flow velocity and fluid properties.",
+    "_fidelity": "Presets: 'fast' (~2-4M cells, 10 min, y+~100), 'standard' (~6-9M cells, 45 min, y+~40, RECOMMENDED for general aerodynamics), 'fine' (~12-16M cells, 2-4 hrs, y+~1). Each preset carries a near-wall y+ target that is converted to an absolute first-layer thickness from the flow velocity and fluid properties. All presets use Spalding-bridging wall functions, so 'fine' is wall-function-bridged at low y+ (not classical wall-resolved).",
     "fidelity": "standard",
 
     "_section_flow": "--- 2. Flow & Operating Conditions ---",
@@ -91,13 +91,20 @@
         "mesh_params": {
             "_cells_per_length": "Auto base cell = longest STL extent / this number (fast 20, standard 30, fine 37.5)",
             "_base_cell_size": "Explicit metres; use 'auto' to derive from cells_per_length",
+            "_auto_size": "true (default) = feature-based auto-sizing: raise surface/edge refinement so the smallest geometry feature (robust low-percentile STL edge) is resolved. Never coarsens the preset. false = use the preset levels unchanged.",
+            "_feature_cells": "Target cells across the smallest feature (fast 3, standard 4, fine 5). Higher only affects the fine local refinement.",
+            "_max_surface_level": "Hard cap on auto-sizing refinement level (fast 6, standard 7, fine 8) to bound the cell budget. Auto-sizing reports a warning when it clamps here.",
+            "_feature_percentile": "Expert: edge-length percentile used as the small-feature estimate (default 5.0). Lower = ignores more CAD slivers.",
+            "_auto_feature_angle": "true (default) = derive resolveFeatureAngle from the STL crease (normal-angle) histogram so subtle creases are snapped. Only ever sharpens detection (never looser than the preset). false = use the preset value.",
+            "_crease_angle_floor": "Expert: normal angles (deg) below this are treated as smooth tessellation, not creases (default 15).",
+            "_feature_angle_ratio": "Expert: fraction of the sharpest crease's normal angle kept as the resolve threshold (default 0.75). Lower = sharper/more aggressive feature detection.",
             "_surface_level": [4, 5],
             "_edge_level": 6,
             "_near_wake_level": 3,
             "_far_wake_level": 1
         },
         "layers": {
-            "_y_plus_target": "Near-wall target. 1 = wall-resolved, 30-100 = wall functions. Overrides first_layer_thickness unless that is set explicitly.",
+            "_y_plus_target": "Near-wall target. 1 = wall-function-bridged at low y+ (first cell in the sublayer), 30-100 = wall-function regime. Overrides first_layer_thickness unless that is set explicitly.",
             "_n_layers": 3,
             "_expansion_ratio": 1.2,
             "_relativeSizes": "false = first_layer_thickness/min_thickness are metres; true = fractions of the local cell size",

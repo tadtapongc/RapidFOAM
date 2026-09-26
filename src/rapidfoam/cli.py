@@ -110,7 +110,7 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         vec_str,
         velocity_vector,
     )
-    from rapidfoam.stl_utils import copy_stl, stl_info
+    from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats, copy_stl, stl_analyze_full
 
     if not cfg_path.exists():
         sys.exit(f"ERROR: {cfg_path} not found")
@@ -153,15 +153,19 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
     cfg["stl_names"] = stl_names
     cfg["domain_faces"] = face_assignments(cfg)
 
-    # Compute combined STL bounds
+    # Compute combined STL bounds and edge statistics for feature-based sizing
     all_min = [float("inf")] * 3
     all_max = [float("-inf")] * 3
     stl_info_map: dict[str, tuple[str, int, tuple[tuple[float, float, float], tuple[float, float, float]]]] = {}
+    edge_stats = EdgeStats()
+    angle_stats = FeatureAngleStats()
     for stem, path in stl_pairs:
         try:
-            info = stl_info(path)
-            stl_info_map[stem] = info
-            smin, smax = info[2]
+            solid_name, n_triangles, bbox, stats, angles = stl_analyze_full(path)
+            stl_info_map[stem] = (solid_name, n_triangles, bbox)
+            edge_stats.merge(stats)
+            angle_stats.merge(angles)
+            smin, smax = bbox
         except (OSError, ValueError) as exc:
             sys.exit(f"ERROR: {exc}")
         for i in range(3):
@@ -213,8 +217,10 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
             print(f"  ⚠  STL very close to domain boundary: "
                   f"{axis_labels[i]}_max (clearance: {clearance_max:.3f} m)")
 
-    # Derive mesh parameters from geometry
-    cfg["mesh_params"] = compute_mesh_params(cfg, combined_bounds)
+    # Derive mesh parameters from geometry (bounds + feature statistics)
+    cfg["mesh_params"] = compute_mesh_params(
+        cfg, combined_bounds, feature_stats=edge_stats, angle_stats=angle_stats
+    )
     # Apply fidelity presets conditionally
     from rapidfoam.geometry import FIDELITY_PRESETS
     fidelity = cfg.get("fidelity", "standard")
@@ -282,6 +288,27 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         print(f"    Distance shells: {shells}")
     for r in mesh.get("refinement_regions", []):
         print(f"    Region {r['name']}: Level {r['level']}")
+
+    sizing = mesh.get("auto_size")
+    if sizing:
+        small = sizing.get("small_feature_m")
+        small_txt = f"{small * 1000:.2f} mm" if small else "n/a"
+        print("  Auto-sizing (feature-based):")
+        print(f"    small feature:  {small_txt} "
+              f"({sizing['feature_percentile']:g}th pct edge)")
+        print(f"    finest surface: {sizing['finest_surface_cell_m'] * 1000:.2f} mm "
+              f"(level {sizing['surface_level'][1]})")
+        if sizing.get("capped"):
+            print(f"    ⚠  capped at max_surface_level {sizing['max_surface_level']} — "
+                  f"smallest features may be under-resolved")
+
+    fangle = mesh.get("feature_angle")
+    if fangle:
+        print("  Feature angle (geometry-derived):")
+        print(f"    sharpest crease: {fangle['sharpest_crease_normal_deg']:g}° normal angle "
+              f"({fangle['crease_percentile']:g}th pct of {fangle['n_angles']:,} edges)")
+        print(f"    resolveFeatureAngle: {fangle['resolveFeatureAngle']:g}°"
+              + (f" (preset {fangle['preset_resolveFeatureAngle']:g}°)" if fangle.get("changed") else ""))
 
     if layer_resolution.get("first_layer_thickness") is not None:
         print("  Boundary layers:")
@@ -388,6 +415,33 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
 # FORCES CLI
 # ============================================================
 
+def _yplus_target_from_case(config_path: str | None, case_dir: Path) -> float | None:
+    """Read layers.y_plus_target from a config or case_config.json, if present."""
+    candidates = []
+    if config_path:
+        candidates.append(Path(config_path))
+    candidates.append(case_dir / "case_config.json")
+    candidates.append(Path("case_config.json"))
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            with open(path, encoding="utf-8") as handle:
+                cfg = json.load(handle)
+            layers = cfg.get("layers", {})
+            target = layers.get("y_plus_target")
+            if target is not None and float(target) > 0:
+                return float(target)
+            # Fall back to a resolved value written by the generator.
+            resolved = layers.get("_resolved", {})
+            t = resolved.get("y_plus_target")
+            if t is not None and float(t) > 0:
+                return float(t)
+        except (OSError, ValueError, TypeError):
+            continue
+    return None
+
+
 def forces_main() -> None:
     """Entry point for cfd-forces command."""
     if hasattr(sys.stdout, "reconfigure"):
@@ -411,6 +465,7 @@ def forces_main() -> None:
     parser.add_argument("--live", "-l", action="store_true", help="Real-time monitor")
     parser.add_argument("--compare", action="store_true", help="Multi-case comparison")
     parser.add_argument("--check", action="store_true", help="Exit 0 if converged, 1 if not")
+    parser.add_argument("--yplus", action="store_true", help="Verify near-wall y+ against the target")
     parser.add_argument("--interval", "-i", type=float, default=3, help="Live update interval (s)")
     args = parser.parse_args()
 
@@ -471,6 +526,29 @@ def forces_main() -> None:
         args.config, case_dir=case_dir
     )
 
+    # y+ verification (independent of force data)
+    if args.yplus:
+        from rapidfoam.postproc.yplus import (
+            check_yplus_target,
+            find_yplus_files,
+            read_yplus,
+        )
+        yp_files = find_yplus_files(case_dir)
+        data = read_yplus(yp_files)
+        target = _yplus_target_from_case(args.config, case_dir)
+        summary = check_yplus_target(data, target)
+        if not summary.get("available"):
+            sys.exit(f"No yPlus output found in {case_dir}. Did the case run yPlus function object?")
+        print("\n  Near-wall y+ verification"
+              + (f" (target {target:g})" if target else ""))
+        for patch, stats in sorted(summary["patches"].items()):
+            avg = stats["average"] if stats["average"] is not None else float("nan")
+            lo = stats["min"] if stats["min"] is not None else float("nan")
+            hi = stats["max"] if stats["max"] is not None else float("nan")
+            print(f"    {patch:<24} min {lo:>7.2f}  max {hi:>8.2f}  avg {avg:>7.2f}  [{stats['status']}]")
+        print(f"    {summary['note']}")
+        sys.exit(0 if not summary.get("off_target") else 2)
+
     files = find_force_files(case_dir)
     if not files:
         sys.exit(f"ERROR: No force.dat found in {case_dir}. Run from inside the case directory or specify case path.")
@@ -490,6 +568,15 @@ def forces_main() -> None:
     # Summary
     is_sym = is_symmetry_case(args.config, case_dir=case_dir)
     print_summary(times, drags, downforces, drag_axis, df_axis, is_symmetry=is_sym)
+
+    # Near-wall y+ note (silent unless there is output to report)
+    from rapidfoam.postproc.yplus import check_yplus_target, find_yplus_files, read_yplus
+    yp_summary = check_yplus_target(
+        read_yplus(find_yplus_files(case_dir)),
+        _yplus_target_from_case(args.config, case_dir),
+    )
+    if yp_summary.get("available"):
+        print(f"\n  Near-wall y+: {yp_summary['note']}")
 
     # Plot
     if args.plot or args.save:

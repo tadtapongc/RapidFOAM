@@ -51,7 +51,7 @@ from rapidfoam.postproc.forces import (
     window_stats,
 )
 from rapidfoam.postproc.residuals import find_residual_files, read_residuals
-from rapidfoam.stl_utils import stl_info
+from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats, stl_analyze_full, stl_info
 from rapidfoam.web.ssh_client import ClusterSSHClient
 
 log = logging.getLogger("rapidfoam.web")
@@ -179,7 +179,18 @@ def merge_config_with_defaults(raw_cfg: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def layer_preview(merged: dict[str, Any], raw_cfg: dict[str, Any], bounds: tuple) -> dict[str, Any]:
+def _local_stl_exists(name: str) -> bool:
+    """True when the named STL resolves inside the project's local stl/ folder."""
+    return find_stl(PROJECT_ROOT / "stl", Path(name).name) is not None
+
+
+def layer_preview(
+    merged: dict[str, Any],
+    raw_cfg: dict[str, Any],
+    bounds: tuple,
+    feature_stats: EdgeStats | None = None,
+    angle_stats: FeatureAngleStats | None = None,
+) -> dict[str, Any]:
     """Resolve the near-wall layer spec for the Studio preview without mutating it."""
     preview_cfg = copy.deepcopy(merged)
     preset = FIDELITY_PRESETS.get(preview_cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"])
@@ -192,13 +203,22 @@ def layer_preview(merged: dict[str, Any], raw_cfg: dict[str, Any], bounds: tuple
     if not explicit_first and not user_set(raw_cfg, "layers", "y_plus_target"):
         if preset.get("y_plus_target") is not None:
             layers["y_plus_target"] = preset["y_plus_target"]
-    preview_cfg["mesh_params"] = compute_mesh_params(preview_cfg, bounds)
-    return resolve_layers(
+    mesh_params = compute_mesh_params(
+        preview_cfg, bounds, feature_stats=feature_stats, angle_stats=angle_stats
+    )
+    preview_cfg["mesh_params"] = mesh_params
+    resolved = resolve_layers(
         preview_cfg,
         bounds,
         explicit_first_layer=explicit_first,
         explicit_min_thickness=user_set(raw_cfg, "layers", "min_thickness"),
     )
+    if isinstance(resolved, dict):
+        resolved["auto_size"] = mesh_params.get("auto_size")
+        resolved["feature_angle"] = mesh_params.get("feature_angle")
+        resolved["surface_level"] = mesh_params.get("surface_level")
+        resolved["edge_level"] = mesh_params.get("edge_level")
+    return resolved
 
 
 # -------------------------------------------------------------
@@ -256,30 +276,39 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid configuration format: {exc}")
 
+    # Gather STL edge and crease-angle statistics for feature-based auto-sizing
+    # (and bounds when the caller did not supply them), one streaming pass per file.
+    feature_stats = EdgeStats()
+    angle_stats = FeatureAngleStats()
+    have_stats = False
+    computed_min = [float("inf")] * 3
+    computed_max = [float("-inf")] * 3
+    for sname in cfg.get("stl_files", []):
+        safe_sname = Path(sname).name
+        p = find_stl(PROJECT_ROOT / "stl", safe_sname)
+        if p and p.is_file():
+            try:
+                _, _, b, stats, angles = stl_analyze_full(p)
+            except Exception:
+                continue
+            feature_stats.merge(stats)
+            angle_stats.merge(angles)
+            have_stats = True
+            for i in range(3):
+                computed_min[i] = min(computed_min[i], b[0][i])
+                computed_max[i] = max(computed_max[i], b[1][i])
+
     bounds_tuple = None
     if req.bounds and "min" in req.bounds and "max" in req.bounds:
         bounds_tuple = (req.bounds["min"], req.bounds["max"])
+    elif computed_min[0] != float("inf"):
+        bounds_tuple = (computed_min, computed_max)
     else:
-        # Calculate from active STL files in stl/
-        stl_files = cfg.get("stl_files", [])
-        all_min = [float("inf")] * 3
-        all_max = [float("-inf")] * 3
-        for sname in stl_files:
-            safe_sname = Path(sname).name
-            p = find_stl(PROJECT_ROOT / "stl", safe_sname)
-            if p and p.is_file():
-                try:
-                    _, _, b = stl_info(p)
-                    for i in range(3):
-                        all_min[i] = min(all_min[i], b[0][i])
-                        all_max[i] = max(all_max[i], b[1][i])
-                except Exception:
-                    pass
-        if all_min[0] != float("inf"):
-            bounds_tuple = (all_min, all_max)
-        else:
-            # Default reference geometry bounds (half-model)
-            bounds_tuple = ([-0.7, 0.035, -1.8], [0.7, 1.1, 1.2])
+        # Default reference geometry bounds (half-model)
+        bounds_tuple = ([-0.7, 0.035, -1.8], [0.7, 1.1, 1.2])
+
+    stats_for_sizing = feature_stats if have_stats else None
+    stats_for_angle = angle_stats if angle_stats.n_angles > 0 else None
 
     try:
         # If explicit domain_box coordinates are configured, use them for domain
@@ -297,7 +326,7 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
             "bounds": {"min": bounds_tuple[0], "max": bounds_tuple[1]},
             "auto_symmetry_plane": round(center_lateral, 4),
             "lateral_axis": "xyz"[lateral_idx],
-            "layer_preview": layer_preview(merged, cfg, bounds_tuple),
+            "layer_preview": layer_preview(merged, cfg, bounds_tuple, stats_for_sizing, stats_for_angle),
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -402,6 +431,9 @@ async def api_config_defaults() -> dict[str, Any]:
                     "edge_level": p.get("edge_level"),
                     "near_wake_level": p.get("near_wake_level"),
                     "far_wake_level": p.get("far_wake_level"),
+                    "feature_cells": p.get("feature_cells"),
+                    "max_surface_level": p.get("max_surface_level"),
+                    "feature_percentile": p.get("feature_percentile"),
                 },
                 "solver": {
                     "end_time": p.get("end_time"),
@@ -620,6 +652,22 @@ async def api_case_generate_and_submit(req: GenerateCaseRequest) -> dict[str, An
     if errors:
         raise HTTPException(status_code=400, detail=f"Config validation errors: {', '.join(errors)}")
 
+    # Every referenced geometry must exist locally before we generate or ship
+    # anything: a silent skip would upload a config whose STL is missing (or a
+    # stale same-named STL) and only fail later on the cluster.
+    missing_stls = [
+        Path(sname).name for sname in cfg.get("stl_files", [])
+        if not _local_stl_exists(Path(sname).name)
+    ]
+    if missing_stls:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "STL not found in stl/: " + ", ".join(missing_stls) +
+                ". Upload the geometry before generating or submitting."
+            ),
+        )
+
     # 2. Save config locally only when an action actually uses it. A pure
     #    validation request must not create or overwrite a config file.
     local_cfg_path = PROJECT_ROOT / "configs" / f"{case_name}.json"
@@ -648,16 +696,22 @@ async def api_case_generate_and_submit(req: GenerateCaseRequest) -> dict[str, An
 
         remote_repo = ssh_client.remote_repo_path
 
-        # Upload STLs used in this config
+        # Upload STLs used in this config. Existence was verified above, so any
+        # miss here is a genuine race (file deleted mid-request) and must fail
+        # loudly instead of shipping a config with missing geometry.
         stl_files = cfg.get("stl_files", [])
         uploaded_stls = []
         for sname in stl_files:
             safe_sname = Path(sname).name
             local_stl = find_stl(PROJECT_ROOT / "stl", safe_sname)
-            if local_stl and local_stl.is_file():
-                remote_stl = f"{remote_repo}/stl/{local_stl.name}"
-                await asyncio.to_thread(ssh_client.upload_file, local_stl, remote_stl)
-                uploaded_stls.append(sname)
+            if not (local_stl and local_stl.is_file()):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"STL '{safe_sname}' disappeared before upload; re-upload the geometry.",
+                )
+            remote_stl = f"{remote_repo}/stl/{local_stl.name}"
+            await asyncio.to_thread(ssh_client.upload_file, local_stl, remote_stl)
+            uploaded_stls.append(sname)
 
         cluster_actions["uploaded_stls"] = uploaded_stls
 

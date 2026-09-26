@@ -212,6 +212,9 @@ class CFDApp {
           _edge_level: 6,
           _near_wake_level: 3,
           _far_wake_level: 1,
+          _auto_size: true,
+          _feature_cells: 4,
+          _max_surface_level: 7,
         },
         layers: {
           _n_layers: 5,
@@ -611,6 +614,10 @@ class CFDApp {
     this.setVal('cfg-override-edge', meshParams?.edge_level ?? '');
     this.setVal('cfg-override-nearwake', meshParams?.near_wake_level ?? '');
     this.setVal('cfg-override-farwake', meshParams?.far_wake_level ?? '');
+    const autoSizeMode = meshParams?.auto_size === true ? 'on' : (meshParams?.auto_size === false ? 'off' : 'auto');
+    this.setSelectValue('cfg-override-autosize', autoSizeMode);
+    this.setVal('cfg-override-featurecells', meshParams?.feature_cells ?? '');
+    this.setVal('cfg-override-maxsurflevel', meshParams?.max_surface_level ?? '');
 
     // 4. Boundary Layer Overrides (Priority 4: Wall y+ & inflation)
     let layerMode = 'auto';
@@ -832,6 +839,13 @@ class CFDApp {
     if (nearWake !== null) meshOverrides.near_wake_level = nearWake;
     const farWake = getOptionalInt('cfg-override-farwake');
     if (farWake !== null) meshOverrides.far_wake_level = farWake;
+    const autoSizeMode = this.getVal('cfg-override-autosize') || 'auto';
+    if (autoSizeMode === 'on') meshOverrides.auto_size = true;
+    else if (autoSizeMode === 'off') meshOverrides.auto_size = false;
+    const featureCells = getOptionalFloat('cfg-override-featurecells');
+    if (featureCells !== null) meshOverrides.feature_cells = featureCells;
+    const maxSurfLevel = getOptionalInt('cfg-override-maxsurflevel');
+    if (maxSurfLevel !== null) meshOverrides.max_surface_level = maxSurfLevel;
     if (Object.keys(meshOverrides).length > 0) overrides.mesh_params = meshOverrides;
 
     // 4. Boundary Layers (Priority 4)
@@ -903,6 +917,9 @@ class CFDApp {
           _edge_level: 6,
           _near_wake_level: 3,
           _far_wake_level: 1,
+          _auto_size: true,
+          _feature_cells: 4,
+          _max_surface_level: 7,
         },
         layers: {
           _n_layers: 5,
@@ -1108,9 +1125,9 @@ class CFDApp {
 
   updateOverridePlaceholders(fidelity = 'standard') {
     const fallback = {
-      fast: { base_cell: 'L/20', surf_min: '3', surf_max: '4', edge: '5', nearwake: '2', farwake: '1', endtime: '800', writeint: '400', n_layers: '2', expansion: '1.30', yplus: '100' },
-      standard: { base_cell: 'L/30', surf_min: '4', surf_max: '5', edge: '6', nearwake: '3', farwake: '1', endtime: '1500', writeint: '500', n_layers: '3', expansion: '1.20', yplus: '40' },
-      fine: { base_cell: 'L/37.5', surf_min: '4', surf_max: '5', edge: '7', nearwake: '4', farwake: '2', endtime: '2500', writeint: '500', n_layers: '12', expansion: '1.20', yplus: '1' },
+      fast: { base_cell: 'L/20', surf_min: '3', surf_max: '4', edge: '5', nearwake: '2', farwake: '1', featurecells: '3', maxsurflevel: '6', endtime: '800', writeint: '400', n_layers: '2', expansion: '1.30', yplus: '100' },
+      standard: { base_cell: 'L/30', surf_min: '4', surf_max: '5', edge: '6', nearwake: '3', farwake: '1', featurecells: '4', maxsurflevel: '7', endtime: '1500', writeint: '500', n_layers: '3', expansion: '1.20', yplus: '40' },
+      fine: { base_cell: 'L/37.5', surf_min: '4', surf_max: '5', edge: '7', nearwake: '4', farwake: '2', featurecells: '5', maxsurflevel: '8', endtime: '2500', writeint: '500', n_layers: '12', expansion: '1.20', yplus: '1' },
     };
     const p = { ...(fallback[fidelity] || fallback.standard) };
     const server = this.fidelityPresets?.[fidelity];
@@ -1127,6 +1144,8 @@ class CFDApp {
       if (mesh.edge_level != null) p.edge = String(mesh.edge_level);
       if (mesh.near_wake_level != null) p.nearwake = String(mesh.near_wake_level);
       if (mesh.far_wake_level != null) p.farwake = String(mesh.far_wake_level);
+      if (mesh.feature_cells != null) p.featurecells = String(mesh.feature_cells);
+      if (mesh.max_surface_level != null) p.maxsurflevel = String(mesh.max_surface_level);
       if (solver.end_time != null) p.endtime = String(solver.end_time);
       if (solver.write_interval != null) p.writeint = String(solver.write_interval);
       if (layers.n_layers != null) p.n_layers = String(layers.n_layers);
@@ -1145,6 +1164,8 @@ class CFDApp {
     setPlaceholder('cfg-override-edge', `Auto / Preset (${p.edge})`);
     setPlaceholder('cfg-override-nearwake', `Auto / Preset (${p.nearwake})`);
     setPlaceholder('cfg-override-farwake', `Auto / Preset (${p.farwake})`);
+    setPlaceholder('cfg-override-featurecells', `Auto / Preset (${p.featurecells})`);
+    setPlaceholder('cfg-override-maxsurflevel', `Auto / Preset (${p.maxsurflevel})`);
     setPlaceholder('cfg-override-solver-endtime', `Auto / Preset (${p.endtime})`);
     setPlaceholder('cfg-override-solver-writeinterval', `Auto / Preset (${p.writeint})`);
     setPlaceholder('cfg-override-layer-nlayers', `Auto / Preset (${p.n_layers})`);
@@ -1202,10 +1223,13 @@ class CFDApp {
   renderLayerPreview(p) {
     const el = document.getElementById('cfg-layer-preview');
     if (!el) return;
+    const auto = p && p.auto_size;
+    const fangle = p && p.feature_angle;
     if (!p || p.first_layer_thickness == null) {
       el.textContent = p && p.mode === 'relative'
         ? 'Relative layer sizing (fraction of local cell size)'
         : '';
+      this.renderAutoSizePreview(auto, fangle);
       return;
     }
     const uTau = p.u_tau != null ? p.u_tau.toFixed(2) : '—';
@@ -1216,6 +1240,32 @@ class CFDApp {
     let text = `u_tau ≈ ${uTau} m/s | first layer ${first} µm (y+ ${yPlus}${clamped}) | stack ${stack} mm`;
     if (p.ground_layers_note) text += ` | ground layers ${p.ground_layers_note}`;
     el.textContent = text;
+    this.renderAutoSizePreview(auto, fangle);
+  }
+
+  renderAutoSizePreview(auto, fangle) {
+    const el = document.getElementById('cfg-auto-size-preview');
+    if (!el) return;
+    const parts = [];
+    if (auto && auto.small_feature_m != null) {
+      const small = (auto.small_feature_m * 1000).toFixed(2);
+      const finest = (auto.finest_surface_cell_m * 1000).toFixed(2);
+      const level = Array.isArray(auto.surface_level) ? auto.surface_level[1] : '—';
+      const pct = auto.feature_percentile != null ? auto.feature_percentile : 5;
+      let t = `Auto-sizing: smallest feature ${small} mm (${pct}th pct edge) → ` +
+        `finest surface cell ${finest} mm (level ${level})`;
+      if (auto.capped) t += ` — capped at level ${auto.max_surface_level}`;
+      parts.push(t);
+    }
+    if (fangle && fangle.resolveFeatureAngle != null) {
+      const crease = fangle.sharpest_crease_normal_deg != null
+        ? `${fangle.sharpest_crease_normal_deg}°` : '—';
+      let t = `Feature angle: resolveFeatureAngle ${fangle.resolveFeatureAngle}° ` +
+        `(sharpest crease ${crease} normal)`;
+      if (fangle.changed) t += ` — preset ${fangle.preset_resolveFeatureAngle}°`;
+      parts.push(t);
+    }
+    el.textContent = parts.join('  |  ');
   }
 
   clearAllOverrides() {
@@ -1234,6 +1284,8 @@ class CFDApp {
       'cfg-override-edge',
       'cfg-override-nearwake',
       'cfg-override-farwake',
+      'cfg-override-featurecells',
+      'cfg-override-maxsurflevel',
       'cfg-override-layer-nlayers',
       'cfg-override-layer-expansion',
       'cfg-override-layer-yplus',
@@ -1248,9 +1300,12 @@ class CFDApp {
     overrideIds.forEach((id) => this.setVal(id, ''));
     this.setSelectValue('cfg-override-layer-mode', 'auto');
     this.setSelectValue('cfg-override-layer-ground', 'auto');
+    this.setSelectValue('cfg-override-autosize', 'auto');
     this.updateLayerModeUI();
     const preview = document.getElementById('cfg-layer-preview');
     if (preview) preview.textContent = '';
+    const autoPreview = document.getElementById('cfg-auto-size-preview');
+    if (autoPreview) autoPreview.textContent = '';
     this.buildConfigFromVisualForm();
     this.showToast('All overrides cleared. Falling back to fidelity presets & defaults.', 'info');
   }
@@ -1331,6 +1386,9 @@ class CFDApp {
       });
       if (!res.ok) return;
       const data = await res.json();
+      // A domain-box refresh happens whenever the geometry/config changes, so
+      // refresh the layer + feature auto-sizing preview from the same payload.
+      if (data.layer_preview) this.renderLayerPreview(data.layer_preview);
       if (data.domain_box && data.domain_box.min && data.domain_box.max) {
         const faces = this.activeConfig.domain_faces || {};
         const hasSymmetry = Object.values(faces).some((f) => String(f).toLowerCase().includes('symmetry'));

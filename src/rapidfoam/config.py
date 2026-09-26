@@ -401,6 +401,40 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
     if cells_per_length is not None and (
             not finite(cells_per_length) or not (5.0 <= cells_per_length <= 100.0)):
         errors.append("mesh_params.cells_per_length must be a number between 5 and 100")
+    auto_size = cfg.get("mesh_params", {}).get("auto_size")
+    if auto_size is not None and not isinstance(auto_size, bool):
+        errors.append("mesh_params.auto_size must be true or false")
+    feature_percentile = cfg.get("mesh_params", {}).get("feature_percentile")
+    if feature_percentile is not None and (
+            not finite(feature_percentile) or not (0.0 < feature_percentile <= 100.0)):
+        errors.append("mesh_params.feature_percentile must be a number in (0, 100]")
+    feature_cells = cfg.get("mesh_params", {}).get("feature_cells")
+    if feature_cells is not None and (not finite(feature_cells) or feature_cells <= 0):
+        errors.append("mesh_params.feature_cells must be a positive number")
+    max_surface_level = cfg.get("mesh_params", {}).get("max_surface_level")
+    if max_surface_level is not None and (
+            not isinstance(max_surface_level, int) or isinstance(max_surface_level, bool)
+            or max_surface_level < 1):
+        errors.append("mesh_params.max_surface_level must be an integer >= 1")
+    auto_feature_angle = cfg.get("mesh_params", {}).get("auto_feature_angle")
+    if auto_feature_angle is not None and not isinstance(auto_feature_angle, bool):
+        errors.append("mesh_params.auto_feature_angle must be true or false")
+    crease_percentile = cfg.get("mesh_params", {}).get("crease_percentile")
+    if crease_percentile is not None and (
+            not finite(crease_percentile) or not (0.0 <= crease_percentile <= 50.0)):
+        errors.append("mesh_params.crease_percentile must be a number in [0, 50]")
+    feature_angle_ratio = cfg.get("mesh_params", {}).get("feature_angle_ratio")
+    if feature_angle_ratio is not None and (
+            not finite(feature_angle_ratio) or not (0.05 <= feature_angle_ratio <= 1.0)):
+        errors.append("mesh_params.feature_angle_ratio must be a number in (0, 1]")
+    crease_angle_floor = cfg.get("mesh_params", {}).get("crease_angle_floor")
+    if crease_angle_floor is not None and (
+            not finite(crease_angle_floor) or not (0.0 <= crease_angle_floor < 90.0)):
+        errors.append("mesh_params.crease_angle_floor must be a number in [0, 90)")
+    resolve_feature_angle = cfg.get("mesh_params", {}).get("resolveFeatureAngle")
+    if resolve_feature_angle is not None and (
+            not finite(resolve_feature_angle) or not (0.0 < resolve_feature_angle <= 180.0)):
+        errors.append("mesh_params.resolveFeatureAngle must be a number in (0, 180]")
     if "ground_layers" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["ground_layers"], bool):
         errors.append("layers.ground_layers must be true or false")
     for section, keys in {
@@ -463,6 +497,25 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
                 f"(expansion {ratio:g}) = {total:.3g} total, below min_thickness {min_th:g} "
                 f"(units: {mode}) — snappyHexMesh will add 0 layers. Increase "
                 f"first_layer_thickness/n_layers or lower min_thickness."
+            )
+
+    # Absolute layers thicker than the finest surface cell cannot be inserted
+    # next to it (snappy respects maxFaceThicknessRatio), so layers silently drop.
+    # Only meaningful for user-set absolute thicknesses; y+ resolution is clamped.
+    mesh = cfg.get("mesh_params", {})
+    base_cell = mesh.get("base_cell_size")
+    surf_level = mesh.get("surface_level")
+    if (lay.get("relativeSizes") is False and finite(first) and first > 0
+            and finite(base_cell) and base_cell not in (None, "auto")
+            and isinstance(surf_level, (list, tuple)) and len(surf_level) == 2
+            and isinstance(surf_level[1], int) and not isinstance(surf_level[1], bool) and surf_level[1] >= 0):
+        cell_fine = float(base_cell) / (2 ** surf_level[1])
+        if first > 0.5 * cell_fine:
+            warnings.append(
+                f"layers.first_layer_thickness {first:g} m exceeds half the finest "
+                f"surface cell ({cell_fine:.3g} m, level {surf_level[1]}) — snappyHexMesh "
+                f"may drop boundary layers. Reduce the thickness, raise surface_level, "
+                f"or lower base_cell_size."
             )
 
     # Domain box (can be "auto" or {"min": [x,y,z], "max": [x,y,z]})

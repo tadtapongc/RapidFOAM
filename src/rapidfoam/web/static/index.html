@@ -594,6 +594,28 @@
                     <span class="field-hint">Refinement level down to outlet</span>
                   </div>
 
+                  <div class="form-group">
+                    <label for="cfg-override-autosize">Feature-Based Auto-Sizing</label>
+                    <select id="cfg-override-autosize" class="input">
+                      <option value="auto" selected>Auto (on)</option>
+                      <option value="on">On</option>
+                      <option value="off">Off</option>
+                    </select>
+                    <span class="field-hint">Raise surface/edge refinement so the smallest geometry feature is resolved. Never coarsens the preset.</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cfg-override-featurecells">Cells Across Smallest Feature</label>
+                    <input type="number" id="cfg-override-featurecells" class="input" step="0.5" min="1" max="20" placeholder="Auto / Preset (4)">
+                    <span class="field-hint">Target cells spanning the smallest feature (auto-sizing only)</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cfg-override-maxsurflevel">Max Surface Level Cap</label>
+                    <input type="number" id="cfg-override-maxsurflevel" class="input" min="1" max="14" placeholder="Auto / Preset (7)">
+                    <span class="field-hint">Hard refinement cap protecting the cell budget; warns when auto-sizing clamps here</span>
+                  </div>
+
                   <!-- 4. Boundary Layer Mesh Overrides -->
                   <div class="form-group col-span-2 overrides-section-header">
                     <h4 class="section-subtitle">4. Boundary Layer Mesh Overrides</h4>
@@ -653,6 +675,10 @@
 
                   <div class="form-group col-span-2">
                     <span id="cfg-layer-preview" class="field-hint"></span>
+                  </div>
+
+                  <div class="form-group col-span-2">
+                    <span id="cfg-auto-size-preview" class="field-hint"></span>
                   </div>
 
                   <!-- 5. Fluid Property Overrides -->

@@ -175,6 +175,35 @@ class TestWebAPI(unittest.TestCase):
             asyncio.run(api_case_cancel(req))
         self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_missing_local_stl_is_rejected_before_generating(self):
+        """A config referencing an absent STL must fail loudly, not silently skip."""
+        case_name = "test_case_missing_stl"
+        cfg_path = Path(f"configs/{case_name}.json")
+        case_dir = Path(f"cases/{case_name}")
+        self.addCleanup(lambda: cfg_path.unlink(missing_ok=True))
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        cfg = {
+            "case_name": case_name,
+            "stl_files": ["definitely_absent_geometry.stl"],
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+        }
+        req = GenerateCaseRequest(
+            config=cfg,
+            upload_to_cluster=False,
+            generate_remotely=False,
+            submit_slurm=False,
+            generate_locally=True,
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(api_case_generate_and_submit(req))
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("STL", ctx.exception.detail)
+        self.assertIn("definitely_absent_geometry.stl", ctx.exception.detail)
+        self.assertFalse(case_dir.exists())
+        self.assertFalse(cfg_path.exists())
+
     def test_local_case_generation(self):
         """Test local case generation through the API endpoint."""
         case_name = "test_case_local_gen"

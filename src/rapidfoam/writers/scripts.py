@@ -246,7 +246,11 @@ runApplication renumberMesh -overwrite -noFunctionObjects
 
 # Solve
 runApplication -s solver decomposePar
-runParallel -s potential potentialFoam -noFunctionObjects || true
+# potentialFoam only initialises the flow field; a failure is non-fatal but is
+# surfaced so a poor start field is not later mistaken for a solver problem.
+if ! runParallel -s potential potentialFoam -noFunctionObjects; then
+    echo "WARNING: potentialFoam failed (see log.potentialFoam) — continuing with the default initial field." >&2
+fi
 
 # Start convergence monitor in background (auto-stops solver when converged)
 python3 ./convergence_monitor.py > log.convergenceMonitor 2>&1 &
@@ -288,7 +292,11 @@ runApplication blockMesh
 runApplication snappyHexMesh -overwrite -noFunctionObjects
 runApplication checkMesh -allGeometry -allTopology -noFunctionObjects
 runApplication renumberMesh -overwrite -noFunctionObjects
-runApplication potentialFoam -noFunctionObjects || true
+# potentialFoam only initialises the flow field; a failure is non-fatal but is
+# surfaced so a poor start field is not later mistaken for a solver problem.
+if ! runApplication potentialFoam -noFunctionObjects; then
+    echo "WARNING: potentialFoam failed (see log.potentialFoam) — continuing with the default initial field." >&2
+fi
 
 # Start convergence monitor in background
 python3 ./convergence_monitor.py > log.convergenceMonitor 2>&1 &
@@ -442,7 +450,11 @@ echo ">>> Decomposing for solver"
 decomposePar > log.decomposePar.solver 2>&1
 
 echo ">>> Running potentialFoam"
-mpirun -np $SLURM_NTASKS potentialFoam -noFunctionObjects -parallel > log.potentialFoam 2>&1 || true
+# potentialFoam only initialises the flow field; a failure is non-fatal but is
+# surfaced so a poor start field is not later mistaken for a solver problem.
+if ! mpirun -np $SLURM_NTASKS potentialFoam -noFunctionObjects -parallel > log.potentialFoam 2>&1; then
+    echo ">>> WARNING: potentialFoam failed (see log.potentialFoam) — continuing with the default initial field." >&2
+fi
 
 echo ">>> Starting convergence monitor"
 python3 ./convergence_monitor.py > log.convergenceMonitor 2>&1 &
