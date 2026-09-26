@@ -253,6 +253,42 @@ Key settings available in `configs/config.json`:
 
 ---
 
+## Near-Wall y+ & Boundary Layers
+
+Boundary-layer sizing is driven by a near-wall `y+` target rather than a raw
+thickness. From the freestream velocity, fluid properties and model length,
+RapidFOAM estimates a flat-plate friction velocity (`u_tau`) and converts the
+target into an absolute first-cell height (`delta_1 = 2 * y+ * nu / u_tau`),
+written with `relativeSizes false`. The stack is clamped to
+`maxFaceThicknessRatio` of the finest surface cell so snappyHexMesh can actually
+extrude it.
+
+**Wall treatment.** All presets use the Spalding-bridging wall functions
+(`nutUSpaldingWallFunction`, `omegaWallFunction`, `kqRWallFunction`). These are
+valid across the whole y+ range, so:
+
+- `fast` (y+ ~ 100) and `standard` (y+ ~ 40) sit in the **wall-function** regime.
+- `fine` (y+ ~ 1) places the first cell in the viscous sublayer but still uses
+  the same wall functions — it is **wall-function-bridged at low y+**, not a
+  classical low-Re wall-resolved setup. Treat its near-wall solution as
+  higher-fidelity than the wall-function tiers, not as true LES/DNS-grade
+  resolution.
+
+**Verify, don't assume.** The `u_tau` estimate is a flat-plate correlation and
+is typically 30-40% off the local value on a real car. It also uses the *model
+length*, so short elements (front wing, gurney flaps, endplate edges) see a
+higher local y+ than the estimate predicts. Always check the realised values
+after solving:
+
+```bash
+python read_forces.py --yplus
+```
+
+This reads the `yPlus` function object output and reports per-patch min/max/average
+against the target, flagging patches that miss it.
+
+---
+
 ## Technical Notes & Conventions
 
 ### STL Format & Units

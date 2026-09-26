@@ -325,7 +325,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
     },
     "fine": {
         # Wall-resolved validation (~4-6 hours, ~20-28M cells on 32 cores)
-        "desc": "High-resolution wall-resolved validation quality",
+        "desc": "High-resolution near-wall validation quality (wall-function-bridged at low y+)",
         "cell_estimate": "~20-28M cells",
         "n_cells_target": 24000000,
         "runtime_estimate": "~4-6 hrs",

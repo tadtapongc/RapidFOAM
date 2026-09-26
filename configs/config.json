@@ -10,7 +10,7 @@
     "_stl_files": "ASCII STL geometry files located in the stl/ directory",
     "stl_files": ["geometry.stl"],
 
-    "_fidelity": "Presets: 'fast' (~2-4M cells, 10 min, y+~100), 'standard' (~6-9M cells, 45 min, y+~40, RECOMMENDED for general aerodynamics), 'fine' (~12-16M cells, 2-4 hrs, y+~1). Each preset carries a near-wall y+ target that is converted to an absolute first-layer thickness from the flow velocity and fluid properties.",
+    "_fidelity": "Presets: 'fast' (~2-4M cells, 10 min, y+~100), 'standard' (~6-9M cells, 45 min, y+~40, RECOMMENDED for general aerodynamics), 'fine' (~12-16M cells, 2-4 hrs, y+~1). Each preset carries a near-wall y+ target that is converted to an absolute first-layer thickness from the flow velocity and fluid properties. All presets use Spalding-bridging wall functions, so 'fine' is wall-function-bridged at low y+ (not classical wall-resolved).",
     "fidelity": "standard",
 
     "_section_flow": "--- 2. Flow & Operating Conditions ---",
@@ -104,7 +104,7 @@
             "_far_wake_level": 1
         },
         "layers": {
-            "_y_plus_target": "Near-wall target. 1 = wall-resolved, 30-100 = wall functions. Overrides first_layer_thickness unless that is set explicitly.",
+            "_y_plus_target": "Near-wall target. 1 = wall-function-bridged at low y+ (first cell in the sublayer), 30-100 = wall-function regime. Overrides first_layer_thickness unless that is set explicitly.",
             "_n_layers": 3,
             "_expansion_ratio": 1.2,
             "_relativeSizes": "false = first_layer_thickness/min_thickness are metres; true = fractions of the local cell size",
