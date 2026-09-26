@@ -415,6 +415,33 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
 # FORCES CLI
 # ============================================================
 
+def _yplus_target_from_case(config_path: str | None, case_dir: Path) -> float | None:
+    """Read layers.y_plus_target from a config or case_config.json, if present."""
+    candidates = []
+    if config_path:
+        candidates.append(Path(config_path))
+    candidates.append(case_dir / "case_config.json")
+    candidates.append(Path("case_config.json"))
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            with open(path, encoding="utf-8") as handle:
+                cfg = json.load(handle)
+            layers = cfg.get("layers", {})
+            target = layers.get("y_plus_target")
+            if target is not None and float(target) > 0:
+                return float(target)
+            # Fall back to a resolved value written by the generator.
+            resolved = layers.get("_resolved", {})
+            t = resolved.get("y_plus_target")
+            if t is not None and float(t) > 0:
+                return float(t)
+        except (OSError, ValueError, TypeError):
+            continue
+    return None
+
+
 def forces_main() -> None:
     """Entry point for cfd-forces command."""
     if hasattr(sys.stdout, "reconfigure"):
@@ -438,6 +465,7 @@ def forces_main() -> None:
     parser.add_argument("--live", "-l", action="store_true", help="Real-time monitor")
     parser.add_argument("--compare", action="store_true", help="Multi-case comparison")
     parser.add_argument("--check", action="store_true", help="Exit 0 if converged, 1 if not")
+    parser.add_argument("--yplus", action="store_true", help="Verify near-wall y+ against the target")
     parser.add_argument("--interval", "-i", type=float, default=3, help="Live update interval (s)")
     args = parser.parse_args()
 
@@ -498,6 +526,29 @@ def forces_main() -> None:
         args.config, case_dir=case_dir
     )
 
+    # y+ verification (independent of force data)
+    if args.yplus:
+        from rapidfoam.postproc.yplus import (
+            check_yplus_target,
+            find_yplus_files,
+            read_yplus,
+        )
+        yp_files = find_yplus_files(case_dir)
+        data = read_yplus(yp_files)
+        target = _yplus_target_from_case(args.config, case_dir)
+        summary = check_yplus_target(data, target)
+        if not summary.get("available"):
+            sys.exit(f"No yPlus output found in {case_dir}. Did the case run yPlus function object?")
+        print("\n  Near-wall y+ verification"
+              + (f" (target {target:g})" if target else ""))
+        for patch, stats in sorted(summary["patches"].items()):
+            avg = stats["average"] if stats["average"] is not None else float("nan")
+            lo = stats["min"] if stats["min"] is not None else float("nan")
+            hi = stats["max"] if stats["max"] is not None else float("nan")
+            print(f"    {patch:<24} min {lo:>7.2f}  max {hi:>8.2f}  avg {avg:>7.2f}  [{stats['status']}]")
+        print(f"    {summary['note']}")
+        sys.exit(0 if not summary.get("off_target") else 2)
+
     files = find_force_files(case_dir)
     if not files:
         sys.exit(f"ERROR: No force.dat found in {case_dir}. Run from inside the case directory or specify case path.")
@@ -517,6 +568,15 @@ def forces_main() -> None:
     # Summary
     is_sym = is_symmetry_case(args.config, case_dir=case_dir)
     print_summary(times, drags, downforces, drag_axis, df_axis, is_symmetry=is_sym)
+
+    # Near-wall y+ note (silent unless there is output to report)
+    from rapidfoam.postproc.yplus import check_yplus_target, find_yplus_files, read_yplus
+    yp_summary = check_yplus_target(
+        read_yplus(find_yplus_files(case_dir)),
+        _yplus_target_from_case(args.config, case_dir),
+    )
+    if yp_summary.get("available"):
+        print(f"\n  Near-wall y+: {yp_summary['note']}")
 
     # Plot
     if args.plot or args.save:

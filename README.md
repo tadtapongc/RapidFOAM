@@ -210,7 +210,14 @@ python read_forces.py --compare
 
 # Check convergence status (exit code 0 if converged, 1 if not):
 python read_forces.py --check
+
+# Verify near-wall y+ against the layer sizing target (exit 0 if met, 2 if missed):
+python read_forces.py --yplus
 ```
+
+The force summary also prints a one-line near-wall y+ note (patch averages vs. the
+configured `layers.y_plus_target`) whenever the `yPlus` function object has produced
+output, so a mesh that misses its near-wall target is visible without re-running.
 
 ---
 
