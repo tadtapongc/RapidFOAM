@@ -419,6 +419,9 @@ async def api_config_defaults() -> dict[str, Any]:
                     "edge_level": p.get("edge_level"),
                     "near_wake_level": p.get("near_wake_level"),
                     "far_wake_level": p.get("far_wake_level"),
+                    "feature_cells": p.get("feature_cells"),
+                    "max_surface_level": p.get("max_surface_level"),
+                    "feature_percentile": p.get("feature_percentile"),
                 },
                 "solver": {
                     "end_time": p.get("end_time"),

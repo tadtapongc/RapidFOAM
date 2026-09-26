@@ -224,3 +224,58 @@ test('destroy clears timers and disposes both viewers', async () => {
   assert.equal(app.viewer, null);
   assert.equal(app.pollInterval, null);
 });
+
+// ------------------------------------------------- Feature-based auto-sizing
+
+test('renderAutoSizePreview summarises the detected feature and refinement', async () => {
+  const app = await makeApp('<span id="cfg-auto-size-preview"></span>');
+  app.renderAutoSizePreview({
+    small_feature_m: 0.00154,
+    finest_surface_cell_m: 0.00026,
+    surface_level: [4, 7],
+    feature_percentile: 5,
+    capped: false,
+  });
+  const text = app._window.document.getElementById('cfg-auto-size-preview').textContent;
+  assert.ok(text.includes('1.54 mm'), text);
+  assert.ok(text.includes('0.26 mm'), text);
+  assert.ok(text.includes('level 7'), text);
+  assert.ok(!text.includes('capped'), text);
+});
+
+test('renderAutoSizePreview flags a capped result', async () => {
+  const app = await makeApp('<span id="cfg-auto-size-preview"></span>');
+  app.renderAutoSizePreview({
+    small_feature_m: 0.0005,
+    finest_surface_cell_m: 0.0001,
+    surface_level: [4, 8],
+    feature_percentile: 5,
+    capped: true,
+    max_surface_level: 8,
+  });
+  const text = app._window.document.getElementById('cfg-auto-size-preview').textContent;
+  assert.ok(text.includes('capped at level 8'), text);
+});
+
+test('renderAutoSizePreview clears when there is no auto-size info', async () => {
+  const app = await makeApp('<span id="cfg-auto-size-preview">stale</span>');
+  app.renderAutoSizePreview(null);
+  assert.equal(app._window.document.getElementById('cfg-auto-size-preview').textContent, '');
+});
+
+test('renderLayerPreview shows auto-size text even without a resolved first layer', async () => {
+  const app = await makeApp('<span id="cfg-layer-preview"></span><span id="cfg-auto-size-preview"></span>');
+  app.renderLayerPreview({
+    mode: 'relative',
+    first_layer_thickness: null,
+    auto_size: {
+      small_feature_m: 0.0062,
+      finest_surface_cell_m: 0.0034,
+      surface_level: [4, 5],
+      feature_percentile: 5,
+      capped: false,
+    },
+  });
+  const auto = app._window.document.getElementById('cfg-auto-size-preview').textContent;
+  assert.ok(auto.includes('6.20 mm'), auto);
+});
