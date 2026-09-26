@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from rapidfoam.stl_utils import BBox
+from rapidfoam.stl_utils import BBox, EdgeStats
 
 # ============================================================
 # AXIS UTILITIES
@@ -258,6 +258,11 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "nRelaxIter_layers": 5,
         "slurm_time": "04:00:00",
         "slurm_mem_per_cpu": "2G",
+        # Feature-based auto-sizing: refine until the smallest feature spans
+        # feature_cells, capped at max_surface_level.
+        "feature_percentile": 5.0,
+        "feature_cells": 3.0,
+        "max_surface_level": 6,
         # Distance-based refinement shells, as multiples of the base cell
         "distance_shells": [
             (0.25, 3),    # quarter cell -> level 3
@@ -290,6 +295,11 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "nRelaxIter_layers": 10,
         "slurm_time": "08:00:00",
         "slurm_mem_per_cpu": "3G",
+        # Feature-based auto-sizing: refine until the smallest feature spans
+        # feature_cells, capped at max_surface_level.
+        "feature_percentile": 5.0,
+        "feature_cells": 4.0,
+        "max_surface_level": 7,
         # Conforming distance shells, as multiples of the base cell
         "distance_shells": [
             (0.25, 4),    # quarter cell -> level 4 (6.25mm at ~3m model)
@@ -322,6 +332,11 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "nRelaxIter_layers": 10,
         "slurm_time": "14:00:00",
         "slurm_mem_per_cpu": "4G",
+        # Feature-based auto-sizing: refine until the smallest feature spans
+        # feature_cells, capped at max_surface_level.
+        "feature_percentile": 5.0,
+        "feature_cells": 5.0,
+        "max_surface_level": 8,
         # Conforming distance shells, as multiples of the base cell
         "distance_shells": [
             (0.25, 5),    # 2.5mm at ~3m model
@@ -338,11 +353,88 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
 # MESH PARAMETER DERIVATION — Universal, geometry-adaptive
 # ============================================================
 
-def compute_mesh_params(cfg: dict[str, Any], combined_bounds: BBox) -> dict[str, Any]:
+def _resolve_feature_sizing(
+    user_mesh: dict[str, Any],
+    preset: dict[str, Any],
+    base_cell: float,
+    surface_level: list[int],
+    edge_level: int,
+    feature_stats: EdgeStats,
+    extents: list[float],
+) -> dict[str, Any]:
+    """Widen surface/edge refinement so the smallest feature is resolved.
+
+    The feature length scale is the smaller of a robust low-percentile triangle
+    edge (rejects CAD slivers) and the thinnest geometric extent; the required
+    refinement level is the one whose cell (``base_cell / 2**level``) is at most
+    ``feature / feature_cells``. Levels are only ever raised above the preset and
+    are capped by ``max_surface_level`` to bound the cell budget.
+    """
+    pct = float(user_mesh.get("feature_percentile", preset.get("feature_percentile", 5.0)))
+    cells_per_feature = max(float(user_mesh.get("feature_cells", preset.get("feature_cells", 3.0))), 1.0)
+    max_level = int(user_mesh.get("max_surface_level", preset.get("max_surface_level", 7)))
+    max_level = max(1, min(max_level, 14))
+
+    model_length = max(extents) if extents else base_cell
+    robust_edge = feature_stats.percentile(pct) if feature_stats.n_edges else 0.0
+    if robust_edge <= 0.0 and math.isfinite(feature_stats.min_edge):
+        robust_edge = feature_stats.min_edge
+    thin_extent = min((e for e in extents if e > 0), default=0.0)
+
+    candidates = [v for v in (robust_edge, thin_extent) if v > 0]
+    raw_small = min(candidates) if candidates else 0.0
+
+    # Sliver floor: ignore features below 0.01% of the model length so a single
+    # degenerate tessellation edge cannot explode the mesh.
+    floor = max(model_length * 1e-4, 1e-9)
+    small = max(raw_small, floor) if raw_small > 0 else floor
+
+    target_cell = small / cells_per_feature
+    if base_cell > 0 and 0 < target_cell < base_cell:
+        required = math.ceil(math.log2(base_cell / target_cell))
+    else:
+        required = 0
+    required = max(required, 0)
+
+    level1 = max(int(surface_level[1]), required)
+    capped = level1 > max_level
+    level1 = min(level1, max_level)
+    level0 = min(int(surface_level[0]), level1)
+    new_edge = min(max(int(edge_level), required), max_level)
+
+    return {
+        "small_feature_m": round(raw_small, 8) if raw_small > 0 else None,
+        "feature_floor_m": floor,
+        "robust_edge_m": robust_edge or None,
+        "thin_extent_m": thin_extent or None,
+        "min_edge_m": feature_stats.min_edge if math.isfinite(feature_stats.min_edge) else None,
+        "feature_percentile": pct,
+        "feature_cells": cells_per_feature,
+        "required_level": required,
+        "max_surface_level": max_level,
+        "capped": capped,
+        "base_cell_size": round(base_cell, 4),
+        "finest_surface_cell_m": base_cell / (2 ** level1),
+        "surface_level": [level0, level1],
+        "edge_level": new_edge,
+    }
+
+
+def compute_mesh_params(
+    cfg: dict[str, Any],
+    combined_bounds: BBox,
+    feature_stats: EdgeStats | None = None,
+) -> dict[str, Any]:
     """Derive all mesh parameters from geometry bounds.
 
     Domain and wake dimensions follow geometry bounds. Cell sizes and distance
     shells use metre-valued fidelity presets unless explicitly overridden.
+
+    When ``feature_stats`` (edge-length statistics from the STLs) is supplied,
+    surface and edge refinement are widened so the smallest geometry feature is
+    resolved with a target number of cells across it (see
+    :func:`_resolve_feature_sizing`). This only ever adds local refinement on
+    top of the fidelity preset and never coarsens it.
 
     Refinement strategy:
         - Distance-based shells around the STL surface.
@@ -386,8 +478,20 @@ def compute_mesh_params(cfg: dict[str, Any], combined_bounds: BBox) -> dict[str,
         base_cell = float(base_cell_override)
 
     # Surface and edge levels: respect user override or use fidelity preset
-    surface_level = user_mesh.get("surface_level", preset["surface_level"])
-    edge_level = user_mesh.get("edge_level", preset["edge_level"])
+    surface_level = list(user_mesh.get("surface_level", preset["surface_level"]))
+    edge_level = int(user_mesh.get("edge_level", preset["edge_level"]))
+
+    # Feature-based auto-sizing: widen local surface/edge refinement so small
+    # geometry features (thin sections, tight radii, small triangles) are
+    # resolved. Never coarsens the preset; capped by max_surface_level.
+    auto_size_info: dict[str, Any] | None = None
+    if feature_stats is not None and user_mesh.get("auto_size", True):
+        auto_size_info = _resolve_feature_sizing(
+            user_mesh, preset, base_cell, surface_level, edge_level,
+            feature_stats, extents,
+        )
+        surface_level = auto_size_info["surface_level"]
+        edge_level = auto_size_info["edge_level"]
 
     # Distance-based refinement shells. Users specify metres via
     # distance_levels; presets store base-cell multiples via distance_shells.
@@ -533,6 +637,8 @@ def compute_mesh_params(cfg: dict[str, Any], combined_bounds: BBox) -> dict[str,
         "resolveFeatureAngle": resolve_feature_angle,
         "allowFreeStandingZoneFaces": user_mesh.get("allowFreeStandingZoneFaces", True),
     }
+    if auto_size_info is not None:
+        result["auto_size"] = auto_size_info
     for key in ("location_in_mesh", "locationInMesh", "maxLoadUnbalance"):
         if key in user_mesh:
             result[key] = user_mesh[key]

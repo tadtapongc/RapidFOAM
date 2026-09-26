@@ -5,6 +5,13 @@ All notable changes to RapidFOAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Feature-based mesh auto-sizing**: STLs are now analyzed in a streaming pass for triangle edge statistics (`EdgeStats`); `compute_mesh_params` widens snappy surface/edge refinement so the smallest geometry feature (robust low-percentile edge, or thinnest extent) is resolved with a configurable number of cells, capped by `max_surface_level` to bound the cell budget. Never coarsens the fidelity preset; toggle with `mesh_params.auto_size`, tune with `feature_percentile`, `feature_cells`, `max_surface_level`. CLI reports the detected feature size and resulting finest surface cell; the Studio layer preview reflects it.
+- `stl_analyze()` unified streaming inspector (solid name, triangle count, bounding box, edge statistics); `stl_info()` now delegates to it.
+- Unit tests for edge statistics, STL analysis, feature sizing and validation (`tests/test_auto_sizing.py`).
+
 ## [1.3.0] - 2026-09-25
 
 ### Added

@@ -9,8 +9,10 @@ Supports:
 
 from __future__ import annotations
 
+import math
 import shutil
 import struct
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
@@ -22,6 +24,75 @@ Triangle = tuple[
 ]
 
 BBox = tuple[tuple[float, float, float], tuple[float, float, float]]
+
+# Log-binned histogram for O(1)-memory edge-length percentiles. Spans twelve
+# decades (1 pm .. 1 Tm) at 16 bins/decade, far wider than any CAD model.
+_EDGE_LOG_MIN = -12.0
+_EDGE_LOG_MAX = 12.0
+_EDGE_BINS_PER_DECADE = 16
+_EDGE_BINS = int((_EDGE_LOG_MAX - _EDGE_LOG_MIN) * _EDGE_BINS_PER_DECADE)
+
+
+@dataclass
+class EdgeStats:
+    """Streaming edge-length statistics for a tessellated surface.
+
+    Accumulates triangle edge lengths in a bounded log-histogram so that
+    "small feature" percentiles can be estimated without retaining the mesh.
+    Instances can be merged to combine several STL files.
+    """
+
+    n_edges: int = 0
+    n_degenerate: int = 0
+    min_edge: float = float("inf")
+    max_edge: float = 0.0
+    bins: list[int] = field(default_factory=lambda: [0] * _EDGE_BINS)
+
+    def add(self, length: float) -> None:
+        """Accumulate a single edge length (non-positive lengths are degenerate)."""
+        if not math.isfinite(length) or length <= 0.0:
+            self.n_degenerate += 1
+            return
+        self.n_edges += 1
+        if length < self.min_edge:
+            self.min_edge = length
+        if length > self.max_edge:
+            self.max_edge = length
+        idx = int((math.log10(length) - _EDGE_LOG_MIN) * _EDGE_BINS_PER_DECADE)
+        idx = min(max(idx, 0), _EDGE_BINS - 1)
+        self.bins[idx] += 1
+
+    def add_triangle(self, v0, v1, v2) -> None:
+        """Accumulate the three edge lengths of one triangle."""
+        self.add(math.dist(v0, v1))
+        self.add(math.dist(v1, v2))
+        self.add(math.dist(v2, v0))
+
+    def merge(self, other: EdgeStats) -> None:
+        """Combine another instance in place (histograms are additive)."""
+        self.n_edges += other.n_edges
+        self.n_degenerate += other.n_degenerate
+        if other.min_edge < self.min_edge:
+            self.min_edge = other.min_edge
+        if other.max_edge > self.max_edge:
+            self.max_edge = other.max_edge
+        for i, count in enumerate(other.bins):
+            self.bins[i] += count
+
+    def percentile(self, pct: float) -> float:
+        """Edge length at the given percentile (upper bin bound, so it over-estimates)."""
+        if self.n_edges <= 0:
+            return 0.0
+        target = max(0.0, min(100.0, float(pct))) / 100.0 * self.n_edges
+        if target <= 0.0:
+            return self.min_edge
+        cumulative = 0
+        for i, count in enumerate(self.bins):
+            cumulative += count
+            if cumulative >= target:
+                log_upper = _EDGE_LOG_MIN + (i + 1) / _EDGE_BINS_PER_DECADE
+                return 10.0 ** log_upper
+        return self.max_edge
 
 
 def is_binary_stl(filepath: Path) -> bool:
@@ -52,11 +123,14 @@ def is_binary_stl(filepath: Path) -> bool:
     return size == expected_size
 
 
-def stl_info(filepath: str | Path) -> tuple[str, int, BBox]:
-    """Inspect an ASCII STL file in a single streaming pass with O(1) memory.
+def stl_analyze(filepath: str | Path) -> tuple[str, int, BBox, EdgeStats]:
+    """Inspect an ASCII STL in a single streaming pass with O(1) memory.
+
+    Computes the solid name, triangle count, bounding box and edge-length
+    statistics (see :class:`EdgeStats`) used for feature-based mesh sizing.
 
     Returns:
-        (solid_name, triangle_count, ((xmin, ymin, zmin), (xmax, ymax, zmax)))
+        (solid_name, triangle_count, ((xmin, ymin, zmin), (xmax, ymax, zmax)), stats)
 
     Raises:
         FileNotFoundError: If file doesn't exist.
@@ -75,7 +149,9 @@ def stl_info(filepath: str | Path) -> tuple[str, int, BBox]:
     name: str | None = None
     min_x = min_y = min_z = float("inf")
     max_x = max_y = max_z = float("-inf")
-    vertex_count = 0
+    n_triangles = 0
+    stats = EdgeStats()
+    triangle_vertices: list[tuple[float, float, float]] = []
 
     with open(filepath, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -93,21 +169,40 @@ def stl_info(filepath: str | Path) -> tuple[str, int, BBox]:
                         z = float(parts[3])
                     except ValueError:
                         continue
+                    triangle_vertices.append((x, y, z))
                     if x < min_x: min_x = x
                     if x > max_x: max_x = x
                     if y < min_y: min_y = y
                     if y > max_y: max_y = y
                     if z < min_z: min_z = z
                     if z > max_z: max_z = z
-                    vertex_count += 1
+                    if len(triangle_vertices) == 3:
+                        n_triangles += 1
+                        stats.add_triangle(*triangle_vertices)
+                        triangle_vertices = []
+            elif line.startswith("endfacet"):
+                triangle_vertices = []
 
     if name is None:
         raise ValueError(f"Not a valid ASCII STL: {filepath}")
-    if vertex_count < 3:
+    if n_triangles < 1:
         raise ValueError(f"No triangles found in {filepath}")
 
-    n_triangles = vertex_count // 3
     bbox: BBox = ((min_x, min_y, min_z), (max_x, max_y, max_z))
+    return name, n_triangles, bbox, stats
+
+
+def stl_info(filepath: str | Path) -> tuple[str, int, BBox]:
+    """Inspect an ASCII STL file in a single streaming pass with O(1) memory.
+
+    Returns:
+        (solid_name, triangle_count, ((xmin, ymin, zmin), (xmax, ymax, zmax)))
+
+    Raises:
+        FileNotFoundError: If file doesn't exist.
+        ValueError: If file is binary or malformed.
+    """
+    name, n_triangles, bbox, _ = stl_analyze(filepath)
     return name, n_triangles, bbox
 
 

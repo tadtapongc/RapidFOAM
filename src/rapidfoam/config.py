@@ -401,6 +401,21 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
     if cells_per_length is not None and (
             not finite(cells_per_length) or not (5.0 <= cells_per_length <= 100.0)):
         errors.append("mesh_params.cells_per_length must be a number between 5 and 100")
+    auto_size = cfg.get("mesh_params", {}).get("auto_size")
+    if auto_size is not None and not isinstance(auto_size, bool):
+        errors.append("mesh_params.auto_size must be true or false")
+    feature_percentile = cfg.get("mesh_params", {}).get("feature_percentile")
+    if feature_percentile is not None and (
+            not finite(feature_percentile) or not (0.0 < feature_percentile <= 100.0)):
+        errors.append("mesh_params.feature_percentile must be a number in (0, 100]")
+    feature_cells = cfg.get("mesh_params", {}).get("feature_cells")
+    if feature_cells is not None and (not finite(feature_cells) or feature_cells <= 0):
+        errors.append("mesh_params.feature_cells must be a positive number")
+    max_surface_level = cfg.get("mesh_params", {}).get("max_surface_level")
+    if max_surface_level is not None and (
+            not isinstance(max_surface_level, int) or isinstance(max_surface_level, bool)
+            or max_surface_level < 1):
+        errors.append("mesh_params.max_surface_level must be an integer >= 1")
     if "ground_layers" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["ground_layers"], bool):
         errors.append("layers.ground_layers must be true or false")
     for section, keys in {

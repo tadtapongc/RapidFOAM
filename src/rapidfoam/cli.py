@@ -110,7 +110,7 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         vec_str,
         velocity_vector,
     )
-    from rapidfoam.stl_utils import copy_stl, stl_info
+    from rapidfoam.stl_utils import EdgeStats, copy_stl, stl_analyze
 
     if not cfg_path.exists():
         sys.exit(f"ERROR: {cfg_path} not found")
@@ -153,15 +153,17 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
     cfg["stl_names"] = stl_names
     cfg["domain_faces"] = face_assignments(cfg)
 
-    # Compute combined STL bounds
+    # Compute combined STL bounds and edge statistics for feature-based sizing
     all_min = [float("inf")] * 3
     all_max = [float("-inf")] * 3
     stl_info_map: dict[str, tuple[str, int, tuple[tuple[float, float, float], tuple[float, float, float]]]] = {}
+    edge_stats = EdgeStats()
     for stem, path in stl_pairs:
         try:
-            info = stl_info(path)
-            stl_info_map[stem] = info
-            smin, smax = info[2]
+            solid_name, n_triangles, bbox, stats = stl_analyze(path)
+            stl_info_map[stem] = (solid_name, n_triangles, bbox)
+            edge_stats.merge(stats)
+            smin, smax = bbox
         except (OSError, ValueError) as exc:
             sys.exit(f"ERROR: {exc}")
         for i in range(3):
@@ -213,8 +215,8 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
             print(f"  ⚠  STL very close to domain boundary: "
                   f"{axis_labels[i]}_max (clearance: {clearance_max:.3f} m)")
 
-    # Derive mesh parameters from geometry
-    cfg["mesh_params"] = compute_mesh_params(cfg, combined_bounds)
+    # Derive mesh parameters from geometry (bounds + feature statistics)
+    cfg["mesh_params"] = compute_mesh_params(cfg, combined_bounds, feature_stats=edge_stats)
     # Apply fidelity presets conditionally
     from rapidfoam.geometry import FIDELITY_PRESETS
     fidelity = cfg.get("fidelity", "standard")
@@ -282,6 +284,19 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         print(f"    Distance shells: {shells}")
     for r in mesh.get("refinement_regions", []):
         print(f"    Region {r['name']}: Level {r['level']}")
+
+    sizing = mesh.get("auto_size")
+    if sizing:
+        small = sizing.get("small_feature_m")
+        small_txt = f"{small * 1000:.2f} mm" if small else "n/a"
+        print("  Auto-sizing (feature-based):")
+        print(f"    small feature:  {small_txt} "
+              f"({sizing['feature_percentile']:g}th pct edge)")
+        print(f"    finest surface: {sizing['finest_surface_cell_m'] * 1000:.2f} mm "
+              f"(level {sizing['surface_level'][1]})")
+        if sizing.get("capped"):
+            print(f"    ⚠  capped at max_surface_level {sizing['max_surface_level']} — "
+                  f"smallest features may be under-resolved")
 
     if layer_resolution.get("first_layer_thickness") is not None:
         print("  Boundary layers:")

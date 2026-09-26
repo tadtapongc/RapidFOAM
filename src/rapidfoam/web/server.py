@@ -51,7 +51,7 @@ from rapidfoam.postproc.forces import (
     window_stats,
 )
 from rapidfoam.postproc.residuals import find_residual_files, read_residuals
-from rapidfoam.stl_utils import stl_info
+from rapidfoam.stl_utils import EdgeStats, stl_analyze, stl_info
 from rapidfoam.web.ssh_client import ClusterSSHClient
 
 log = logging.getLogger("rapidfoam.web")
@@ -179,7 +179,12 @@ def merge_config_with_defaults(raw_cfg: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def layer_preview(merged: dict[str, Any], raw_cfg: dict[str, Any], bounds: tuple) -> dict[str, Any]:
+def layer_preview(
+    merged: dict[str, Any],
+    raw_cfg: dict[str, Any],
+    bounds: tuple,
+    feature_stats: EdgeStats | None = None,
+) -> dict[str, Any]:
     """Resolve the near-wall layer spec for the Studio preview without mutating it."""
     preview_cfg = copy.deepcopy(merged)
     preset = FIDELITY_PRESETS.get(preview_cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"])
@@ -192,7 +197,7 @@ def layer_preview(merged: dict[str, Any], raw_cfg: dict[str, Any], bounds: tuple
     if not explicit_first and not user_set(raw_cfg, "layers", "y_plus_target"):
         if preset.get("y_plus_target") is not None:
             layers["y_plus_target"] = preset["y_plus_target"]
-    preview_cfg["mesh_params"] = compute_mesh_params(preview_cfg, bounds)
+    preview_cfg["mesh_params"] = compute_mesh_params(preview_cfg, bounds, feature_stats=feature_stats)
     return resolve_layers(
         preview_cfg,
         bounds,
@@ -256,30 +261,36 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid configuration format: {exc}")
 
+    # Gather STL edge statistics for feature-based auto-sizing (and bounds when
+    # the caller did not supply them), in a single streaming pass per file.
+    feature_stats = EdgeStats()
+    have_stats = False
+    computed_min = [float("inf")] * 3
+    computed_max = [float("-inf")] * 3
+    for sname in cfg.get("stl_files", []):
+        safe_sname = Path(sname).name
+        p = find_stl(PROJECT_ROOT / "stl", safe_sname)
+        if p and p.is_file():
+            try:
+                _, _, b, stats = stl_analyze(p)
+            except Exception:
+                continue
+            feature_stats.merge(stats)
+            have_stats = True
+            for i in range(3):
+                computed_min[i] = min(computed_min[i], b[0][i])
+                computed_max[i] = max(computed_max[i], b[1][i])
+
     bounds_tuple = None
     if req.bounds and "min" in req.bounds and "max" in req.bounds:
         bounds_tuple = (req.bounds["min"], req.bounds["max"])
+    elif computed_min[0] != float("inf"):
+        bounds_tuple = (computed_min, computed_max)
     else:
-        # Calculate from active STL files in stl/
-        stl_files = cfg.get("stl_files", [])
-        all_min = [float("inf")] * 3
-        all_max = [float("-inf")] * 3
-        for sname in stl_files:
-            safe_sname = Path(sname).name
-            p = find_stl(PROJECT_ROOT / "stl", safe_sname)
-            if p and p.is_file():
-                try:
-                    _, _, b = stl_info(p)
-                    for i in range(3):
-                        all_min[i] = min(all_min[i], b[0][i])
-                        all_max[i] = max(all_max[i], b[1][i])
-                except Exception:
-                    pass
-        if all_min[0] != float("inf"):
-            bounds_tuple = (all_min, all_max)
-        else:
-            # Default reference geometry bounds (half-model)
-            bounds_tuple = ([-0.7, 0.035, -1.8], [0.7, 1.1, 1.2])
+        # Default reference geometry bounds (half-model)
+        bounds_tuple = ([-0.7, 0.035, -1.8], [0.7, 1.1, 1.2])
+
+    stats_for_sizing = feature_stats if have_stats else None
 
     try:
         # If explicit domain_box coordinates are configured, use them for domain
@@ -297,7 +308,7 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
             "bounds": {"min": bounds_tuple[0], "max": bounds_tuple[1]},
             "auto_symmetry_plane": round(center_lateral, 4),
             "lateral_axis": "xyz"[lateral_idx],
-            "layer_preview": layer_preview(merged, cfg, bounds_tuple),
+            "layer_preview": layer_preview(merged, cfg, bounds_tuple, stats_for_sizing),
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
