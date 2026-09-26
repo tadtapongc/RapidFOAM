@@ -499,6 +499,25 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
                 f"first_layer_thickness/n_layers or lower min_thickness."
             )
 
+    # Absolute layers thicker than the finest surface cell cannot be inserted
+    # next to it (snappy respects maxFaceThicknessRatio), so layers silently drop.
+    # Only meaningful for user-set absolute thicknesses; y+ resolution is clamped.
+    mesh = cfg.get("mesh_params", {})
+    base_cell = mesh.get("base_cell_size")
+    surf_level = mesh.get("surface_level")
+    if (lay.get("relativeSizes") is False and finite(first) and first > 0
+            and finite(base_cell) and base_cell not in (None, "auto")
+            and isinstance(surf_level, (list, tuple)) and len(surf_level) == 2
+            and isinstance(surf_level[1], int) and not isinstance(surf_level[1], bool) and surf_level[1] >= 0):
+        cell_fine = float(base_cell) / (2 ** surf_level[1])
+        if first > 0.5 * cell_fine:
+            warnings.append(
+                f"layers.first_layer_thickness {first:g} m exceeds half the finest "
+                f"surface cell ({cell_fine:.3g} m, level {surf_level[1]}) — snappyHexMesh "
+                f"may drop boundary layers. Reduce the thickness, raise surface_level, "
+                f"or lower base_cell_size."
+            )
+
     # Domain box (can be "auto" or {"min": [x,y,z], "max": [x,y,z]})
     box = cfg.get("domain_box")
     if box not in ("auto", None) and not isinstance(box, dict):

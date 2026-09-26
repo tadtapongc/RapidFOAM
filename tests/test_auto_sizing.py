@@ -299,6 +299,16 @@ class TestAutoSizeValidation(unittest.TestCase):
         errors, _ = validate(load_config(path), self.root)
         return errors
 
+    def _warnings(self, config_overrides):
+        path = self.root / "config.json"
+        path.write_text(json.dumps({
+            "case_name": "auto_size_case",
+            "stl_files": ["body.stl"],
+            **config_overrides,
+        }))
+        _, warnings = validate(load_config(path), self.root)
+        return warnings
+
     def test_invalid_feature_params_rejected(self):
         for bad in (
             {"auto_size": "yes"},
@@ -318,6 +328,20 @@ class TestAutoSizeValidation(unittest.TestCase):
             "feature_cells": 4,
             "max_surface_level": 7,
         }))
+
+    def test_absolute_layer_thicker_than_cell_warns(self):
+        warnings = self._warnings({
+            "mesh_params": {"base_cell_size": 0.1, "surface_level": [4, 5]},
+            "layers": {"relativeSizes": False, "first_layer_thickness": 0.01},
+        })
+        self.assertTrue(any("finest" in w and "boundary layers" in w for w in warnings))
+
+    def test_reasonable_absolute_layer_does_not_warn(self):
+        warnings = self._warnings({
+            "mesh_params": {"base_cell_size": 0.1, "surface_level": [4, 5]},
+            "layers": {"relativeSizes": False, "first_layer_thickness": 1e-5},
+        })
+        self.assertFalse(any("finest" in w for w in warnings))
 
 
 if __name__ == "__main__":

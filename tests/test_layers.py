@@ -260,6 +260,19 @@ class TestGroundLayerGuard(unittest.TestCase):
         self.assertFalse(res["ground_layers"])
         self.assertEqual(res["ground_layers_note"], "")
 
+    def test_ground_plane_clearance_matches_embedded_surface(self):
+        # Road sits at ground_plane - GROUND_EMBED, so clearance must account
+        # for the embed: smin_up - (ground_plane - 0.01).
+        from rapidfoam.geometry import GROUND_EMBED
+        cfg = self._cfg()
+        cfg.pop("ground_clearance", None)
+        cfg["ground_plane"] = -0.02
+        res = resolve_layers(cfg, BOUNDS)
+        smin_up = BOUNDS[0][1]
+        expected = smin_up - (-0.02 - GROUND_EMBED)
+        self.assertAlmostEqual(res["ground_clearance"], expected)
+        self.assertGreater(res["ground_clearance"], smin_up - (-0.02))
+
 
 if __name__ == "__main__":
     unittest.main()

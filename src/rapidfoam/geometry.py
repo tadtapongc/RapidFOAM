@@ -11,6 +11,11 @@ from typing import Any
 
 from rapidfoam.stl_utils import BBox, EdgeStats, FeatureAngleStats
 
+# Small distance the ground patch is embedded below the configured plane so the
+# moving-ground wall reliably cuts the background mesh. Shared by the domain
+# sizing and the ground-layer clearance guard so they stay consistent.
+GROUND_EMBED = 0.01
+
 # ============================================================
 # AXIS UTILITIES
 # ============================================================
@@ -630,13 +635,13 @@ def compute_mesh_params(
     ground_z: float | None = None
     if is_ground:
         if "ground_plane" in cfg and cfg["ground_plane"] is not None:
-            ground_z = float(cfg["ground_plane"]) - 0.01
+            ground_z = float(cfg["ground_plane"]) - GROUND_EMBED
         elif "ground_clearance" in cfg and cfg["ground_clearance"] is not None:
-            ground_z = smin[up_idx] - float(cfg["ground_clearance"]) - 0.01
+            ground_z = smin[up_idx] - float(cfg["ground_clearance"]) - GROUND_EMBED
         elif "domain_box" in cfg and isinstance(cfg["domain_box"], dict) and "min" in cfg["domain_box"]:
-            ground_z = cfg["domain_box"]["min"][up_idx] - 0.01
+            ground_z = cfg["domain_box"]["min"][up_idx] - GROUND_EMBED
         else:
-            ground_z = smin[up_idx] - 0.01
+            ground_z = smin[up_idx] - GROUND_EMBED
 
     # --- 1. Near Wake Box (High-resolution: rear wing, diffuser, tire separation) ---
     near_pad_lat = max(0.10, extents[lateral_idx] * 0.15)
@@ -778,11 +783,16 @@ def _apply_ground_layer_policy(
     they are disabled unless the config explicitly asks and the geometry has
     at least max(2mm, 2 x first layer) of clearance. The stack is capped by
     layers.ground_n_layers (default 2) regardless of the body layer count.
+
+    Clearance is measured against the *actual* road surface used by the mesh
+    (the configured plane less the small embed offset), so the guard agrees
+    with where snappy puts the ground patch.
     """
     up_idx = up_axis_index(cfg)
     smin_up = float(combined_bounds[0][up_idx])
     if cfg.get("ground_plane") is not None:
-        clearance = smin_up - float(cfg["ground_plane"])
+        ground_surface = float(cfg["ground_plane"]) - GROUND_EMBED
+        clearance = smin_up - ground_surface
     elif cfg.get("ground_clearance") is not None:
         clearance = float(cfg["ground_clearance"])
     else:
