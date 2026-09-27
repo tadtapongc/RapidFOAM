@@ -1,0 +1,231 @@
+"""Unit tests for mesh-quality parsing and verification."""
+
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from rapidfoam.postproc.checkmesh import (
+    check_mesh_quality,
+    checkmesh_targets_from_case,
+    find_checkmesh_logs,
+    find_snappy_logs,
+    mesh_quality_report,
+    parse_checkmesh,
+    parse_layer_coverage,
+    read_checkmesh,
+    read_layer_coverage,
+)
+
+GOOD_CHECKMESH = """\
+Mesh stats
+    points:           1000
+    faces:            4000
+    internal faces:   3800
+    cells:            2000
+
+Checking geometry...
+    Max aspect ratio = 12.5 OK.
+    Min volume = 1e-09. Max volume = 1e-06.  Total volume = 1.0.  Cell volumes OK.
+    Mesh non-orthogonality Max: 45.2 average: 3.1
+    Non-orthogonality check OK.
+    Max skewness = 1.2 OK.
+
+Mesh OK.
+"""
+
+FAILING_CHECKMESH = """\
+    points:           9575251
+    faces:            27582986
+    internal faces:   26717334
+    cells:            9008844
+    Max aspect ratio = 20.738987 OK.
+    Min volume = 2.8807331e-11. Max volume = 0.00012573372.  Total volume = 999.97737.  Cell volumes OK.
+    Mesh non-orthogonality Max: 68.343121 average: 3.25209
+    Non-orthogonality check OK.
+    Max skewness = 2.3305211 OK.
+   *There are 3858 faces with concave angles between consecutive edges. Max concave angle = 62.709327 degrees.
+  ***Concave cells (using face planes) found, number of cells: 61471
+
+Failed 1 mesh checks.
+"""
+
+LAYER_TABLE = """\
+Some preamble
+patch    faces    layers avg thickness[m]
+                         near-wall overall
+-----    -----    ------ --------- -------
+geometry 124862   2      0.000391  0.000898
+
+trailing text
+"""
+
+
+class TestParseCheckmesh(unittest.TestCase):
+    def test_parses_core_metrics(self):
+        stats = parse_checkmesh(FAILING_CHECKMESH)
+        self.assertEqual(stats["cells"], 9008844)
+        self.assertAlmostEqual(stats["max_non_ortho"], 68.343121)
+        self.assertAlmostEqual(stats["avg_non_ortho"], 3.25209)
+        self.assertAlmostEqual(stats["max_skewness"], 2.3305211)
+        self.assertAlmostEqual(stats["max_aspect_ratio"], 20.738987)
+        self.assertEqual(stats["concave_faces"], 3858)
+        self.assertAlmostEqual(stats["max_concave_angle"], 62.709327)
+        self.assertEqual(stats["concave_cells"], 61471)
+        self.assertEqual(stats["failed_checks"], 1)
+        self.assertFalse(stats["ok"])
+
+    def test_pass_sets_ok(self):
+        stats = parse_checkmesh(GOOD_CHECKMESH)
+        self.assertEqual(stats["cells"], 2000)
+        self.assertEqual(stats["failed_checks"], 0)
+        self.assertTrue(stats["ok"])
+
+    def test_unrelated_text_returns_empty(self):
+        self.assertEqual(parse_checkmesh("Adding layers...\nsome noise\n"), {})
+
+
+class TestParseLayerCoverage(unittest.TestCase):
+    def test_parses_table(self):
+        coverage = parse_layer_coverage(LAYER_TABLE)
+        self.assertIn("geometry", coverage)
+        self.assertEqual(coverage["geometry"]["layers"], 2)
+        self.assertEqual(coverage["geometry"]["faces"], 124862)
+        self.assertAlmostEqual(coverage["geometry"]["near_wall_thickness"], 0.000391)
+        self.assertAlmostEqual(coverage["geometry"]["overall_thickness"], 0.000898)
+
+    def test_later_table_overrides(self):
+        text = LAYER_TABLE + LAYER_TABLE.replace("geometry 124862   2", "geometry 124862   3")
+        coverage = parse_layer_coverage(text)
+        self.assertEqual(coverage["geometry"]["layers"], 3)
+
+    def test_unrelated_text_returns_empty(self):
+        self.assertEqual(parse_layer_coverage("no tables here\n"), {})
+
+
+class TestFindLogs(unittest.TestCase):
+    def test_finds_root_logs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "log.checkMesh").write_text(GOOD_CHECKMESH, encoding="utf-8")
+            (root / "log.snappyHexMesh").write_text(LAYER_TABLE, encoding="utf-8")
+            self.assertEqual(len(find_checkmesh_logs(root)), 1)
+            self.assertEqual(len(find_snappy_logs(root)), 1)
+
+    def test_falls_back_to_processor_dirs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "processor0"
+            proc.mkdir()
+            (proc / "log.checkMesh").write_text(GOOD_CHECKMESH, encoding="utf-8")
+            self.assertEqual(len(find_checkmesh_logs(root)), 1)
+
+    def test_empty_when_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(find_checkmesh_logs(Path(tmp)), [])
+            self.assertEqual(find_snappy_logs(Path(tmp)), [])
+
+
+class TestReadLogs(unittest.TestCase):
+    def test_read_checkmesh_merges(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "log.checkMesh").write_text(GOOD_CHECKMESH, encoding="utf-8")
+            stats = read_checkmesh(find_checkmesh_logs(root))
+            self.assertEqual(stats["cells"], 2000)
+
+    def test_read_layer_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "log.snappyHexMesh").write_text(LAYER_TABLE, encoding="utf-8")
+            coverage = read_layer_coverage(find_snappy_logs(root))
+            self.assertEqual(coverage["geometry"]["layers"], 2)
+
+
+class TestCheckMeshQuality(unittest.TestCase):
+    def test_ok(self):
+        result = check_mesh_quality(parse_checkmesh(GOOD_CHECKMESH))
+        self.assertTrue(result["available"])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["issues"], [])
+
+    def test_non_ortho_flagged(self):
+        result = check_mesh_quality(parse_checkmesh(FAILING_CHECKMESH))
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("non-orthogonality" in i for i in result["issues"]))
+        self.assertTrue(any("concave cells" in i for i in result["issues"]))
+        self.assertTrue(any("failed mesh check" in i for i in result["issues"]))
+
+    def test_negative_volume_flagged(self):
+        stats = dict(parse_checkmesh(GOOD_CHECKMESH))
+        stats["min_volume"] = -1.0
+        result = check_mesh_quality(stats)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("minimum cell volume" in i for i in result["issues"]))
+
+    def test_layer_dropout_flagged(self):
+        layers = {"geometry": {"faces": 100, "layers": 1,
+                               "near_wall_thickness": 1e-4, "overall_thickness": 2e-4}}
+        result = check_mesh_quality(parse_checkmesh(GOOD_CHECKMESH), layers, target_layers=3)
+        self.assertFalse(result["ok"])
+        self.assertAlmostEqual(result["layers"]["geometry"]["coverage"], 1 / 3)
+        self.assertTrue(any("dropout" in i for i in result["issues"]))
+
+    def test_layer_coverage_ok(self):
+        layers = {"geometry": {"faces": 100, "layers": 3,
+                               "near_wall_thickness": 1e-4, "overall_thickness": 2e-4}}
+        result = check_mesh_quality(parse_checkmesh(GOOD_CHECKMESH), layers, target_layers=3)
+        self.assertTrue(result["ok"])
+
+    def test_unavailable_without_data(self):
+        result = check_mesh_quality({})
+        self.assertFalse(result["available"])
+
+    def test_custom_thresholds(self):
+        stats = dict(parse_checkmesh(GOOD_CHECKMESH))
+        stats["max_non_ortho"] = 70.0
+        self.assertTrue(check_mesh_quality(stats, max_non_ortho=75.0)["ok"])
+        self.assertFalse(check_mesh_quality(stats, max_non_ortho=65.0)["ok"])
+
+
+class TestCheckmeshTargets(unittest.TestCase):
+    def test_reads_targets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / "case_config.json").write_text(json.dumps({
+                "layers": {"n_layers": 3},
+                "mesh_quality": {"maxNonOrtho": 70, "maxInternalSkewness": 5},
+            }), encoding="utf-8")
+            targets = checkmesh_targets_from_case(case_dir=case)
+            self.assertEqual(targets["target_layers"], 3.0)
+            self.assertEqual(targets["max_non_ortho"], 70.0)
+            self.assertEqual(targets["max_skewness"], 5.0)
+
+    def test_missing_config_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(checkmesh_targets_from_case(case_dir=Path(tmp)), {})
+
+
+class TestMeshQualityReport(unittest.TestCase):
+    def test_end_to_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / "log.checkMesh").write_text(GOOD_CHECKMESH, encoding="utf-8")
+            (case / "log.snappyHexMesh").write_text(LAYER_TABLE, encoding="utf-8")
+            (case / "case_config.json").write_text(json.dumps({
+                "layers": {"n_layers": 2},
+            }), encoding="utf-8")
+            report = mesh_quality_report(case_dir=case)
+            self.assertTrue(report["available"])
+            self.assertTrue(report["ok"])
+            self.assertEqual(report["layers"]["geometry"]["layers"], 2)
+            self.assertAlmostEqual(report["layers"]["geometry"]["coverage"], 1.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

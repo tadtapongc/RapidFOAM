@@ -50,6 +50,12 @@ from rapidfoam.postproc.forces import (
     read_forces,
     window_stats,
 )
+from rapidfoam.postproc.checkmesh import (
+    check_mesh_quality,
+    checkmesh_targets_from_dict,
+    parse_checkmesh,
+    parse_layer_coverage,
+)
 from rapidfoam.postproc.residuals import find_residual_files, read_residuals
 from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats, stl_analyze_full, stl_info
 from rapidfoam.web.ssh_client import ClusterSSHClient
@@ -933,6 +939,11 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
         (f"cases/{case_name}/postProcessing/residuals/*/solverInfo.dat", None),
         (f"cases/{case_name}/postProcessing/residuals/*/residuals.dat", None),
         (f"cases/{case_name}/log.simpleFoam", 20000),
+        # Mesh-quality inputs: checkMesh is small; the final snappy layer table
+        # sits near the end of the log, so a modest tail is enough.
+        (f"cases/{case_name}/log.checkMesh", 400),
+        (f"cases/{case_name}/log.snappyHexMesh", 600),
+        (f"cases/{case_name}/case_config.json", None),
     ])
     with _remote_telemetry_lock:
         _remote_telemetry_cache[key] = (now, bundle)
@@ -2048,6 +2059,80 @@ async def api_telemetry_solver(case_name: str) -> dict[str, Any]:
             "linear_iters_max": [linear_iters_max[i] for i in sub_indices],
         },
     }
+
+
+@app.get("/api/telemetry/mesh")
+async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
+    """Verify mesh quality from the checkMesh and snappyHexMesh logs.
+
+    Returns the parsed checkMesh metrics, the per-patch boundary-layer coverage
+    and an overall verdict, using the case's configured limits where available.
+    """
+    if not CASE_NAME_REGEX.match(case_name):
+        raise HTTPException(status_code=400, detail="Invalid case_name")
+
+    checkmesh_text = ""
+    snappy_text = ""
+    config_dict: Optional[dict[str, Any]] = None
+
+    # 1. Remote cluster first if connected (shared telemetry bundle).
+    if ssh_client.is_connected:
+        bundle = await _read_remote_telemetry(case_name)
+        checkmesh_text = next(
+            (value for path, value in bundle.items() if path.endswith("/log.checkMesh")), ""
+        )
+        snappy_text = next(
+            (value for path, value in bundle.items() if path.endswith("/log.snappyHexMesh")), ""
+        )
+        cfg_text = next(
+            (value for path, value in bundle.items() if path.endswith("/case_config.json")), ""
+        )
+        if cfg_text:
+            try:
+                parsed_cfg = json.loads(cfg_text)
+                if isinstance(parsed_cfg, dict):
+                    config_dict = parsed_cfg
+            except ValueError:
+                config_dict = None
+
+    # 2. Local case directory fallback.
+    local_case = PROJECT_ROOT / "cases" / case_name
+    if not checkmesh_text and (local_case / "log.checkMesh").is_file():
+        checkmesh_text = _read_text_tail_lines(local_case / "log.checkMesh")
+    if not snappy_text and (local_case / "log.snappyHexMesh").is_file():
+        snappy_text = _read_text_tail_lines(local_case / "log.snappyHexMesh")
+    if config_dict is None:
+        for candidate in (
+            PROJECT_ROOT / "configs" / f"{case_name}.json",
+            local_case / "case_config.json",
+        ):
+            if candidate.is_file():
+                try:
+                    loaded = json.loads(candidate.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if isinstance(loaded, dict):
+                    config_dict = loaded
+                    break
+
+    if not checkmesh_text and not snappy_text:
+        return {
+            "has_data": False,
+            "case_name": case_name,
+            "message": f"No checkMesh or snappyHexMesh log found for case '{case_name}'.",
+        }
+
+    stats = parse_checkmesh(checkmesh_text)
+    layers = parse_layer_coverage(snappy_text)
+    targets = checkmesh_targets_from_dict(config_dict)
+    summary = check_mesh_quality(
+        stats,
+        layers,
+        int(targets["target_layers"]) if "target_layers" in targets else None,
+        max_non_ortho=targets.get("max_non_ortho", 65.0),
+        max_skewness=targets.get("max_skewness", 4.0),
+    )
+    return {"has_data": True, "case_name": case_name, **summary}
 
 
 @app.get("/api/telemetry/logs")

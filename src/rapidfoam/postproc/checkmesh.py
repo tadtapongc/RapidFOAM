@@ -1,0 +1,455 @@
+"""Mesh-quality reading and verification.
+
+Parses the ``checkMesh`` log (``log.checkMesh``) and the per-patch layer table
+from the ``snappyHexMesh`` log (``log.snappyHexMesh``) so a generated mesh can
+be *measured*, not just produced. Surfaces the metrics that actually limit
+solution quality: non-orthogonality, skewness, aspect ratio, concave cells,
+illegal faces and boundary-layer dropout.
+
+Nothing here runs OpenFOAM; it reads the logs the run scripts already write.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import re
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
+
+# --- checkMesh metric patterns (tolerant of spacing and exponent signs) ---
+_CELLS_RE = re.compile(r"^\s*cells:\s+(\d+)", re.MULTILINE)
+_POINTS_RE = re.compile(r"^\s*points:\s+(\d+)", re.MULTILINE)
+_FACES_RE = re.compile(r"^\s*faces:\s+(\d+)", re.MULTILINE)
+_ASPECT_RE = re.compile(r"Max aspect ratio = ([-+0-9.eE]+)")
+_NONORTHO_RE = re.compile(
+    r"Mesh non-orthogonality Max:\s*([-+0-9.eE]+)\s+average:\s*([-+0-9.eE]+)"
+)
+_SKEW_RE = re.compile(r"Max skewness = ([-+0-9.eE]+)")
+_VOLUME_RE = re.compile(
+    r"Min volume = ([-+0-9.eE]+)\.\s*Max volume = ([-+0-9.eE]+)\."
+    r"\s*Total volume = ([-+0-9.eE]+)"
+)
+_CONCAVE_FACES_RE = re.compile(
+    r"There are (\d+) faces with concave angles.*?Max concave angle = ([-+0-9.eE]+)"
+)
+_CONCAVE_CELLS_RE = re.compile(
+    r"Concave cells \(using face planes\) found, number of cells:\s*(\d+)"
+)
+_WARPED_RE = re.compile(
+    r"There are (\d+) faces with ratio between projected and actual area < 0\.8"
+)
+_FLATNESS_RE = re.compile(
+    r"Minimum ratio \(minimum flatness, maximum warpage\) = ([-+0-9.eE]+)"
+)
+_DETERMINANT_RE = re.compile(
+    r"Cell determinant \(wellposedness\) : minimum:\s*([-+0-9.eE]+)"
+)
+_WEIGHT_RE = re.compile(
+    r"Face interpolation weight : minimum:\s*([-+0-9.eE]+)\s+average:\s*([-+0-9.eE]+)"
+)
+_VOLRATIO_RE = re.compile(
+    r"Face volume ratio : minimum:\s*([-+0-9.eE]+)\s+average:\s*([-+0-9.eE]+)"
+)
+_FAILED_RE = re.compile(r"Failed (\d+) mesh checks")
+_MESH_OK_RE = re.compile(r"\bMesh OK\b")
+
+# snappy layer table rows come in two shapes:
+#   mid-run:  patch  faces  layers  near-wall-thickness  overall-thickness
+#   final:    patch  faces  target  mesh  overall-thickness  coverage-percent
+# Capture the patch token plus the whitespace-separated numeric tail and let
+# the token count disambiguate.
+_LAYER_ROW_RE = re.compile(
+    r'^\s*"?([^"\s]+)"?\s+([-+0-9.eE]+(?:\s+[-+0-9.eE]+)*)\s*$'
+)
+
+
+# ============================================================
+# LOG DISCOVERY
+# ============================================================
+
+def _glob_logs(base: Path, name: str) -> list[Path]:
+    logs = [p for p in sorted(base.glob(f"{name}*")) if p.is_file()]
+    if logs:
+        return logs
+    # Parallel runs still write to the case root, but be tolerant of processor
+    # directories in case a caller points at a decomposed case.
+    for proc_dir in sorted(base.glob("processor*")):
+        logs.extend(p for p in sorted(proc_dir.glob(f"{name}*")) if p.is_file())
+    return logs
+
+
+def find_checkmesh_logs(base_dir: str | Path | None = None) -> list[Path]:
+    """Find ``log.checkMesh*`` files (newest/log order)."""
+    base = Path(base_dir) if base_dir else Path(".")
+    return _glob_logs(base, "log.checkMesh")
+
+
+def find_snappy_logs(base_dir: str | Path | None = None) -> list[Path]:
+    """Find ``log.snappyHexMesh*`` files (newest/log order)."""
+    base = Path(base_dir) if base_dir else Path(".")
+    return _glob_logs(base, "log.snappyHexMesh")
+
+
+# ============================================================
+# PARSERS
+# ============================================================
+
+def _num(token: str) -> float | None:
+    try:
+        value = float(token)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def parse_checkmesh(text: str) -> dict[str, Any]:
+    """Parse a ``checkMesh`` log into a metrics dictionary.
+
+    Returns an empty dict when the text carries no recognisable checkMesh
+    output, so it is safe to call on the snappy log or an arbitrary file.
+    """
+    stats: dict[str, Any] = {}
+
+    def _int(pattern: re.Pattern[str], key: str) -> None:
+        match = pattern.search(text)
+        if match:
+            stats[key] = int(match.group(1))
+
+    def _float(pattern: re.Pattern[str], key: str, group: int = 1) -> None:
+        match = pattern.search(text)
+        if match:
+            value = _num(match.group(group))
+            if value is not None:
+                stats[key] = value
+
+    _int(_POINTS_RE, "points")
+    _int(_FACES_RE, "faces")
+    _int(_CELLS_RE, "cells")
+    _float(_ASPECT_RE, "max_aspect_ratio")
+
+    match = _NONORTHO_RE.search(text)
+    if match:
+        stats["max_non_ortho"] = _num(match.group(1))
+        stats["avg_non_ortho"] = _num(match.group(2))
+
+    _float(_SKEW_RE, "max_skewness")
+
+    match = _VOLUME_RE.search(text)
+    if match:
+        for group, key in (
+            (1, "min_volume"), (2, "max_volume"), (3, "total_volume")
+        ):
+            value = _num(match.group(group))
+            if value is not None:
+                stats[key] = value
+
+    match = _CONCAVE_FACES_RE.search(text)
+    if match:
+        stats["concave_faces"] = int(match.group(1))
+        angle = _num(match.group(2))
+        if angle is not None:
+            stats["max_concave_angle"] = angle
+
+    _int(_CONCAVE_CELLS_RE, "concave_cells")
+    _int(_WARPED_RE, "warped_faces")
+    _float(_FLATNESS_RE, "min_flatness")
+    _float(_DETERMINANT_RE, "min_determinant")
+
+    match = _WEIGHT_RE.search(text)
+    if match:
+        stats["min_interp_weight"] = _num(match.group(1))
+        stats["avg_interp_weight"] = _num(match.group(2))
+
+    match = _VOLRATIO_RE.search(text)
+    if match:
+        stats["min_volume_ratio"] = _num(match.group(1))
+
+    failed = _FAILED_RE.search(text)
+    if failed:
+        stats["failed_checks"] = int(failed.group(1))
+        stats["ok"] = False
+    elif _MESH_OK_RE.search(text):
+        stats["failed_checks"] = 0
+        stats["ok"] = True
+
+    return stats
+
+
+def _parse_layer_row(line: str) -> tuple[str, dict[str, float | int]] | None:
+    """Parse one snappy layer-table data row, or return None for any other line."""
+    match = _LAYER_ROW_RE.match(line)
+    if not match:
+        return None
+    patch = match.group(1)
+    if set(patch) <= set("- "):
+        return None
+    tokens = match.group(2).split()
+    try:
+        values = [float(token) for token in tokens]
+    except ValueError:
+        return None
+
+    if len(values) == 4:
+        faces, layers, near, overall = values
+        return patch, {
+            "faces": int(faces),
+            "layers": int(layers),
+            "near_wall_thickness": near,
+            "overall_thickness": overall,
+        }
+    if len(values) == 5:
+        faces, target, mesh, overall, percent = values
+        entry: dict[str, float | int] = {
+            "faces": int(faces),
+            "layers": int(mesh),
+            "target_layers": int(target),
+            "overall_thickness": overall,
+            "percent": percent,
+        }
+        if target > 0:
+            entry["coverage"] = mesh / target
+        return patch, entry
+    return None
+
+
+def parse_layer_coverage(text: str) -> dict[str, dict[str, float | int]]:
+    """Parse snappyHexMesh's per-patch layer tables.
+
+    Handles both the mid-run table (patch, faces, layers, near-wall and overall
+    thickness) and the richer final table (patch, faces, target layers, mesh
+    layers, overall thickness, coverage %). Later tables override earlier ones,
+    so the returned values are the final mesh state.
+    """
+    result: dict[str, dict[str, float | int]] = {}
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        header = lines[index].strip().lower()
+        if "patch" in header and "faces" in header and "layers" in header:
+            cursor = index + 1
+            # Skip the secondary header (e.g. "near-wall overall"/"target mesh")
+            # and the dashes rule up to the first parseable data row.
+            while cursor < len(lines) and _parse_layer_row(lines[cursor]) is None:
+                cursor += 1
+            while cursor < len(lines):
+                row = _parse_layer_row(lines[cursor])
+                if row is None:
+                    break
+                patch, entry = row
+                result[patch] = entry
+                cursor += 1
+            index = cursor
+        else:
+            index += 1
+    return result
+
+
+def read_checkmesh(files: Iterable[Path]) -> dict[str, Any]:
+    """Merge checkMesh logs, later files overriding earlier values."""
+    merged: dict[str, Any] = {}
+    for path in files:
+        try:
+            stats = parse_checkmesh(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        merged.update(stats)
+    return merged
+
+
+def read_layer_coverage(files: Iterable[Path]) -> dict[str, dict[str, float | int]]:
+    """Merge layer tables from snappyHexMesh logs, later values winning."""
+    merged: dict[str, dict[str, float | int]] = {}
+    for path in files:
+        try:
+            coverage = parse_layer_coverage(
+                path.read_text(encoding="utf-8", errors="replace")
+            )
+        except OSError:
+            continue
+        merged.update(coverage)
+    return merged
+
+
+# ============================================================
+# VERIFICATION
+# ============================================================
+
+def check_mesh_quality(
+    stats: dict[str, Any] | None,
+    layers: dict[str, dict[str, Any]] | None = None,
+    target_layers: int | None = None,
+    *,
+    max_non_ortho: float = 65.0,
+    max_skewness: float = 4.0,
+    max_aspect_ratio: float = 100.0,
+) -> dict[str, Any]:
+    """Compare parsed mesh metrics against quality limits.
+
+    ``max_non_ortho``/``max_skewness`` default to snappyHexMesh's configured
+    ``meshQualityControls``; ``max_aspect_ratio`` is a practical CFD guideline.
+    A missing layer target only reports coverage, it does not flag dropout.
+    """
+    stats = stats or {}
+    layers = layers or {}
+    issues: list[str] = []
+
+    if not stats and not layers:
+        return {
+            "available": False,
+            "stats": {},
+            "layers": {},
+            "issues": [],
+            "ok": False,
+            "note": "no checkMesh or snappyHexMesh log found",
+        }
+
+    def _warn(key: str, limit: float, label: str) -> None:
+        value = stats.get(key)
+        if value is None or not math.isfinite(value):
+            return
+        if value > limit:
+            issues.append(f"{label} {value:g} > limit {limit:g}")
+
+    non_ortho = stats.get("max_non_ortho")
+    if non_ortho is not None and math.isfinite(non_ortho) and non_ortho > max_non_ortho:
+        issues.append(f"max non-orthogonality {non_ortho:g} > limit {max_non_ortho:g}")
+    skewness = stats.get("max_skewness")
+    if skewness is not None and math.isfinite(skewness) and skewness > max_skewness:
+        issues.append(f"max skewness {skewness:g} > limit {max_skewness:g}")
+    _warn("max_aspect_ratio", max_aspect_ratio, "max aspect ratio")
+
+    min_volume = stats.get("min_volume")
+    if min_volume is not None and math.isfinite(min_volume) and min_volume <= 0:
+        issues.append(f"non-positive minimum cell volume {min_volume:g}")
+
+    concave_cells = stats.get("concave_cells")
+    if isinstance(concave_cells, int) and concave_cells > 0:
+        issues.append(f"{concave_cells} concave cells")
+
+    failed = stats.get("failed_checks")
+    if isinstance(failed, int) and failed > 0:
+        issues.append(f"{failed} failed mesh check(s)")
+
+    layer_entries: dict[str, dict[str, Any]] = {}
+    for patch, info in layers.items():
+        achieved = int(info.get("layers", 0))
+        entry: dict[str, Any] = dict(info)
+        # A per-patch target from snappy's final table wins over the case-wide
+        # config value; otherwise fall back to the configured layer count.
+        patch_target = info.get("target_layers")
+        effective_target = (
+            int(patch_target)
+            if isinstance(patch_target, int) and not isinstance(patch_target, bool) and patch_target > 0
+            else target_layers
+        )
+        if effective_target and effective_target > 0:
+            entry["coverage"] = achieved / effective_target
+            if achieved < effective_target:
+                issues.append(
+                    f"boundary-layer dropout on '{patch}': "
+                    f"{achieved} of {effective_target} layers"
+                )
+        layer_entries[patch] = entry
+
+    ok = not issues and bool(stats or layers)
+
+    if ok:
+        parts = []
+        if non_ortho is not None:
+            parts.append(f"max non-ortho {non_ortho:g}")
+        if skewness is not None:
+            parts.append(f"max skewness {skewness:g}")
+        if layer_entries:
+            worst = min(
+                (
+                    e["coverage"] for e in layer_entries.values()
+                    if e.get("coverage") is not None
+                ),
+                default=None,
+            )
+            if worst is not None:
+                parts.append(f"min layer coverage {worst * 100:.0f}%")
+        note = "mesh quality OK" + (f" ({', '.join(parts)})" if parts else "")
+    else:
+        note = f"{len(issues)} mesh-quality concern(s): " + "; ".join(issues)
+
+    return {
+        "available": True,
+        "stats": stats,
+        "layers": layer_entries,
+        "target_layers": target_layers,
+        "issues": issues,
+        "ok": ok,
+        "note": note,
+    }
+
+
+def checkmesh_targets_from_dict(cfg: dict[str, Any] | None) -> dict[str, float]:
+    """Extract layer/quality targets from an already-loaded case config."""
+    if not isinstance(cfg, dict):
+        return {}
+    targets: dict[str, float] = {}
+
+    layers = cfg.get("layers", {})
+    if isinstance(layers, dict):
+        n_layers = layers.get("n_layers")
+        if isinstance(n_layers, int) and not isinstance(n_layers, bool) and n_layers > 0:
+            targets["target_layers"] = float(n_layers)
+
+    quality = cfg.get("mesh_quality", {})
+    if isinstance(quality, dict):
+        for key, target in (
+            ("maxNonOrtho", "max_non_ortho"),
+            ("maxInternalSkewness", "max_skewness"),
+        ):
+            value = quality.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                targets[target] = float(value)
+    return targets
+
+
+def checkmesh_targets_from_case(
+    config_path: str | Path | None = None,
+    case_dir: str | Path | None = None,
+) -> dict[str, float]:
+    """Read the layer/quality targets a case was generated with.
+
+    Looks at an explicit config, then ``<case>/case_config.json``, then the
+    current directory. Missing values are simply omitted.
+    """
+    candidates: list[Path] = []
+    if config_path:
+        candidates.append(Path(config_path))
+    if case_dir:
+        candidates.append(Path(case_dir) / "case_config.json")
+    candidates.append(Path("case_config.json"))
+
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            cfg = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        return checkmesh_targets_from_dict(cfg)
+    return {}
+
+
+def mesh_quality_report(
+    case_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """End-to-end mesh-quality report for a generated/run case directory."""
+    base = Path(case_dir) if case_dir else Path(".")
+    stats = read_checkmesh(find_checkmesh_logs(base))
+    layers = read_layer_coverage(find_snappy_logs(base))
+    targets = checkmesh_targets_from_case(config_path, base)
+    return check_mesh_quality(
+        stats,
+        layers,
+        int(targets["target_layers"]) if "target_layers" in targets else None,
+        max_non_ortho=targets.get("max_non_ortho", 65.0),
+        max_skewness=targets.get("max_skewness", 4.0),
+    )

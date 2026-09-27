@@ -1587,6 +1587,20 @@ body.dark-theme {
   height: 220px;
 }
 
+.mesh-quality-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.mesh-quality-badge-ok {
+  color: #4ade80;
+}
+
+.mesh-quality-badge-warn {
+  color: #fbbf24;
+}
+
 @media (max-width: 700px) {
   .solver-stat-grid { grid-template-columns: repeat(2, 1fr); }
 }

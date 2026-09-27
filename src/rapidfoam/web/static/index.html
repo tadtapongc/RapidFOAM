@@ -1158,6 +1158,50 @@
         </div>
       </div>
 
+      <!-- Mesh Quality -->
+      <div class="panel solver-health-panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h3>Mesh Quality</h3>
+            <span class="panel-subtitle">checkMesh metrics &amp; boundary-layer coverage</span>
+          </div>
+          <div class="panel-header-actions">
+            <span class="badge badge-subtle" id="mesh-quality-badge">--</span>
+          </div>
+        </div>
+        <div class="solver-health-body">
+          <div class="solver-stat-grid">
+            <div class="solver-stat">
+              <div class="solver-stat-label">Cells</div>
+              <div class="solver-stat-value monospace" id="mesh-cells">--</div>
+            </div>
+            <div class="solver-stat">
+              <div class="solver-stat-label">Max non-orthogonality</div>
+              <div class="solver-stat-value monospace" id="mesh-nonortho">--</div>
+            </div>
+            <div class="solver-stat">
+              <div class="solver-stat-label">Max skewness</div>
+              <div class="solver-stat-value monospace" id="mesh-skewness">--</div>
+            </div>
+            <div class="solver-stat">
+              <div class="solver-stat-label">Max aspect ratio</div>
+              <div class="solver-stat-value monospace" id="mesh-aspect">--</div>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table mini-table" id="mesh-layer-table">
+              <thead>
+                <tr><th>Patch</th><th>Layers</th><th>Coverage</th></tr>
+              </thead>
+              <tbody id="mesh-layer-tbody">
+                <tr><td colspan="3" class="text-center text-muted">No layer data</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="mesh-quality-note" id="mesh-quality-note">No mesh report yet.</p>
+        </div>
+      </div>
+
       <!-- Live Terminal Console Log Tail -->
       <div class="panel console-panel" data-help="logs">
         <div class="panel-header">

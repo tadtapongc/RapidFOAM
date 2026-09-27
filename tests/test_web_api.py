@@ -26,6 +26,7 @@ from rapidfoam.web.server import (
     api_telemetry_logs,
     api_telemetry_export,
     api_telemetry_solver,
+    api_telemetry_mesh,
     parse_solver_diagnostics_from_log,
     api_list_cases,
     api_case_delete,
@@ -260,6 +261,48 @@ class TestWebAPI(unittest.TestCase):
         # Default axes: drag = -fz = 50.0, df = -fy = 200.0
         self.assertAlmostEqual(res["drag_avg"], 50.0, places=1)
         self.assertAlmostEqual(res["downforce_avg"], 200.0, places=1)
+
+    def test_telemetry_mesh_quality(self):
+        """Mesh endpoint parses checkMesh metrics and boundary-layer coverage."""
+        case_name = "test_case_mesh_quality"
+        case_dir = Path(f"cases/{case_name}")
+        case_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        (case_dir / "log.checkMesh").write_text(
+            "    cells:            2000\n"
+            "    Max aspect ratio = 12.5 OK.\n"
+            "    Mesh non-orthogonality Max: 45.2 average: 3.1\n"
+            "    Max skewness = 1.2 OK.\n"
+            "Mesh OK.\n",
+            encoding="utf-8",
+        )
+        (case_dir / "log.snappyHexMesh").write_text(
+            "patch    faces        layers        overall thickness\n"
+            "                  target   mesh     [m]       [%]\n"
+            "-----    -----    -----    ----     ---       ---\n"
+            "geometry 124862   2        2        0.000895  99.6\n",
+            encoding="utf-8",
+        )
+        (case_dir / "case_config.json").write_text(
+            json.dumps({"layers": {"n_layers": 2}}), encoding="utf-8"
+        )
+
+        res = asyncio.run(api_telemetry_mesh(case_name))
+        self.assertTrue(res["has_data"])
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["stats"]["cells"], 2000)
+        self.assertEqual(res["layers"]["geometry"]["layers"], 2)
+        self.assertAlmostEqual(res["layers"]["geometry"]["coverage"], 1.0)
+        self.assertEqual(res["target_layers"], 2)
+
+    def test_telemetry_mesh_invalid_and_missing(self):
+        """Invalid case names are rejected; absent logs report no data."""
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(api_telemetry_mesh("../evil"))
+        self.assertEqual(ctx.exception.status_code, 400)
+        res = asyncio.run(api_telemetry_mesh("test_case_mesh_absent"))
+        self.assertFalse(res["has_data"])
 
     def test_telemetry_residuals_alignment(self):
         """Test telemetry residuals alignment where variable arrays have equal length."""

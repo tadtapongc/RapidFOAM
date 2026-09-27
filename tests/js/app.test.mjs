@@ -280,6 +280,105 @@ test('renderLayerPreview shows auto-size text even without a resolved first laye
   assert.ok(auto.includes('6.20 mm'), auto);
 });
 
+// ------------------------------------------------- Studio mesh-quality panel
+
+const MESH_BODY = `
+  <span id="mesh-quality-badge"></span>
+  <span id="mesh-cells"></span>
+  <span id="mesh-nonortho"></span>
+  <span id="mesh-skewness"></span>
+  <span id="mesh-aspect"></span>
+  <table><tbody id="mesh-layer-tbody"></tbody></table>
+  <p id="mesh-quality-note"></p>
+`;
+
+test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
+  const app = await makeApp(MESH_BODY);
+  app.renderMeshQuality({
+    ok: true,
+    stats: { cells: 9008844, max_non_ortho: 45.2, max_skewness: 1.2, max_aspect_ratio: 12.5 },
+    layers: { geometry: { layers: 2, coverage: 1.0 } },
+    target_layers: 2,
+    issues: [],
+    note: 'mesh quality OK',
+  });
+  const doc = app._window.document;
+  assert.equal(doc.getElementById('mesh-cells').textContent, (9008844).toLocaleString());
+  assert.equal(doc.getElementById('mesh-nonortho').textContent, '45.20');
+  const badge = doc.getElementById('mesh-quality-badge');
+  assert.ok(badge.className.includes('mesh-quality-badge-ok'));
+  assert.equal(badge.textContent, 'Mesh OK');
+  const rows = doc.getElementById('mesh-layer-tbody').innerHTML;
+  assert.ok(rows.includes('geometry'));
+  assert.ok(rows.includes('2/2'));
+  assert.ok(rows.includes('100%'));
+});
+
+test('renderMeshQuality flags concerns and escapes the patch name', async () => {
+  const app = await makeApp(MESH_BODY);
+  app.renderMeshQuality({
+    ok: false,
+    stats: { cells: 10, max_non_ortho: 68.3 },
+    layers: { 'a<b>': { layers: 1, coverage: 0.5 } },
+    target_layers: 2,
+    issues: ['max non-orthogonality 68.3 > limit 65', 'boundary-layer dropout'],
+    note: '2 concerns',
+  });
+  const doc = app._window.document;
+  const badge = doc.getElementById('mesh-quality-badge');
+  assert.ok(badge.className.includes('mesh-quality-badge-warn'));
+  assert.equal(badge.textContent, '2 concerns');
+  const rows = doc.getElementById('mesh-layer-tbody').innerHTML;
+  assert.ok(!rows.includes('<b>'), 'raw tag must not survive');
+  assert.ok(rows.includes('&lt;b&gt;'));
+  assert.ok(rows.includes('50%'));
+});
+
+test('resetMeshQuality clears the panel and shows a message', async () => {
+  const app = await makeApp(MESH_BODY);
+  app.renderMeshQuality({ ok: true, stats: { cells: 5 }, layers: {}, note: 'x' });
+  app.resetMeshQuality('no logs');
+  const doc = app._window.document;
+  assert.equal(doc.getElementById('mesh-cells').textContent, '--');
+  assert.equal(doc.getElementById('mesh-quality-note').textContent, 'no logs');
+  const badge = doc.getElementById('mesh-quality-badge');
+  assert.equal(badge.textContent, '--');
+  assert.ok(!badge.className.includes('mesh-quality-badge-ok'));
+});
+
+test('pollTelemetry fetches and renders the mesh-quality endpoint', async () => {
+  const app = await makeApp(`
+    <select id="telemetry-case-select"><option value="case_a" selected>case_a</option></select>
+    <span id="telemetry-error-banner"></span>
+    <div id="telemetry-convergence-pill"><span class="pill-text"></span></div>
+    ${MESH_BODY}
+  `);
+  const calls = [];
+  app._window.console.error = () => {};
+  app._window.fetch = async (url) => {
+    calls.push(String(url));
+    const target = String(url);
+    if (target.includes('/api/telemetry/forces')) {
+      return { ok: false, status: 500, json: async () => ({ detail: 'boom' }) };
+    }
+    if (target.includes('/api/telemetry/mesh')) {
+      return {
+        ok: true,
+        json: async () => ({
+          has_data: true, ok: true, stats: { cells: 7 }, layers: {}, issues: [],
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ has_data: false }) };
+  };
+  await app.pollTelemetry();
+  assert.ok(calls.some((u) => u.includes('/api/telemetry/mesh')));
+  assert.equal(
+    app._window.document.getElementById('mesh-cells').textContent,
+    (7).toLocaleString(),
+  );
+});
+
 test('updateDomainBoxVisualization refreshes the auto-size preview from the payload', async () => {
   const app = await makeApp('<span id="cfg-layer-preview"></span><span id="cfg-auto-size-preview"></span>');
   let updated = false;

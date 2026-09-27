@@ -2656,6 +2656,7 @@ class CFDApp {
     }
 
     this.resetSolverHealth();
+    this.resetMeshQuality();
 
     // Hide overlays while loading so a stale "no data" state is not shown.
     ['forces-empty-overlay', 'residuals-empty-overlay', 'coeff-empty-overlay',
@@ -3188,7 +3189,23 @@ class CFDApp {
         if (!isStale()) this.showTelemetryError(err.message);
       }
 
-      // 4. Tail log (guarded against case switches)
+      // 4. Fetch Mesh Quality (checkMesh + boundary-layer coverage)
+      try {
+        const res = await fetch(`/api/telemetry/mesh?case_name=${encodeURIComponent(caseName)}`);
+        if (!res.ok) throw new Error(`Mesh quality request failed (HTTP ${res.status})`);
+        const meshData = await res.json();
+        if (isStale()) return;
+        if (meshData.has_data) {
+          this.renderMeshQuality(meshData);
+        } else {
+          this.resetMeshQuality(meshData && meshData.message);
+        }
+      } catch (err) {
+        console.error('Mesh quality telemetry poll failed:', err);
+        if (!isStale()) this.showTelemetryError(err.message);
+      }
+
+      // 5. Tail log (guarded against case switches)
       await this.fetchLogTail(caseName, reqId);
     } finally {
       if (reqId === this.telemetryRequestId) this.telemetryInFlight = false;
@@ -3245,6 +3262,75 @@ class CFDApp {
       this.charts.solverHealthChart.data.datasets.forEach((ds) => { ds.data = []; });
       this.charts.solverHealthChart.update('none');
     }
+  }
+
+  renderMeshQuality(data) {
+    const stats = data.stats || {};
+    const fmt = (value, digits = 4) => (
+      value === null || value === undefined || !isFinite(Number(value))
+        ? '--'
+        : Number(value).toFixed(digits)
+    );
+    this.setValText(
+      'mesh-cells',
+      stats.cells !== null && stats.cells !== undefined ? Number(stats.cells).toLocaleString() : '--',
+    );
+    this.setValText('mesh-nonortho', fmt(stats.max_non_ortho, 2));
+    this.setValText('mesh-skewness', fmt(stats.max_skewness, 3));
+    this.setValText('mesh-aspect', fmt(stats.max_aspect_ratio, 2));
+
+    const issues = Array.isArray(data.issues) ? data.issues : [];
+    const badge = document.getElementById('mesh-quality-badge');
+    if (badge) {
+      if (data.ok) {
+        badge.className = 'badge badge-subtle mesh-quality-badge-ok';
+        badge.textContent = 'Mesh OK';
+      } else if (issues.length) {
+        badge.className = 'badge badge-subtle mesh-quality-badge-warn';
+        badge.textContent = `${issues.length} concern${issues.length === 1 ? '' : 's'}`;
+      } else {
+        badge.className = 'badge badge-subtle';
+        badge.textContent = '--';
+      }
+    }
+
+    const tbody = document.getElementById('mesh-layer-tbody');
+    if (tbody) {
+      const layers = data.layers || {};
+      const patches = Object.keys(layers).sort();
+      if (!patches.length) {
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No layer data</td></tr>';
+      } else {
+        const target = (data.target_layers !== null && data.target_layers !== undefined)
+          ? `/${data.target_layers}` : '';
+        tbody.innerHTML = patches.map((patch) => {
+          const info = layers[patch] || {};
+          const achieved = (info.layers !== null && info.layers !== undefined) ? info.layers : '--';
+          const coverage = (info.coverage !== null && info.coverage !== undefined)
+            ? `${Math.round(Number(info.coverage) * 100)}%` : '--';
+          return `<tr><td>${this.escapeHtml(patch)}</td>`
+            + `<td class="monospace">${achieved}${target}</td>`
+            + `<td class="monospace">${coverage}</td></tr>`;
+        }).join('');
+      }
+    }
+    this.setValText('mesh-quality-note', data.note || '');
+  }
+
+  resetMeshQuality(message) {
+    ['mesh-cells', 'mesh-nonortho', 'mesh-skewness', 'mesh-aspect'].forEach((id) => {
+      this.setValText(id, '--');
+    });
+    const badge = document.getElementById('mesh-quality-badge');
+    if (badge) {
+      badge.className = 'badge badge-subtle';
+      badge.textContent = '--';
+    }
+    const tbody = document.getElementById('mesh-layer-tbody');
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No layer data</td></tr>';
+    }
+    this.setValText('mesh-quality-note', message || 'No mesh report yet.');
   }
 
   renderCoefficientKpis(data) {

@@ -466,6 +466,7 @@ def forces_main() -> None:
     parser.add_argument("--compare", action="store_true", help="Multi-case comparison")
     parser.add_argument("--check", action="store_true", help="Exit 0 if converged, 1 if not")
     parser.add_argument("--yplus", action="store_true", help="Verify near-wall y+ against the target")
+    parser.add_argument("--mesh", action="store_true", help="Verify mesh quality (checkMesh + boundary layers)")
     parser.add_argument("--interval", "-i", type=float, default=3, help="Live update interval (s)")
     args = parser.parse_args()
 
@@ -548,6 +549,48 @@ def forces_main() -> None:
             print(f"    {patch:<24} min {lo:>7.2f}  max {hi:>8.2f}  avg {avg:>7.2f}  [{stats['status']}]")
         print(f"    {summary['note']}")
         sys.exit(0 if not summary.get("off_target") else 2)
+
+    # Mesh-quality verification (independent of force data)
+    if args.mesh:
+        from rapidfoam.postproc.checkmesh import mesh_quality_report
+        summary = mesh_quality_report(case_dir, args.config)
+        if not summary.get("available"):
+            sys.exit(f"No checkMesh log found in {case_dir}. Did the case mesh?")
+
+        def _fmt(value: object, spec: str = ".4g") -> str | None:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return format(value, spec)
+            return None
+
+        stats = summary["stats"]
+        print("\n  Mesh quality (checkMesh)")
+        cells = _fmt(stats.get("cells"), ",d")
+        if cells is not None:
+            print(f"    cells            {cells}")
+        nonortho = _fmt(stats.get("max_non_ortho"))
+        if nonortho is not None:
+            avg = _fmt(stats.get("avg_non_ortho"))
+            suffix = f"  (avg {avg})" if avg is not None else ""
+            print(f"    max non-ortho    {nonortho}{suffix}")
+        skew = _fmt(stats.get("max_skewness"))
+        if skew is not None:
+            print(f"    max skewness     {skew}")
+        aspect = _fmt(stats.get("max_aspect_ratio"))
+        if aspect is not None:
+            print(f"    max aspect ratio {aspect}")
+        concave = _fmt(stats.get("concave_cells"), ",d")
+        if concave is not None:
+            print(f"    concave cells    {concave}")
+        failed = stats.get("failed_checks")
+        if isinstance(failed, int) and not isinstance(failed, bool):
+            print(f"    failed checks    {failed}")
+        for patch, info in sorted(summary["layers"].items()):
+            achieved = info.get("layers", "?")
+            coverage = info.get("coverage")
+            cov_txt = f" ({coverage * 100:.0f}%)" if isinstance(coverage, (int, float)) else ""
+            print(f"    layers {patch:<16} {achieved}{cov_txt}")
+        print(f"    {summary['note']}")
+        sys.exit(0 if summary.get("ok") else 2)
 
     files = find_force_files(case_dir)
     if not files:
