@@ -280,6 +280,127 @@ test('renderLayerPreview shows auto-size text even without a resolved first laye
   assert.ok(auto.includes('6.20 mm'), auto);
 });
 
+// ------------------------------------- Config form -> JSON merge (no rebuild)
+
+function installFormStubs(app) {
+  // Minimal getVal/getCheck so buildConfigFromVisualForm can run with a DOM
+  // that only carries the fields each test cares about.
+  app.getVal = (id) => {
+    const el = app._window.document.getElementById(id);
+    return el ? el.value : '';
+  };
+  app.getCheck = (id) => {
+    const el = app._window.document.getElementById(id);
+    return el ? !!el.checked : false;
+  };
+  app.syncConfigToJsonDrawer = () => {};
+  app.updateDomainBoxVisualization = () => {};
+}
+
+const CONFIG_STUB_IDS = [
+  'cfg-case-name', 'cfg-flow-velocity-ms', 'cfg-flow-direction', 'cfg-flow-ground',
+  'cfg-outputs-drag', 'cfg-outputs-downforce', 'cfg-domain-box', 'cfg-symmetry-plane',
+  'cfg-ground-style', 'cfg-ground-clearance', 'cfg-ground-plane',
+  'cfg-face-neg-x', 'cfg-face-pos-x', 'cfg-face-neg-y', 'cfg-face-pos-y',
+  'cfg-face-pos-z', 'cfg-face-neg-z', 'cfg-parallel-procs', 'cfg-parallel-method',
+  'cfg-slurm-qos', 'cfg-slurm-partition', 'cfg-slurm-time', 'cfg-slurm-mem',
+  'cfg-slurm-source', 'cfg-slurm-modules',
+];
+
+function buildStubBody() {
+  return CONFIG_STUB_IDS.map((id) => `<input id="${id}">`).join('');
+}
+
+function seedForm(app) {
+  const doc = app._window.document;
+  const set = (id, value) => { const el = doc.getElementById(id); if (el) el.value = value; };
+  set('cfg-case-name', 'my_case');
+  set('cfg-flow-velocity-ms', '16.67');
+  set('cfg-flow-direction', '-z');
+  set('cfg-outputs-drag', '-z');
+  set('cfg-outputs-downforce', '-y');
+  set('cfg-ground-style', 'none');
+  set('cfg-face-neg-x', 'symmetry');
+  set('cfg-face-pos-x', 'farField');
+  set('cfg-face-neg-y', 'ground');
+  set('cfg-face-pos-y', 'farField');
+  set('cfg-face-pos-z', 'inlet');
+  set('cfg-face-neg-z', 'outlet');
+  set('cfg-parallel-procs', '32');
+  set('cfg-parallel-method', 'scotch');
+}
+
+test('buildConfigFromVisualForm preserves unknown and comment keys', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = {
+    case_name: 'old',
+    _README: 'keep me',
+    _section_domain: '--- domain ---',
+    patches: { inlet: 'inlet', walls: 'farField' },
+    vehicle: { wheelbase: 1.6, front_weight_pct: 45 },
+    feature_extract: { extractionMethod: 'extractFromSurface', includedAngle: 140 },
+    something_future: { nested: true },
+  };
+  app.buildConfigFromVisualForm();
+  const cfg = JSON.parse(JSON.stringify(app.activeConfig));
+  assert.equal(cfg._README, 'keep me');
+  assert.equal(cfg._section_domain, '--- domain ---');
+  assert.deepEqual(cfg.patches, { inlet: 'inlet', walls: 'farField' });
+  assert.equal(cfg.vehicle.wheelbase, 1.6);
+  assert.equal(cfg.feature_extract.includedAngle, 140);
+  assert.equal(cfg.something_future.nested, true);
+  assert.equal(cfg.case_name, 'my_case');
+});
+
+test('buildConfigFromVisualForm updates a form-owned field without dropping siblings', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = { case_name: 'old', fidelity: 'standard', _note: 'x' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.fidelity, 'standard');
+  assert.equal(app.activeConfig._note, 'x');
+});
+
+test('buildConfigFromVisualForm preserves untouched override sections', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = {
+    case_name: 'c',
+    overrides: { force_refs: { Aref: 2.0, _comment: 'keep' } },
+  };
+  app.buildConfigFromVisualForm();
+  // The form-owned numeric key is blank so it clears, but the comment key the
+  // form does not own survives.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(app.activeConfig.overrides.force_refs)),
+    { _comment: 'keep' },
+  );
+});
+
+test('buildConfigFromVisualForm drops a section whose active inputs are blank', async () => {
+  const app = await makeApp(
+    buildStubBody() + '<input id="cfg-override-ref-aref"><input id="cfg-override-solver-endtime">',
+  );
+  installFormStubs(app);
+  seedForm(app);
+  app._window.document.getElementById('cfg-override-solver-endtime').value = '1500';
+  app.activeConfig = {
+    case_name: 'c',
+    // Aref blank in the form -> force_refs dropped; end_time present -> kept.
+    overrides: { force_refs: { Aref: 2.0 }, solver: { end_time: 999 } },
+  };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.overrides.force_refs, undefined);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(app.activeConfig.overrides.solver)),
+    { end_time: 1500 },
+  );
+});
+
 // ------------------------------------------------- Studio mesh-quality panel
 
 const MESH_BODY = `
