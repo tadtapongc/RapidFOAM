@@ -177,10 +177,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "first_layer_thickness": 0.3,   # fraction of cell (or metres if relativeSizes=false)
         "min_thickness": 0.05,          # same units as first_layer_thickness
         # When y+-derived (or absolute) layer sizing resolves min_thickness, it
-        # uses this fraction of the first layer rather than the full first layer,
-        # so snappyHexMesh can keep partial stacks instead of dropping them all
-        # at tight radii. Set explicitly to override.
-        "min_thickness_ratio": 0.5,
+        # uses this fraction of the first layer. Default 1.0 makes minThickness
+        # equal the first layer (snappy drops whole stacks rather than extrude
+        # degenerate partial ones — a quality gate). Lower it (e.g. 0.5) only to
+        # deliberately keep partial stacks on cases with widespread dropout.
+        "min_thickness_ratio": 1.0,
         "y_plus_target": None,          # absolute near-wall target; overrides first_layer_thickness
         "featureAngle": 170,
         "slipFeatureAngle": 30,

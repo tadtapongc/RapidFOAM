@@ -17,11 +17,13 @@ from rapidfoam.stl_utils import BBox, EdgeStats, FeatureAngleStats
 GROUND_EMBED = 0.01
 
 # Fraction of the first layer used as snappyHexMesh's minimum layer thickness.
-# Setting minThickness equal to the first layer makes prisms all-or-nothing
-# (snappy drops a whole stack rather than extrude a thinner one at tight radii);
-# a fraction of the first layer lets it keep partial stacks instead. Overridable
-# via layers.min_thickness_ratio.
-DEFAULT_MIN_THICKNESS_RATIO = 0.5
+# The default is 1.0: minThickness equals the first layer, so snappy drops a
+# whole prism stack rather than extrude a poorly-conditioned thinner one at
+# tight radii. This acts as a quality gate. Lowering it (e.g. 0.5) keeps partial
+# stacks but was measured to produce degenerate prisms on a real case (layer
+# coverage 2->1, aspect ratio 20.8->62.4, determinant -585x), so it is an
+# opt-in per-case experiment via layers.min_thickness_ratio, not a default.
+DEFAULT_MIN_THICKNESS_RATIO = 1.0
 
 # ============================================================
 # AXIS UTILITIES

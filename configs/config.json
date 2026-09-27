@@ -151,7 +151,7 @@
             "_relativeSizes": "false = first_layer_thickness/min_thickness are metres; true = fractions of the local cell size",
             "_first_layer_thickness": "Metres when relativeSizes is false, fraction of cell size when true",
             "_min_thickness": "Same units as first_layer_thickness. Must not exceed the total layer stack. Leave unset to auto-derive as min_thickness_ratio x first layer.",
-            "_min_thickness_ratio": "Fraction of the first layer used as snappyHexMesh's minimum layer thickness when min_thickness is auto-derived (default 0.5, range (0, 1]). snappy drops a whole prism stack when it cannot reach minThickness, so a fraction lets it keep partial stacks at tight radii; 1.0 reproduces the old all-or-nothing behaviour. Ignored when min_thickness is set explicitly.",
+            "_min_thickness_ratio": "Fraction of the first layer used as snappyHexMesh's minimum layer thickness when min_thickness is auto-derived (default 1.0, range (0, 1]). At 1.0 snappy drops a whole prism stack rather than extrude a poorly-conditioned thinner one (a quality gate). Lowering it (e.g. 0.5) keeps partial stacks, but was measured to produce degenerate prisms on a real case, so treat it as an opt-in experiment. Ignored when min_thickness is set explicitly.",
             "_ground_layers": "Off by default. Opt-in prism layers on the moving ground patch; requires at least max(2 mm, 2x first layer) clearance and is capped by ground_n_layers.",
             "_ground_n_layers": "Maximum ground layer count (default 2, never more than n_layers)"
         },

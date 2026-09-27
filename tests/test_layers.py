@@ -88,9 +88,9 @@ class TestResolveLayers(unittest.TestCase):
         layers = cfg["layers"]
         self.assertFalse(layers["relativeSizes"])
         self.assertAlmostEqual(layers["first_layer_thickness"], res["first_layer_thickness"])
-        # min_thickness is a fraction of the first layer (default 0.5), not the
-        # full first layer, so snappy can keep partial stacks.
-        self.assertAlmostEqual(layers.get("min_thickness"), 0.5 * layers["first_layer_thickness"])
+        # Default min_thickness_ratio 1.0: min_thickness equals the full first
+        # layer (snappy drops whole stacks rather than extrude degenerate ones).
+        self.assertAlmostEqual(layers.get("min_thickness"), layers["first_layer_thickness"])
         self.assertGreater(res["u_tau"], 0.0)
         self.assertIsNotNone(res["y_plus_effective"])
         self.assertIsNotNone(res["stack"])
@@ -109,8 +109,9 @@ class TestResolveLayers(unittest.TestCase):
         cfg["layers"].update(relativeSizes=False, first_layer_thickness=2e-5)
         res = resolve_layers(cfg, BOUNDS, explicit_first_layer=True)
         self.assertEqual(cfg["layers"]["first_layer_thickness"], 2e-5)
-        # min_thickness derives from the first layer unless explicitly set.
-        self.assertAlmostEqual(cfg["layers"]["min_thickness"], 0.5 * 2e-5)
+        # min_thickness derives from the first layer (default ratio 1.0) unless
+        # explicitly set.
+        self.assertAlmostEqual(cfg["layers"]["min_thickness"], 2e-5)
         self.assertAlmostEqual(res["y_plus_effective"], 2e-5 * res["u_tau"] / (2.0 * NU))
 
     def test_explicit_min_thickness_wins_with_explicit_first_layer(self):
@@ -143,13 +144,13 @@ class TestResolveLayers(unittest.TestCase):
             layers["min_thickness"], 0.25 * layers["first_layer_thickness"]
         )
 
-    def test_invalid_min_thickness_ratio_falls_back(self):
+    def test_invalid_min_thickness_ratio_falls_back_to_one(self):
         cfg = base_cfg("standard")
         cfg["layers"]["min_thickness_ratio"] = 0.0
         resolve_layers(cfg, BOUNDS)
         layers = cfg["layers"]
         self.assertAlmostEqual(
-            layers["min_thickness"], 0.5 * layers["first_layer_thickness"]
+            layers["min_thickness"], layers["first_layer_thickness"]
         )
 
     def test_explicit_min_thickness_still_wins(self):
@@ -160,6 +161,7 @@ class TestResolveLayers(unittest.TestCase):
 
     def test_min_thickness_never_exceeds_ratio_of_stack(self):
         cfg = base_cfg("standard")
+        cfg["layers"]["min_thickness_ratio"] = 0.5
         resolve_layers(cfg, BOUNDS)
         layers = cfg["layers"]
         stack = cfg["layers"]["_resolved"]["stack"]
