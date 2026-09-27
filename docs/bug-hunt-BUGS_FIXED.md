@@ -1,6 +1,10 @@
 # RapidFOAM Bug Hunt — Verification & Fix Report
 
-Source report: `bug-hunt/BUGS.md`
+> **Historical document.** Point-in-time verification from the v1.2–v1.3 era;
+> all 15 reports were confirmed and fixed. The durable record is the
+> `CHANGELOG.md` and the regression tests.
+
+Source report: `bug-hunt/BUGS.md` (now `docs/bug-hunt-BUGS.md`)
 
 ## Summary
 

@@ -1,5 +1,10 @@
 # RapidFOAM Bug Hunt
 
+> **Historical document.** A point-in-time audit from the v1.2–v1.3 era. All
+> listed issues were subsequently fixed; the durable record is the
+> `CHANGELOG.md` and the regression tests. Kept for the worked methodology and
+> the "riskiest areas" analysis, which may still be informative.
+
 ## Summary
 
 | Severity | Count |
