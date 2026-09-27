@@ -288,7 +288,10 @@ const MESH_BODY = `
   <span id="mesh-nonortho"></span>
   <span id="mesh-skewness"></span>
   <span id="mesh-aspect"></span>
+  <table><tbody id="mesh-metrics-tbody"></tbody></table>
   <table><tbody id="mesh-layer-tbody"></tbody></table>
+  <table><tbody id="mesh-patch-tbody"></tbody></table>
+  <table><tbody id="mesh-celltype-tbody"></tbody></table>
   <p id="mesh-quality-note"></p>
 `;
 
@@ -296,15 +299,21 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
   const app = await makeApp(MESH_BODY);
   app.renderMeshQuality({
     ok: true,
-    stats: { cells: 9008844, max_non_ortho: 45.2, max_skewness: 1.2, max_aspect_ratio: 12.5 },
+    stats: { cells: 9008844, max_non_ortho: 45.2, avg_non_ortho: 3.1, max_skewness: 1.2, max_aspect_ratio: 12.5 },
+    metrics: [
+      { key: 'max_non_ortho', label: 'Max non-orthogonality', value: 45.2, limit_text: '<= 65', pass: true },
+      { key: 'concave_cells', label: 'Concave cells', value: 0, limit_text: '== 0', pass: true, integer: true },
+    ],
     layers: { geometry: { layers: 2, coverage: 1.0 } },
+    patches: { geometry: { faces: 124862, closed: true, closure: 'closed singly connected' } },
+    cell_types: { hexahedra: { count: 8881583, fraction: 0.9859 } },
     target_layers: 2,
     issues: [],
     note: 'mesh quality OK',
   });
   const doc = app._window.document;
   assert.equal(doc.getElementById('mesh-cells').textContent, (9008844).toLocaleString());
-  assert.equal(doc.getElementById('mesh-nonortho').textContent, '45.20');
+  assert.equal(doc.getElementById('mesh-nonortho').textContent, '45.20 / 3.10');
   const badge = doc.getElementById('mesh-quality-badge');
   assert.ok(badge.className.includes('mesh-quality-badge-ok'));
   assert.equal(badge.textContent, 'Mesh OK');
@@ -312,6 +321,17 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
   assert.ok(rows.includes('geometry'));
   assert.ok(rows.includes('2/2'));
   assert.ok(rows.includes('100%'));
+  // metrics table
+  const metrics = doc.getElementById('mesh-metrics-tbody').innerHTML;
+  assert.ok(metrics.includes('Max non-orthogonality'));
+  assert.ok(metrics.includes('mesh-metric-pass'));
+  // patch table
+  const patch = doc.getElementById('mesh-patch-tbody').innerHTML;
+  assert.ok(patch.includes('closed singly connected'));
+  // cell types
+  const ct = doc.getElementById('mesh-celltype-tbody').innerHTML;
+  assert.ok(ct.includes('hexahedra'));
+  assert.ok(ct.includes('98.6%'));
 });
 
 test('renderMeshQuality flags concerns and escapes the patch name', async () => {
@@ -319,7 +339,11 @@ test('renderMeshQuality flags concerns and escapes the patch name', async () => 
   app.renderMeshQuality({
     ok: false,
     stats: { cells: 10, max_non_ortho: 68.3 },
+    metrics: [
+      { key: 'max_non_ortho', label: 'Max non-orthogonality', value: 68.3, limit_text: '<= 65', pass: false },
+    ],
     layers: { 'a<b>': { layers: 1, coverage: 0.5 } },
+    patches: { 'body<x>': { faces: 10, closed: false, closure: 'non-closed singly connected' } },
     target_layers: 2,
     issues: ['max non-orthogonality 68.3 > limit 65', 'boundary-layer dropout'],
     note: '2 concerns',
@@ -332,6 +356,11 @@ test('renderMeshQuality flags concerns and escapes the patch name', async () => 
   assert.ok(!rows.includes('<b>'), 'raw tag must not survive');
   assert.ok(rows.includes('&lt;b&gt;'));
   assert.ok(rows.includes('50%'));
+  const metrics = doc.getElementById('mesh-metrics-tbody').innerHTML;
+  assert.ok(metrics.includes('mesh-metric-fail'));
+  const patch = doc.getElementById('mesh-patch-tbody').innerHTML;
+  assert.ok(!patch.includes('<x>'), 'patch tag must not survive');
+  assert.ok(patch.includes('non-closed'));
 });
 
 test('resetMeshQuality clears the panel and shows a message', async () => {
@@ -344,6 +373,7 @@ test('resetMeshQuality clears the panel and shows a message', async () => {
   const badge = doc.getElementById('mesh-quality-badge');
   assert.equal(badge.textContent, '--');
   assert.ok(!badge.className.includes('mesh-quality-badge-ok'));
+  assert.ok(doc.getElementById('mesh-metrics-tbody').innerHTML.includes('No metrics'));
 });
 
 test('pollTelemetry fetches and renders the mesh-quality endpoint', async () => {

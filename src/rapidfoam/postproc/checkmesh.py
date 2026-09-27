@@ -41,10 +41,10 @@ _WARPED_RE = re.compile(
     r"There are (\d+) faces with ratio between projected and actual area < 0\.8"
 )
 _FLATNESS_RE = re.compile(
-    r"Minimum ratio \(minimum flatness, maximum warpage\) = ([-+0-9.eE]+)"
+    r"Face flatness \(1 = flat, 0 = butterfly\) : min = ([-+0-9.eE]+)\s+average = ([-+0-9.eE]+)"
 )
 _DETERMINANT_RE = re.compile(
-    r"Cell determinant \(wellposedness\) : minimum:\s*([-+0-9.eE]+)"
+    r"Cell determinant \(wellposedness\) : minimum:\s*([-+0-9.eE]+)\s+average:\s*([-+0-9.eE]+)"
 )
 _WEIGHT_RE = re.compile(
     r"Face interpolation weight : minimum:\s*([-+0-9.eE]+)\s+average:\s*([-+0-9.eE]+)"
@@ -54,6 +54,19 @@ _VOLRATIO_RE = re.compile(
 )
 _FAILED_RE = re.compile(r"Failed (\d+) mesh checks")
 _MESH_OK_RE = re.compile(r"\bMesh OK\b")
+
+# Cell-type breakdown block ("Overall number of cells of each type:").
+_CELL_TYPE_RE = re.compile(
+    r"^\s*(hexahedra|prisms|wedges|pyramids|tet wedges|tetrahedra|polyhedra):\s+(\d+)",
+    re.MULTILINE,
+)
+
+# Boundary patch table row (after the "Checking patch topology" header):
+#   patch  faces  points  ok (closed|non-closed singly connected) (bbox) (bbox)
+_PATCH_ROW_RE = re.compile(
+    r'^\s*"?([^"\s]+)"?\s+(\d+)\s+(\d+)\s+'
+    r"(ok|failed|notOk)\s*\(([^)]*)\)"
+)
 
 # snappy layer table rows come in two shapes:
 #   mid-run:  patch  faces  layers  near-wall-thickness  overall-thickness
@@ -154,8 +167,16 @@ def parse_checkmesh(text: str) -> dict[str, Any]:
 
     _int(_CONCAVE_CELLS_RE, "concave_cells")
     _int(_WARPED_RE, "warped_faces")
-    _float(_FLATNESS_RE, "min_flatness")
-    _float(_DETERMINANT_RE, "min_determinant")
+
+    match = _FLATNESS_RE.search(text)
+    if match:
+        stats["min_flatness"] = _num(match.group(1))
+        stats["avg_flatness"] = _num(match.group(2))
+
+    match = _DETERMINANT_RE.search(text)
+    if match:
+        stats["min_determinant"] = _num(match.group(1))
+        stats["avg_determinant"] = _num(match.group(2))
 
     match = _WEIGHT_RE.search(text)
     if match:
@@ -165,6 +186,15 @@ def parse_checkmesh(text: str) -> dict[str, Any]:
     match = _VOLRATIO_RE.search(text)
     if match:
         stats["min_volume_ratio"] = _num(match.group(1))
+        stats["avg_volume_ratio"] = _num(match.group(2))
+
+    cell_types = {name: int(count) for name, count in _CELL_TYPE_RE.findall(text)}
+    if cell_types:
+        stats["cell_types"] = cell_types
+
+    patches = parse_boundary_patches(text)
+    if patches:
+        stats["patches"] = patches
 
     failed = _FAILED_RE.search(text)
     if failed:
@@ -175,6 +205,48 @@ def parse_checkmesh(text: str) -> dict[str, Any]:
         stats["ok"] = True
 
     return stats
+
+
+def parse_boundary_patches(text: str) -> dict[str, dict[str, Any]]:
+    """Parse the "Checking patch topology" table.
+
+    Returns ``{patch: {faces, points, closure, closed}}``. ``closure`` is the
+    raw status phrase (e.g. ``closed singly connected``); ``closed`` is True
+    only for a closed surface — an open body patch is a leaking geometry.
+    """
+    patches: dict[str, dict[str, Any]] = {}
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        header = lines[index].lower()
+        if "checking patch topology" in header:
+            cursor = index + 1
+            while cursor < len(lines):
+                stripped = lines[cursor].strip()
+                if not stripped:
+                    if patches:
+                        break
+                    cursor += 1
+                    continue
+                row = _PATCH_ROW_RE.match(lines[cursor])
+                if not row:
+                    if patches:
+                        break
+                    cursor += 1
+                    continue
+                patch = row.group(1)
+                closure = row.group(5).strip()
+                patches[patch] = {
+                    "faces": int(row.group(2)),
+                    "points": int(row.group(3)),
+                    "closure": closure,
+                    "closed": closure.lower().startswith("closed"),
+                }
+                cursor += 1
+            if patches:
+                break
+        index += 1
+    return patches
 
 
 def _parse_layer_row(line: str) -> tuple[str, dict[str, float | int]] | None:
@@ -305,32 +377,85 @@ def check_mesh_quality(
             "note": "no checkMesh or snappyHexMesh log found",
         }
 
-    def _warn(key: str, limit: float, label: str) -> None:
-        value = stats.get(key)
-        if value is None or not math.isfinite(value):
-            return
-        if value > limit:
-            issues.append(f"{label} {value:g} > limit {limit:g}")
+    def _finite(value: Any) -> float | None:
+        if isinstance(value, (int, float)) and not isinstance(value, bool) \
+                and math.isfinite(value):
+            return float(value)
+        return None
 
-    non_ortho = stats.get("max_non_ortho")
-    if non_ortho is not None and math.isfinite(non_ortho) and non_ortho > max_non_ortho:
-        issues.append(f"max non-orthogonality {non_ortho:g} > limit {max_non_ortho:g}")
-    skewness = stats.get("max_skewness")
-    if skewness is not None and math.isfinite(skewness) and skewness > max_skewness:
-        issues.append(f"max skewness {skewness:g} > limit {max_skewness:g}")
-    _warn("max_aspect_ratio", max_aspect_ratio, "max aspect ratio")
+    # Per-metric evaluation table: value, limit, and pass/fail. ``kind`` selects
+    # the comparison direction (``max`` = upper bound, ``min`` = lower bound,
+    # ``positive`` = must be > 0).
+    metrics: list[dict[str, Any]] = []
 
-    min_volume = stats.get("min_volume")
-    if min_volume is not None and math.isfinite(min_volume) and min_volume <= 0:
-        issues.append(f"non-positive minimum cell volume {min_volume:g}")
+    def _metric(label: str, key: str, limit: float, kind: str) -> float | None:
+        value = _finite(stats.get(key))
+        if value is None:
+            return None
+        if kind == "max":
+            passed = value <= limit
+            limit_text = f"<= {limit:g}"
+        elif kind == "min":
+            passed = value >= limit
+            limit_text = f">= {limit:g}"
+        else:  # positive
+            passed = value > 0.0
+            limit_text = "> 0"
+        metrics.append({
+            "key": key,
+            "label": label,
+            "value": value,
+            "limit": limit,
+            "limit_text": limit_text,
+            "pass": passed,
+        })
+        if not passed:
+            issues.append(f"{label} {value:g} violates {limit_text}")
+        return value
+
+    non_ortho = _metric("Max non-orthogonality", "max_non_ortho", max_non_ortho, "max")
+    skewness = _metric("Max skewness", "max_skewness", max_skewness, "max")
+    _metric("Max aspect ratio", "max_aspect_ratio", max_aspect_ratio, "max")
+    _metric("Min cell volume", "min_volume", 0.0, "positive")
+    _metric("Min cell determinant", "min_determinant", 0.001, "min")
+    _metric("Min face interpolation weight", "min_interp_weight", 0.05, "min")
+    _metric("Min face volume ratio", "min_volume_ratio", 0.01, "min")
 
     concave_cells = stats.get("concave_cells")
-    if isinstance(concave_cells, int) and concave_cells > 0:
-        issues.append(f"{concave_cells} concave cells")
+    if isinstance(concave_cells, int) and not isinstance(concave_cells, bool):
+        metrics.append({
+            "key": "concave_cells",
+            "label": "Concave cells",
+            "value": float(concave_cells),
+            "limit": 0.0,
+            "limit_text": "== 0",
+            "pass": concave_cells == 0,
+            "integer": True,
+        })
+        if concave_cells > 0:
+            issues.append(f"{concave_cells} concave cells")
 
     failed = stats.get("failed_checks")
-    if isinstance(failed, int) and failed > 0:
+    if isinstance(failed, int) and not isinstance(failed, bool) and failed > 0:
         issues.append(f"{failed} failed mesh check(s)")
+
+    # Open (non-closed) body patches are leaking geometry — the highest
+    # severity meshing defect. Domain boundaries (symmetry/inlet/outlet/farField)
+    # and the catch-all ".*" patch are legitimately non-closed, so only report
+    # named surfaces: a body patch is recognisable by its closure text while
+    # the far-field patches are not. We flag any non-closed patch that is not a
+    # known domain boundary.
+    _DOMAIN_PATCHES = {"symmetry", "inlet", "outlet", "farfield", "front", "back", ".*"}
+    open_patches: list[str] = []
+    patch_info = stats.get("patches")
+    if isinstance(patch_info, dict):
+        for name, info in patch_info.items():
+            key = name.strip('"').lower()
+            if key in _DOMAIN_PATCHES or key.startswith(("inlet", "outlet", "symmetry")):
+                continue
+            if info.get("closed") is False:
+                open_patches.append(name)
+                issues.append(f"open (non-closed) surface patch '{name}'")
 
     layer_entries: dict[str, dict[str, Any]] = {}
     for patch, info in layers.items():
@@ -375,10 +500,26 @@ def check_mesh_quality(
     else:
         note = f"{len(issues)} mesh-quality concern(s): " + "; ".join(issues)
 
+    cell_types = stats.get("cell_types")
+    if isinstance(cell_types, dict) and cell_types:
+        total = sum(v for v in cell_types.values() if isinstance(v, int)) or 1
+        cell_types = {
+            name: {
+                "count": int(count),
+                "fraction": round(int(count) / total, 4),
+            }
+            for name, count in cell_types.items()
+            if isinstance(count, int)
+        }
+
     return {
         "available": True,
         "stats": stats,
+        "metrics": metrics,
         "layers": layer_entries,
+        "patches": patch_info if isinstance(patch_info, dict) else {},
+        "open_patches": open_patches,
+        "cell_types": cell_types if isinstance(cell_types, dict) else {},
         "target_layers": target_layers,
         "issues": issues,
         "ok": ok,

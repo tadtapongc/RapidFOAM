@@ -1593,6 +1593,35 @@ body.dark-theme {
   color: var(--text-secondary);
 }
 
+.mesh-quality-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mesh-quality-card {
+  background: var(--bg-surface-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+.mesh-quality-card-title {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-tertiary);
+}
+
+.mesh-metric-pass { color: #4ade80; }
+.mesh-metric-fail { color: #f87171; }
+
+@media (max-width: 900px) {
+  .mesh-quality-grid { grid-template-columns: 1fr; }
+}
+
 .mesh-quality-badge-ok {
   color: #4ade80;
 }

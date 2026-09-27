@@ -3266,16 +3266,23 @@ class CFDApp {
 
   renderMeshQuality(data) {
     const stats = data.stats || {};
-    const fmt = (value, digits = 4) => (
-      value === null || value === undefined || !isFinite(Number(value))
-        ? '--'
-        : Number(value).toFixed(digits)
+    const num = (value) => (
+      value === null || value === undefined || !isFinite(Number(value)) ? null : Number(value)
     );
+    const fmt = (value, digits = 4, fallback = '--') => {
+      const v = num(value);
+      return v === null ? fallback : v.toFixed(digits);
+    };
+    const cellCount = num(stats.cells);
+
+    this.setValText('mesh-cells', cellCount === null ? '--' : cellCount.toLocaleString());
+    const nonOrthoMax = fmt(stats.max_non_ortho, 2);
+    const nonOrthoAvg = num(stats.avg_non_ortho);
     this.setValText(
-      'mesh-cells',
-      stats.cells !== null && stats.cells !== undefined ? Number(stats.cells).toLocaleString() : '--',
+      'mesh-nonortho',
+      nonOrthoMax === '--' ? '--'
+        : (nonOrthoAvg === null ? nonOrthoMax : `${nonOrthoMax} / ${nonOrthoAvg.toFixed(2)}`),
     );
-    this.setValText('mesh-nonortho', fmt(stats.max_non_ortho, 2));
     this.setValText('mesh-skewness', fmt(stats.max_skewness, 3));
     this.setValText('mesh-aspect', fmt(stats.max_aspect_ratio, 2));
 
@@ -3294,26 +3301,92 @@ class CFDApp {
       }
     }
 
-    const tbody = document.getElementById('mesh-layer-tbody');
-    if (tbody) {
-      const layers = data.layers || {};
-      const patches = Object.keys(layers).sort();
-      if (!patches.length) {
-        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No layer data</td></tr>';
+    // checkMesh metrics: value / limit / pass-fail.
+    const metricsTbody = document.getElementById('mesh-metrics-tbody');
+    if (metricsTbody) {
+      const metrics = Array.isArray(data.metrics) ? data.metrics : [];
+      if (!metrics.length) {
+        metricsTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No metrics</td></tr>';
       } else {
-        const target = (data.target_layers !== null && data.target_layers !== undefined)
-          ? `/${data.target_layers}` : '';
-        tbody.innerHTML = patches.map((patch) => {
-          const info = layers[patch] || {};
-          const achieved = (info.layers !== null && info.layers !== undefined) ? info.layers : '--';
-          const coverage = (info.coverage !== null && info.coverage !== undefined)
-            ? `${Math.round(Number(info.coverage) * 100)}%` : '--';
-          return `<tr><td>${this.escapeHtml(patch)}</td>`
-            + `<td class="monospace">${achieved}${target}</td>`
-            + `<td class="monospace">${coverage}</td></tr>`;
+        metricsTbody.innerHTML = metrics.map((m) => {
+          const value = num(m.value);
+          const digits = m.integer ? 0 : 4;
+          const shown = value === null ? '--' : value.toLocaleString(undefined, {
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits,
+          });
+          const cls = m.pass ? 'mesh-metric-pass' : 'mesh-metric-fail';
+          const status = m.pass ? 'OK' : 'FAIL';
+          return `<tr><td>${this.escapeHtml(m.label || m.key || '')}</td>`
+            + `<td class="monospace">${shown}</td>`
+            + `<td class="monospace text-muted">${this.escapeHtml(m.limit_text || '')}</td>`
+            + `<td class="${cls}">${status}</td></tr>`;
         }).join('');
       }
     }
+
+    // Boundary layers: achieved / target + coverage.
+    const layerTbody = document.getElementById('mesh-layer-tbody');
+    if (layerTbody) {
+      const layers = data.layers || {};
+      const patches = Object.keys(layers).sort();
+      if (!patches.length) {
+        layerTbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No layer data</td></tr>';
+      } else {
+        const target = (data.target_layers !== null && data.target_layers !== undefined)
+          ? `/${data.target_layers}` : '';
+        layerTbody.innerHTML = patches.map((patch) => {
+          const info = layers[patch] || {};
+          const achieved = num(info.layers);
+          const coverage = num(info.coverage);
+          return `<tr><td>${this.escapeHtml(patch)}</td>`
+            + `<td class="monospace">${achieved === null ? '--' : achieved}${target}</td>`
+            + `<td class="monospace">${coverage === null ? '--' : `${Math.round(coverage * 100)}%`}</td></tr>`;
+        }).join('');
+      }
+    }
+
+    // Boundary patches: closure status.
+    const patchTbody = document.getElementById('mesh-patch-tbody');
+    if (patchTbody) {
+      const patches = data.patches || {};
+      const names = Object.keys(patches).sort();
+      if (!names.length) {
+        patchTbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No patch data</td></tr>';
+      } else {
+        patchTbody.innerHTML = names.map((name) => {
+          const info = patches[name] || {};
+          const faces = num(info.faces);
+          const closure = info.closure || (info.closed ? 'closed' : 'non-closed');
+          const cls = info.closed ? 'mesh-metric-pass' : 'text-muted';
+          return `<tr><td>${this.escapeHtml(name)}</td>`
+            + `<td class="monospace">${faces === null ? '--' : faces.toLocaleString()}</td>`
+            + `<td class="${cls}">${this.escapeHtml(closure)}</td></tr>`;
+        }).join('');
+      }
+    }
+
+    // Cell types: count + share.
+    const cellTypeTbody = document.getElementById('mesh-celltype-tbody');
+    if (cellTypeTbody) {
+      const types = data.cell_types || {};
+      const names = Object.keys(types).filter((n) => num(types[n]?.count) > 0).sort(
+        (a, b) => num(types[b].count) - num(types[a].count),
+      );
+      if (!names.length) {
+        cellTypeTbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No cell-type data</td></tr>';
+      } else {
+        cellTypeTbody.innerHTML = names.map((name) => {
+          const info = types[name] || {};
+          const count = num(info.count);
+          const fraction = num(info.fraction);
+          return `<tr><td>${this.escapeHtml(name)}</td>`
+            + `<td class="monospace">${count === null ? '--' : count.toLocaleString()}</td>`
+            + `<td class="monospace">${fraction === null ? '--' : `${(fraction * 100).toFixed(1)}%`}</td></tr>`;
+        }).join('');
+      }
+    }
+
     this.setValText('mesh-quality-note', data.note || '');
   }
 
@@ -3326,10 +3399,16 @@ class CFDApp {
       badge.className = 'badge badge-subtle';
       badge.textContent = '--';
     }
-    const tbody = document.getElementById('mesh-layer-tbody');
-    if (tbody) {
-      tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No layer data</td></tr>';
-    }
+    const empties = {
+      'mesh-metrics-tbody': [4, 'No metrics'],
+      'mesh-layer-tbody': [3, 'No layer data'],
+      'mesh-patch-tbody': [3, 'No patch data'],
+      'mesh-celltype-tbody': [3, 'No cell-type data'],
+    };
+    Object.entries(empties).forEach(([id, [cols, text]]) => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<tr><td colspan="${cols}" class="text-center text-muted">${text}</td></tr>`;
+    });
     this.setValText('mesh-quality-note', message || 'No mesh report yet.');
   }
 

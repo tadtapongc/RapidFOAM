@@ -1176,28 +1176,77 @@
               <div class="solver-stat-value monospace" id="mesh-cells">--</div>
             </div>
             <div class="solver-stat">
-              <div class="solver-stat-label">Max non-orthogonality</div>
+              <div class="solver-stat-label">Non-orthogonality (max / avg)</div>
               <div class="solver-stat-value monospace" id="mesh-nonortho">--</div>
             </div>
             <div class="solver-stat">
-              <div class="solver-stat-label">Max skewness</div>
+              <div class="solver-stat-label">Skewness (max)</div>
               <div class="solver-stat-value monospace" id="mesh-skewness">--</div>
             </div>
             <div class="solver-stat">
-              <div class="solver-stat-label">Max aspect ratio</div>
+              <div class="solver-stat-label">Aspect ratio (max)</div>
               <div class="solver-stat-value monospace" id="mesh-aspect">--</div>
             </div>
           </div>
-          <div class="table-responsive">
-            <table class="data-table mini-table" id="mesh-layer-table">
-              <thead>
-                <tr><th>Patch</th><th>Layers</th><th>Coverage</th></tr>
-              </thead>
-              <tbody id="mesh-layer-tbody">
-                <tr><td colspan="3" class="text-center text-muted">No layer data</td></tr>
-              </tbody>
-            </table>
+
+          <div class="mesh-quality-grid">
+            <div class="mesh-quality-card">
+              <h4 class="mesh-quality-card-title">checkMesh Metrics</h4>
+              <div class="table-responsive">
+                <table class="data-table mini-table" id="mesh-metrics-table">
+                  <thead>
+                    <tr><th>Metric</th><th>Value</th><th>Limit</th><th>Status</th></tr>
+                  </thead>
+                  <tbody id="mesh-metrics-tbody">
+                    <tr><td colspan="4" class="text-center text-muted">No metrics</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="mesh-quality-card">
+              <h4 class="mesh-quality-card-title">Boundary Layers</h4>
+              <div class="table-responsive">
+                <table class="data-table mini-table" id="mesh-layer-table">
+                  <thead>
+                    <tr><th>Patch</th><th>Layers</th><th>Coverage</th></tr>
+                  </thead>
+                  <tbody id="mesh-layer-tbody">
+                    <tr><td colspan="3" class="text-center text-muted">No layer data</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="mesh-quality-card">
+              <h4 class="mesh-quality-card-title">Boundary Patches</h4>
+              <div class="table-responsive">
+                <table class="data-table mini-table" id="mesh-patch-table">
+                  <thead>
+                    <tr><th>Patch</th><th>Faces</th><th>Closure</th></tr>
+                  </thead>
+                  <tbody id="mesh-patch-tbody">
+                    <tr><td colspan="3" class="text-center text-muted">No patch data</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="mesh-quality-card">
+              <h4 class="mesh-quality-card-title">Cell Types</h4>
+              <div class="table-responsive">
+                <table class="data-table mini-table" id="mesh-celltype-table">
+                  <thead>
+                    <tr><th>Type</th><th>Cells</th><th>Share</th></tr>
+                  </thead>
+                  <tbody id="mesh-celltype-tbody">
+                    <tr><td colspan="3" class="text-center text-muted">No cell-type data</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
+
           <p class="mesh-quality-note" id="mesh-quality-note">No mesh report yet.</p>
         </div>
       </div>

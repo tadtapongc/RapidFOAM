@@ -16,11 +16,48 @@ from rapidfoam.postproc.checkmesh import (
     find_checkmesh_logs,
     find_snappy_logs,
     mesh_quality_report,
+    parse_boundary_patches,
     parse_checkmesh,
     parse_layer_coverage,
     read_checkmesh,
     read_layer_coverage,
 )
+
+EXTENDED_CHECKMESH = """\
+    points:           9575251
+    faces:            27582986
+    cells:            9008844
+Overall number of cells of each type:
+    hexahedra:     8881583
+    prisms:        15336
+    wedges:        0
+    pyramids:      0
+    tet wedges:    203
+    tetrahedra:    0
+    polyhedra:     111722
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology  Bounding box
+                symmetry    40000    41196  ok (non-closed singly connected) (-5 -5 -5) (-5 5 5)
+                geometry   124862   129704      ok (closed singly connected) (-0.5 -0.1 -0.26) (0.5 -0.04 0.26)
+    Max aspect ratio = 20.738987 OK.
+    Min volume = 2.8807331e-11. Max volume = 0.00012573372.  Total volume = 999.97737.
+    Mesh non-orthogonality Max: 68.343121 average: 3.25209
+    Max skewness = 2.3305211 OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 0.70079485  average = 0.99999045
+    Cell determinant (wellposedness) : minimum: 0.0054503059 average: 1.0409558
+    Face interpolation weight : minimum: 0.060052616 average: 0.49565886
+    Face volume ratio : minimum: 0.019349737 average: 0.98115324
+  ***Concave cells (using face planes) found, number of cells: 61471
+Failed 1 mesh checks.
+"""
+
+OPEN_PATCH_CHECKMESH = """\
+    cells: 100
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology  Bounding box
+                geometry    124862   129704  ok (non-closed singly connected) (-0.5 -0.1 -0.26) (0.5 -0.04 0.26)
+Mesh OK.
+"""
 
 GOOD_CHECKMESH = """\
 Mesh stats
@@ -88,6 +125,39 @@ class TestParseCheckmesh(unittest.TestCase):
 
     def test_unrelated_text_returns_empty(self):
         self.assertEqual(parse_checkmesh("Adding layers...\nsome noise\n"), {})
+
+
+class TestParseExtendedCheckmesh(unittest.TestCase):
+    def test_averages_parsed(self):
+        stats = parse_checkmesh(EXTENDED_CHECKMESH)
+        self.assertAlmostEqual(stats["avg_non_ortho"], 3.25209)
+        self.assertAlmostEqual(stats["avg_flatness"], 0.99999045)
+        self.assertAlmostEqual(stats["avg_determinant"], 1.0409558)
+        self.assertAlmostEqual(stats["avg_interp_weight"], 0.49565886)
+        self.assertAlmostEqual(stats["avg_volume_ratio"], 0.98115324)
+
+    def test_cell_types_parsed(self):
+        stats = parse_checkmesh(EXTENDED_CHECKMESH)
+        self.assertEqual(stats["cell_types"]["hexahedra"], 8881583)
+        self.assertEqual(stats["cell_types"]["polyhedra"], 111722)
+
+
+class TestParseBoundaryPatches(unittest.TestCase):
+    def test_closure_flags(self):
+        patches = parse_boundary_patches(EXTENDED_CHECKMESH)
+        self.assertIn("geometry", patches)
+        self.assertTrue(patches["geometry"]["closed"])
+        self.assertEqual(patches["geometry"]["faces"], 124862)
+        self.assertFalse(patches["symmetry"]["closed"])
+
+    def test_kind_classification(self):
+        result = check_mesh_quality(parse_checkmesh(OPEN_PATCH_CHECKMESH))
+        self.assertIn("geometry", result["open_patches"])
+        self.assertFalse(result["ok"])
+
+    def test_domain_patches_not_flagged(self):
+        result = check_mesh_quality(parse_checkmesh(EXTENDED_CHECKMESH))
+        self.assertEqual(result["open_patches"], [])
 
 
 class TestParseLayerCoverage(unittest.TestCase):
@@ -166,7 +236,7 @@ class TestCheckMeshQuality(unittest.TestCase):
         stats["min_volume"] = -1.0
         result = check_mesh_quality(stats)
         self.assertFalse(result["ok"])
-        self.assertTrue(any("minimum cell volume" in i for i in result["issues"]))
+        self.assertTrue(any("cell volume" in i for i in result["issues"]))
 
     def test_layer_dropout_flagged(self):
         layers = {"geometry": {"faces": 100, "layers": 1,
@@ -181,6 +251,21 @@ class TestCheckMeshQuality(unittest.TestCase):
                                "near_wall_thickness": 1e-4, "overall_thickness": 2e-4}}
         result = check_mesh_quality(parse_checkmesh(GOOD_CHECKMESH), layers, target_layers=3)
         self.assertTrue(result["ok"])
+
+    def test_metrics_table_has_pass_flags(self):
+        result = check_mesh_quality(parse_checkmesh(EXTENDED_CHECKMESH))
+        by_key = {m["key"]: m for m in result["metrics"]}
+        self.assertFalse(by_key["max_non_ortho"]["pass"])
+        self.assertTrue(by_key["max_skewness"]["pass"])
+        self.assertEqual(by_key["min_volume"]["limit_text"], "> 0")
+        self.assertIn("concave_cells", by_key)
+
+    def test_cell_type_fractions(self):
+        result = check_mesh_quality(parse_checkmesh(EXTENDED_CHECKMESH))
+        hexes = result["cell_types"]["hexahedra"]
+        self.assertAlmostEqual(hexes["fraction"], 8881583 / sum(
+            v["count"] for v in result["cell_types"].values()
+        ), places=4)
 
     def test_unavailable_without_data(self):
         result = check_mesh_quality({})

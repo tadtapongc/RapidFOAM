@@ -295,6 +295,10 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(res["layers"]["geometry"]["layers"], 2)
         self.assertAlmostEqual(res["layers"]["geometry"]["coverage"], 1.0)
         self.assertEqual(res["target_layers"], 2)
+        # Extended report surfaces metrics, cell types and patches.
+        self.assertTrue(any(m["key"] == "max_non_ortho" for m in res["metrics"]))
+        self.assertIn("patches", res)
+        self.assertIn("cell_types", res)
 
     def test_telemetry_mesh_invalid_and_missing(self):
         """Invalid case names are rejected; absent logs report no data."""
