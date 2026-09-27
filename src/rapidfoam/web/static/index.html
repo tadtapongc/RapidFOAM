@@ -665,8 +665,8 @@
 
                   <div class="form-group">
                     <label for="cfg-override-layer-minthickness">Minimum Overall Thickness</label>
-                    <input type="number" id="cfg-override-layer-minthickness" class="input" step="any" min="0" placeholder="Auto (first layer)">
-                    <span class="field-hint">Same units as the first layer; must not exceed the total stack</span>
+                    <input type="number" id="cfg-override-layer-minthickness" class="input" step="any" min="0" placeholder="Auto (50% of first layer)">
+                    <span class="field-hint">Same units as the first layer; auto-derived as <code>min_thickness_ratio</code> × first layer (config-only, default 0.5). Lower keeps more partial layer stacks.</span>
                   </div>
 
                   <div class="form-group">
