@@ -10,6 +10,11 @@
     "_stl_files": "ASCII STL geometry files located in the stl/ directory",
     "stl_files": ["geometry.stl"],
 
+    "_stl_dir_comment": "Optional: geometry folder name relative to the project root (default 'stl').",
+    "_stl_dir": "stl",
+    "_case_dir_comment": "Optional: output folder for generated cases, relative to the project root (default 'cases').",
+    "_case_dir": "cases",
+
     "_fidelity": "Presets: 'fast' (~2-4M cells, 10 min, y+~100), 'standard' (~6-9M cells, 45 min, y+~40, RECOMMENDED for general aerodynamics), 'fine' (~12-16M cells, 2-4 hrs, y+~1). Each preset carries a near-wall y+ target that is converted to an absolute first-layer thickness from the flow velocity and fluid properties. All presets use Spalding-bridging wall functions, so 'fine' is wall-function-bridged at low y+ (not classical wall-resolved).",
     "fidelity": "standard",
 
@@ -54,10 +59,33 @@
         "-z": "outlet"
     },
 
+    "_patches_comment": "Optional: rename the generated boundary patches. Values are the patch names written to blockMeshDict/0-fields; roles map to domain_faces types. Leave commented to use the defaults.",
+    "_patches": {
+        "inlet": "inlet",
+        "outlet": "outlet",
+        "ground": "ground",
+        "walls": "farField",
+        "symmetry": "symmetry"
+    },
+
+    "_vehicle_comment": "Optional: only needed for aero-balance / centre-of-pressure handoff in telemetry. wheelbase in metres; front_weight_pct = static front axle load percentage (0-100).",
+    "_vehicle": {
+        "wheelbase": null,
+        "front_weight_pct": null
+    },
+
+    "_feature_extract_comment": "Feature edges for snappyHexMesh. includedAngle (degrees) is the threshold BELOW which an edge is kept as a feature; 140 captures real aero edges without cosmetic CAD seams. The generator derives resolveFeatureAngle from the STL crease histogram and only sharpens this, never loosens it.",
+    "_feature_extract": {
+        "extractionMethod": "extractFromSurface",
+        "includedAngle": 140
+    },
+
     "_section_parallel": "--- 5. Parallel Computing ---",
     "parallel": {
         "_comment": "Number of CPU cores for MPI decomposition, snappyHexMesh meshing, and simpleFoam solving",
-        "n_procs": 32
+        "n_procs": 32,
+        "_method_comment": "Optional: decomposition method (default 'scotch'). Alternatives: 'hierarchical', 'simple'.",
+        "_method": "scotch"
     },
 
     "_section_slurm": "--- 6. SLURM Cluster Configuration ---",
@@ -68,6 +96,8 @@
         "nodes": 1,
         "time": "08:00:00",
         "mem_per_cpu": "2G",
+        "_cpus_per_task_comment": "Optional: CPUs per SLURM task (default 1).",
+        "_cpus_per_task": 1,
         "openfoam_module": [
             "GCC/11.3.0",
             "OpenMPI/4.1.4-GCC-11.3.0"
@@ -77,6 +107,7 @@
 
     "_section_overrides": "--- 7. Expert Overrides (Optional) ---",
     "_overrides_note": "All fields below have built-in defaults in fidelity presets. Uncomment only if manual tuning is needed.",
+    "_expert_defaults_note": "Solver-coupled sections (schemes, relaxation, linear_solvers, simple, wall_functions, snap, and the snappy layer/mesh_quality knobs) are intentionally NOT shown here: the generator sets them per fidelity preset and overriding them can destabilise the solve. The complete default set lives in DEFAULT_CONFIG in src/rapidfoam/config.py.",
     "_optional_overrides_example": {
         "solver": {
             "_end_time": 800,
