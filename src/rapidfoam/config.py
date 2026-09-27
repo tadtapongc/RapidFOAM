@@ -19,11 +19,15 @@ log = logging.getLogger(__name__)
 # UNIVERSAL DEFAULTS — Settings that work for any geometry
 # ============================================================
 
+# Fixed project-relative layout (not configurable): the Studio and CLI both
+# resolve geometry and cases against these, and the web layer relies on the
+# fixed base for its path-traversal checks.
+STL_DIR = "stl"
+CASE_DIR = "cases"
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "case_name": "my_case",
     "stl_files": [],
-    "stl_dir": "stl",
-    "case_dir": "cases",
 
     # Flow conditions
     "flow": {
@@ -172,13 +176,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "relativeSizes": True,
         "first_layer_thickness": 0.3,   # fraction of cell (or metres if relativeSizes=false)
         "min_thickness": 0.05,          # same units as first_layer_thickness
+        # When y+-derived (or absolute) layer sizing resolves min_thickness, it
+        # uses this fraction of the first layer. Default 1.0 makes minThickness
+        # equal the first layer (snappy drops whole stacks rather than extrude
+        # degenerate partial ones — a quality gate). Lower it (e.g. 0.5) only to
+        # deliberately keep partial stacks on cases with widespread dropout.
+        "min_thickness_ratio": 1.0,
         "y_plus_target": None,          # absolute near-wall target; overrides first_layer_thickness
         "featureAngle": 170,
         "slipFeatureAngle": 30,
         "nGrow": 0,
         "maxFaceThicknessRatio": 0.5,
         "nSmoothSurfaceNormals": 3,
-        "nSmoothThickness": 10,
+        "nSmoothThickness": 15,
         "nSmoothNormals": 3,
         "nRelaxIter": 10,
         "nBufferCellsNoExtrude": 0,
@@ -216,6 +226,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "minTriangleTwist": -1,
         "nSmoothScale": 4,
         "errorReduction": 0.75,
+        # Good/caution bands for the mesh-quality verdict (independent of the
+        # snappyHexMesh pass/fail limits above). "good" is the value at which a
+        # metric is considered healthy; "caution" is the boundary beyond which
+        # it is marginal/bad. Override per team standard.
+        "verdict_bands": {
+            "max_non_ortho": {"good": 60.0, "caution": 70.0},
+            "max_skewness": {"good": 2.0, "caution": 4.0},
+            "max_aspect_ratio": {"good": 50.0, "caution": 100.0},
+            "min_determinant": {"good": 0.05, "caution": 0.001},
+            "min_interp_weight": {"good": 0.1, "caution": 0.01},
+            "min_volume_ratio": {"good": 0.05, "caution": 0.01},
+            "concave_cells": {"good": 0.0, "caution": 0.0},
+        },
         "relaxed": {
             "maxNonOrtho": 75,
             "maxBoundarySkewness": 25,
@@ -334,9 +357,6 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
     name = cfg.get("case_name")
     if not isinstance(name, str) or not name or name in (".", "..") or any(c in name for c in '/\\\r\n'):
         errors.append("'case_name' must be a nonempty folder name without path separators")
-    for key in ("stl_dir", "case_dir"):
-        if not isinstance(cfg.get(key), str) or not cfg[key]:
-            errors.append(f"'{key}' must be a nonempty path string")
     if not isinstance(cfg.get("fidelity", "standard"), str) or cfg.get("fidelity", "standard") not in FIDELITY_PRESETS:
         errors.append("fidelity must be fast, standard, or fine")
 
@@ -360,7 +380,7 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
             errors.append(f"outputs.{key}: {e}")
 
     # STL files
-    stl_dir = project_dir / (cfg.get("stl_dir") if isinstance(cfg.get("stl_dir"), str) else "stl")
+    stl_dir = project_dir / STL_DIR
     if not stl_dir.is_dir():
         errors.append(f"STL directory not found: {stl_dir}")
     else:
@@ -437,6 +457,24 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         errors.append("mesh_params.resolveFeatureAngle must be a number in (0, 180]")
     if "ground_layers" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["ground_layers"], bool):
         errors.append("layers.ground_layers must be true or false")
+    min_ratio = cfg.get("layers", {}).get("min_thickness_ratio")
+    if min_ratio is not None and (not finite(min_ratio) or not (0.0 < min_ratio <= 1.0)):
+        errors.append("layers.min_thickness_ratio must be a number in (0, 1]")
+    verdict_bands = cfg.get("mesh_quality", {}).get("verdict_bands")
+    if verdict_bands is not None:
+        if not isinstance(verdict_bands, dict):
+            errors.append("mesh_quality.verdict_bands must be an object")
+        else:
+            for metric, band in verdict_bands.items():
+                if not isinstance(band, dict) or set(band) != {"good", "caution"}:
+                    errors.append(
+                        f"mesh_quality.verdict_bands.{metric} must have exactly "
+                        f"'good' and 'caution' numbers"
+                    )
+                elif not finite(band.get("good")) or not finite(band.get("caution")):
+                    errors.append(
+                        f"mesh_quality.verdict_bands.{metric}.good/caution must be finite numbers"
+                    )
     for section, keys in {
         "parallel": ("n_procs",), "slurm": ("nodes", "cpus_per_task"),
         "mesh_params": ("maxGlobalCells", "maxLocalCells", "nCellsBetweenLevels"),

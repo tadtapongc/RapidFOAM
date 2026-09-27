@@ -7,7 +7,7 @@
     "_case_name": "Folder name created under cases/<case_name>/",
     "case_name": "my_case",
 
-    "_stl_files": "ASCII STL geometry files located in the stl/ directory",
+    "_stl_files": "ASCII STL geometry files located in the fixed stl/ directory (project root)",
     "stl_files": ["geometry.stl"],
 
     "_fidelity": "Presets: 'fast' (~2-4M cells, 10 min, y+~100), 'standard' (~6-9M cells, 45 min, y+~40, RECOMMENDED for general aerodynamics), 'fine' (~12-16M cells, 2-4 hrs, y+~1). Each preset carries a near-wall y+ target that is converted to an absolute first-layer thickness from the flow velocity and fluid properties. All presets use Spalding-bridging wall functions, so 'fine' is wall-function-bridged at low y+ (not classical wall-resolved).",
@@ -54,10 +54,33 @@
         "-z": "outlet"
     },
 
+    "_patches_comment": "Optional: rename the generated boundary patches. Values are the patch names written to blockMeshDict/0-fields; roles map to domain_faces types. Leave commented to use the defaults.",
+    "_patches": {
+        "inlet": "inlet",
+        "outlet": "outlet",
+        "ground": "ground",
+        "walls": "farField",
+        "symmetry": "symmetry"
+    },
+
+    "_vehicle_comment": "Optional: only needed for aero-balance / centre-of-pressure handoff in telemetry. wheelbase in metres; front_weight_pct = static front axle load percentage (0-100).",
+    "_vehicle": {
+        "wheelbase": null,
+        "front_weight_pct": null
+    },
+
+    "_feature_extract_comment": "Feature edges for snappyHexMesh. includedAngle (degrees) is the threshold BELOW which an edge is kept as a feature; 140 captures real aero edges without cosmetic CAD seams. The generator derives resolveFeatureAngle from the STL crease histogram and only sharpens this, never loosens it.",
+    "_feature_extract": {
+        "extractionMethod": "extractFromSurface",
+        "includedAngle": 140
+    },
+
     "_section_parallel": "--- 5. Parallel Computing ---",
     "parallel": {
         "_comment": "Number of CPU cores for MPI decomposition, snappyHexMesh meshing, and simpleFoam solving",
-        "n_procs": 32
+        "n_procs": 32,
+        "_method_comment": "Optional: decomposition method (default 'scotch'). Alternatives: 'hierarchical', 'simple'.",
+        "_method": "scotch"
     },
 
     "_section_slurm": "--- 6. SLURM Cluster Configuration ---",
@@ -68,6 +91,8 @@
         "nodes": 1,
         "time": "08:00:00",
         "mem_per_cpu": "2G",
+        "_cpus_per_task_comment": "Optional: CPUs per SLURM task (default 1).",
+        "_cpus_per_task": 1,
         "openfoam_module": [
             "GCC/11.3.0",
             "OpenMPI/4.1.4-GCC-11.3.0"
@@ -77,6 +102,7 @@
 
     "_section_overrides": "--- 7. Expert Overrides (Optional) ---",
     "_overrides_note": "All fields below have built-in defaults in fidelity presets. Uncomment only if manual tuning is needed.",
+    "_expert_defaults_note": "Solver-coupled sections (schemes, relaxation, linear_solvers, simple, wall_functions, snap, and the snappy layer/mesh_quality knobs) are intentionally NOT shown here: the generator sets them per fidelity preset and overriding them can destabilise the solve. The complete default set lives in DEFAULT_CONFIG in src/rapidfoam/config.py.",
     "_optional_overrides_example": {
         "solver": {
             "_end_time": 800,
@@ -103,13 +129,29 @@
             "_near_wake_level": 3,
             "_far_wake_level": 1
         },
+        "_mesh_quality_verdict_bands_comment": "Good/caution thresholds for the mesh-quality verdict shown by 'read_forces.py --mesh' and the Studio Mesh Quality panel. These are advisory CFD-practical bands, independent of the snappyHexMesh pass/fail limits (mesh_quality.maxNonOrtho / maxInternalSkewness). 'good' = healthy; a value past 'caution' is flagged as marginal/bad. Deep-merge: you may set only one of the pair against the default.",
+        "mesh_quality": {
+            "_verdict_bands": {
+                "_max_non_ortho": "Degrees. Above ~60 the segregated solver becomes less robust (default good 60, caution 70).",
+                "_max_skewness": "Default good 2, caution 4.",
+                "_max_aspect_ratio": "High aspect is expected in boundary layers; default good 50, caution 100.",
+                "_min_determinant": "Cell wellposedness; higher is better (default good 0.05, caution 0.001).",
+                "_min_interp_weight": "Face interpolation weight; ideal ~0.5 (default good 0.1, caution 0.01).",
+                "_min_volume_ratio": "Neighbour cell volume ratio; smoother is better (default good 0.05, caution 0.01).",
+                "_concave_cells": "Any concave cell is a concern (default good 0, caution 0).",
+                "_override_example": {
+                    "max_non_ortho": { "good": 55.0, "caution": 65.0 }
+                }
+            }
+        },
         "layers": {
             "_y_plus_target": "Near-wall target. 1 = wall-function-bridged at low y+ (first cell in the sublayer), 30-100 = wall-function regime. Overrides first_layer_thickness unless that is set explicitly.",
             "_n_layers": 3,
             "_expansion_ratio": 1.2,
             "_relativeSizes": "false = first_layer_thickness/min_thickness are metres; true = fractions of the local cell size",
             "_first_layer_thickness": "Metres when relativeSizes is false, fraction of cell size when true",
-            "_min_thickness": "Same units as first_layer_thickness. Must not exceed the total layer stack.",
+            "_min_thickness": "Same units as first_layer_thickness. Must not exceed the total layer stack. Leave unset to auto-derive as min_thickness_ratio x first layer.",
+            "_min_thickness_ratio": "Fraction of the first layer used as snappyHexMesh's minimum layer thickness when min_thickness is auto-derived (default 1.0, range (0, 1]). At 1.0 snappy drops a whole prism stack rather than extrude a poorly-conditioned thinner one (a quality gate). Lowering it (e.g. 0.5) keeps partial stacks, but was measured to produce degenerate prisms on a real case, so treat it as an opt-in experiment. Ignored when min_thickness is set explicitly.",
             "_ground_layers": "Off by default. Opt-in prism layers on the moving ground patch; requires at least max(2 mm, 2x first layer) clearance and is capped by ground_n_layers.",
             "_ground_n_layers": "Maximum ground layer count (default 2, never more than n_layers)"
         },

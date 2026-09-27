@@ -563,6 +563,7 @@ class CFDApp {
     this.setVal('cfg-slurm-partition', slurm.partition || 'cpu');
     this.setVal('cfg-slurm-time', slurm.time || '08:00:00');
     this.setVal('cfg-slurm-mem', slurm.mem_per_cpu || '2G');
+    this.setVal('cfg-slurm-cpus', slurm.cpus_per_task ?? 1);
     this.setVal('cfg-slurm-source', slurm.openfoam_source || '$HOME/OpenFOAM/OpenFOAM-v2606/etc/bashrc');
     
     if (Array.isArray(slurm.openfoam_module)) {
@@ -619,6 +620,11 @@ class CFDApp {
     this.setVal('cfg-override-featurecells', meshParams?.feature_cells ?? '');
     this.setVal('cfg-override-maxsurflevel', meshParams?.max_surface_level ?? '');
 
+    // Feature extraction sits outside the overrides block: only show a value
+    // when the loaded config actually differs from the default.
+    const featureExtract = cfg.feature_extract || {};
+    this.setVal('cfg-override-feature-angle', featureExtract.includedAngle ?? '');
+
     // 4. Boundary Layer Overrides (Priority 4: Wall y+ & inflation)
     let layerMode = 'auto';
     if (layers?.y_plus_target !== undefined && layers?.y_plus_target !== null) {
@@ -670,9 +676,23 @@ class CFDApp {
     this.scheduleLayerPreview();
   }
 
+  cloneConfig(value) {
+    if (typeof structuredClone === 'function') {
+      try {
+        return structuredClone(value);
+      } catch {
+        // Fall through to the JSON clone for values structuredClone rejects.
+      }
+    }
+    return JSON.parse(JSON.stringify(value));
+  }
+
   buildConfigFromVisualForm() {
     if (this.isSyncingFromJson) return;
-    const cfg = { ...this.activeConfig };
+    // Merge over a deep clone of the loaded config so every key the form does
+    // not own — including unknown future fields and "_" comment keys — is
+    // preserved. The visual form only ever assigns, never rebuilds the object.
+    const cfg = this.cloneConfig(this.activeConfig);
 
     // General
     cfg.case_name = this.getVal('cfg-case-name') || 'my_case';
@@ -711,39 +731,22 @@ class CFDApp {
     const symPlane = parseFloat(this.getVal('cfg-symmetry-plane'));
     cfg.symmetry_plane = isNaN(symPlane) ? 0.0 : symPlane;
 
+    // Ground placement is mutually exclusive: at most one of ground_clearance /
+    // ground_plane may be set. Comment ("_") keys are already carried by the
+    // clone, so only the two active keys are managed here.
     const groundStyle = this.getVal('cfg-ground-style');
     if (groundStyle === 'relative') {
       const gClear = parseFloat(this.getVal('cfg-ground-clearance'));
       cfg.ground_clearance = isNaN(gClear) ? 0.035 : gClear;
       delete cfg.ground_plane;
-      delete cfg._ground_clearance;
-      delete cfg._ground_plane;
     } else if (groundStyle === 'absolute') {
       const gPlane = parseFloat(this.getVal('cfg-ground-plane'));
       cfg.ground_plane = isNaN(gPlane) ? 0.0 : gPlane;
       delete cfg.ground_clearance;
-      delete cfg._ground_clearance;
-      delete cfg._ground_plane;
     } else {
-      // Style 0 / None (Default in config.json): Touching CAD Bottom
+      // Style 0 / None: touching CAD bottom.
       delete cfg.ground_clearance;
       delete cfg.ground_plane;
-      // Preserve commented example keys if they existed in activeConfig
-      if (this.activeConfig._ground_comment !== undefined) {
-        cfg._ground_comment = this.activeConfig._ground_comment;
-      }
-      if (this.activeConfig._ground_clearance !== undefined) {
-        cfg._ground_clearance = this.activeConfig._ground_clearance;
-      }
-      if (this.activeConfig._ground_clearance_desc !== undefined) {
-        cfg._ground_clearance_desc = this.activeConfig._ground_clearance_desc;
-      }
-      if (this.activeConfig._ground_plane !== undefined) {
-        cfg._ground_plane = this.activeConfig._ground_plane;
-      }
-      if (this.activeConfig._ground_plane_desc !== undefined) {
-        cfg._ground_plane_desc = this.activeConfig._ground_plane_desc;
-      }
     }
 
     cfg.domain_faces = {
@@ -775,6 +778,7 @@ class CFDApp {
       nodes: prevSlurm.nodes !== undefined ? prevSlurm.nodes : 1,
       time: this.getVal('cfg-slurm-time'),
       mem_per_cpu: this.getVal('cfg-slurm-mem'),
+      cpus_per_task: parseInt(this.getVal('cfg-slurm-cpus'), 10) || prevSlurm.cpus_per_task || 1,
       openfoam_module: modules,
       openfoam_source: this.getVal('cfg-slurm-source'),
     };
@@ -798,24 +802,31 @@ class CFDApp {
       return isNaN(parsed) ? null : parsed;
     };
 
-    const overrides = {};
+    // Start from any overrides already present so unknown/comment keys survive.
+    const overrides = (cfg.overrides && typeof cfg.overrides === 'object')
+      ? cfg.overrides
+      : {};
+
+    // Only the fields a form control owns are assigned; existing values for a
+    // section that the user cleared are removed from that section alone.
 
     // 1. Solver (Priority 1)
-    const solverOverrides = {};
+    const solverOverrides = overrides.solver || {};
     const endTime = getOptionalInt('cfg-override-solver-endtime');
-    if (endTime !== null) solverOverrides.end_time = endTime;
+    if (endTime !== null) solverOverrides.end_time = endTime; else delete solverOverrides.end_time;
     const writeInterval = getOptionalInt('cfg-override-solver-writeinterval');
-    if (writeInterval !== null) solverOverrides.write_interval = writeInterval;
+    if (writeInterval !== null) solverOverrides.write_interval = writeInterval; else delete solverOverrides.write_interval;
     const purgeWrite = getOptionalInt('cfg-override-solver-purgewrite');
-    if (purgeWrite !== null) solverOverrides.purge_write = purgeWrite;
+    if (purgeWrite !== null) solverOverrides.purge_write = purgeWrite; else delete solverOverrides.purge_write;
     if (Object.keys(solverOverrides).length > 0) overrides.solver = solverOverrides;
+    else delete overrides.solver;
 
     // 2. Force Refs (Priority 2)
-    const refsOverrides = {};
+    const refsOverrides = overrides.force_refs || {};
     const Aref = getOptionalFloat('cfg-override-ref-aref');
-    if (Aref !== null) refsOverrides.Aref = Aref;
+    if (Aref !== null) refsOverrides.Aref = Aref; else delete refsOverrides.Aref;
     const lRef = getOptionalFloat('cfg-override-ref-lref');
-    if (lRef !== null) refsOverrides.lRef = lRef;
+    if (lRef !== null) refsOverrides.lRef = lRef; else delete refsOverrides.lRef;
     const cofrX = getOptionalFloat('cfg-override-ref-cofr-x');
     const cofrY = getOptionalFloat('cfg-override-ref-cofr-y');
     const cofrZ = getOptionalFloat('cfg-override-ref-cofr-z');
@@ -823,120 +834,105 @@ class CFDApp {
       refsOverrides.CofR = [cofrX ?? 0.0, cofrY ?? 0.0, cofrZ ?? 0.0];
     }
     if (Object.keys(refsOverrides).length > 0) overrides.force_refs = refsOverrides;
+    else delete overrides.force_refs;
 
     // 3. Mesh Params (Priority 3)
-    const meshOverrides = {};
+    const meshOverrides = overrides.mesh_params || {};
     const baseCell = getOptionalFloat('cfg-override-basecell');
-    if (baseCell !== null) meshOverrides.base_cell_size = baseCell;
+    if (baseCell !== null) meshOverrides.base_cell_size = baseCell; else delete meshOverrides.base_cell_size;
     const surfMin = getOptionalInt('cfg-override-surf-min');
     const surfMax = getOptionalInt('cfg-override-surf-max');
     if (surfMin !== null || surfMax !== null) {
       meshOverrides.surface_level = [surfMin ?? 4, surfMax ?? 5];
+    } else {
+      delete meshOverrides.surface_level;
     }
     const edgeLevel = getOptionalInt('cfg-override-edge');
-    if (edgeLevel !== null) meshOverrides.edge_level = edgeLevel;
+    if (edgeLevel !== null) meshOverrides.edge_level = edgeLevel; else delete meshOverrides.edge_level;
     const nearWake = getOptionalInt('cfg-override-nearwake');
-    if (nearWake !== null) meshOverrides.near_wake_level = nearWake;
+    if (nearWake !== null) meshOverrides.near_wake_level = nearWake; else delete meshOverrides.near_wake_level;
     const farWake = getOptionalInt('cfg-override-farwake');
-    if (farWake !== null) meshOverrides.far_wake_level = farWake;
+    if (farWake !== null) meshOverrides.far_wake_level = farWake; else delete meshOverrides.far_wake_level;
     const autoSizeMode = this.getVal('cfg-override-autosize') || 'auto';
     if (autoSizeMode === 'on') meshOverrides.auto_size = true;
     else if (autoSizeMode === 'off') meshOverrides.auto_size = false;
+    else delete meshOverrides.auto_size;
     const featureCells = getOptionalFloat('cfg-override-featurecells');
-    if (featureCells !== null) meshOverrides.feature_cells = featureCells;
+    if (featureCells !== null) meshOverrides.feature_cells = featureCells; else delete meshOverrides.feature_cells;
     const maxSurfLevel = getOptionalInt('cfg-override-maxsurflevel');
-    if (maxSurfLevel !== null) meshOverrides.max_surface_level = maxSurfLevel;
+    if (maxSurfLevel !== null) meshOverrides.max_surface_level = maxSurfLevel; else delete meshOverrides.max_surface_level;
     if (Object.keys(meshOverrides).length > 0) overrides.mesh_params = meshOverrides;
+    else delete overrides.mesh_params;
+
+    // 3b. Feature extraction (surfaceFeatureExtract included angle)
+    const featureExtract = cfg.feature_extract || {};
+    const featureAngle = getOptionalFloat('cfg-override-feature-angle');
+    if (featureAngle !== null) featureExtract.includedAngle = featureAngle;
+    else delete featureExtract.includedAngle;
+    if (Object.keys(featureExtract).length > 0) cfg.feature_extract = featureExtract;
+    else delete cfg.feature_extract;
 
     // 4. Boundary Layers (Priority 4)
-    const layersOverrides = {};
+    const layersOverrides = overrides.layers || {};
     const layerMode = this.getVal('cfg-override-layer-mode') || 'auto';
     const nLayers = getOptionalInt('cfg-override-layer-nlayers');
-    if (nLayers !== null) layersOverrides.n_layers = nLayers;
+    if (nLayers !== null) layersOverrides.n_layers = nLayers; else delete layersOverrides.n_layers;
     const expansionRatio = getOptionalFloat('cfg-override-layer-expansion');
-    if (expansionRatio !== null) layersOverrides.expansion_ratio = expansionRatio;
+    if (expansionRatio !== null) layersOverrides.expansion_ratio = expansionRatio; else delete layersOverrides.expansion_ratio;
     if (layerMode === 'yplus') {
       const yPlus = getOptionalFloat('cfg-override-layer-yplus');
       if (yPlus !== null) {
         layersOverrides.y_plus_target = yPlus;
         layersOverrides.relativeSizes = false;
+      } else {
+        delete layersOverrides.y_plus_target;
       }
+      delete layersOverrides.first_layer_thickness;
     } else if (layerMode === 'absolute' || layerMode === 'relative') {
       const firstLayer = getOptionalFloat('cfg-override-layer-firstlayer');
       if (firstLayer !== null) {
         layersOverrides.first_layer_thickness = firstLayer;
         layersOverrides.relativeSizes = layerMode === 'relative';
+      } else {
+        delete layersOverrides.first_layer_thickness;
       }
+      delete layersOverrides.y_plus_target;
     }
     const minThickness = getOptionalFloat('cfg-override-layer-minthickness');
-    if (minThickness !== null) layersOverrides.min_thickness = minThickness;
+    if (minThickness !== null) layersOverrides.min_thickness = minThickness; else delete layersOverrides.min_thickness;
     const groundMode = this.getVal('cfg-override-layer-ground') || 'auto';
     if (groundMode === 'on') layersOverrides.ground_layers = true;
     else if (groundMode === 'off') layersOverrides.ground_layers = false;
+    else delete layersOverrides.ground_layers;
     if (Object.keys(layersOverrides).length > 0) overrides.layers = layersOverrides;
+    else delete overrides.layers;
 
     // 5. Fluid (Priority 5)
-    const fluidOverrides = {};
+    const fluidOverrides = overrides.fluid || {};
     const rho = getOptionalFloat('cfg-override-fluid-rho');
-    if (rho !== null) fluidOverrides.rho = rho;
+    if (rho !== null) fluidOverrides.rho = rho; else delete fluidOverrides.rho;
     const nu = getOptionalFloat('cfg-override-fluid-nu');
-    if (nu !== null) fluidOverrides.nu = nu;
+    if (nu !== null) fluidOverrides.nu = nu; else delete fluidOverrides.nu;
     if (Object.keys(fluidOverrides).length > 0) overrides.fluid = fluidOverrides;
+    else delete overrides.fluid;
 
     // 6. Turbulence (Priority 6)
-    const turbOverrides = {};
+    const turbOverrides = overrides.turbulence || {};
     const turbModel = getOptionalStr('cfg-override-turb-model');
-    if (turbModel) turbOverrides.model = turbModel;
+    if (turbModel) turbOverrides.model = turbModel; else delete turbOverrides.model;
     const turbIntensity = getOptionalFloat('cfg-override-turb-intensity');
-    if (turbIntensity !== null) turbOverrides.intensity = turbIntensity;
+    if (turbIntensity !== null) turbOverrides.intensity = turbIntensity; else delete turbOverrides.intensity;
     const nutRatio = getOptionalFloat('cfg-override-turb-nut-ratio');
-    if (nutRatio !== null) turbOverrides.nut_ratio = nutRatio;
+    if (nutRatio !== null) turbOverrides.nut_ratio = nutRatio; else delete turbOverrides.nut_ratio;
     if (Object.keys(turbOverrides).length > 0) overrides.turbulence = turbOverrides;
+    else delete overrides.turbulence;
 
     if (Object.keys(overrides).length > 0) {
       cfg.overrides = overrides;
-      delete cfg._comment_overrides;
-      delete cfg._optional_overrides_example;
     } else {
+      // No active overrides: keep the section absent (the loader tolerates it)
+      // and leave any "_" comment keys the clone carried untouched.
       delete cfg.overrides;
-      cfg._comment_overrides = "Expert overrides — all fields below have built-in defaults in fidelity presets. Uncomment only if manual tuning is needed.";
-      cfg._optional_overrides_example = {
-        solver: {
-          _end_time: 800,
-          _write_interval: 400,
-          _purge_write: 2,
-        },
-        force_refs: {
-          _Aref: 1.0,
-          _lRef: 1.0,
-          _CofR: [0.0, 0.0, 0.0],
-        },
-        mesh_params: {
-          _base_cell_size: 0.10,
-          _surface_level: [4, 5],
-          _edge_level: 6,
-          _near_wake_level: 3,
-          _far_wake_level: 1,
-          _auto_size: true,
-          _feature_cells: 4,
-          _max_surface_level: 7,
-        },
-        layers: {
-          _n_layers: 5,
-          _expansion_ratio: 1.2,
-          _first_layer_thickness: 0.3,
-          _min_thickness: 0.05,
-        },
-        fluid: {
-          _rho: 1.225,
-          _nu: 1.516e-5,
-        },
-        turbulence: {
-          _model: "kOmegaSST",
-          _intensity: 0.005,
-          _nut_ratio: 10,
-        },
-      };
     }
 
     this.activeConfig = cfg;
@@ -1180,11 +1176,26 @@ class CFDApp {
       if (res.ok) {
         const data = await res.json();
         this.fidelityPresets = data.fidelity_presets || null;
+        this.updateFidelityCards();
         this.updateOverridePlaceholders(this.activeConfig?.fidelity || 'standard');
       }
     } catch (err) {
       console.warn('Could not load fidelity presets:', err);
     }
+  }
+
+  updateFidelityCards() {
+    // Keep the card cell/time text sourced from the server presets so the UI
+    // cannot drift from FIDELITY_PRESETS in the backend.
+    if (!this.fidelityPresets) return;
+    document.querySelectorAll('.fidelity-card').forEach((card) => {
+      const preset = this.fidelityPresets[card.dataset.fidelity];
+      if (!preset) return;
+      const cellsEl = card.querySelector('.card-cells');
+      const timeEl = card.querySelector('.card-time');
+      if (cellsEl && preset.cell_estimate) cellsEl.textContent = preset.cell_estimate;
+      if (timeEl && preset.runtime_estimate) timeEl.textContent = preset.runtime_estimate;
+    });
   }
 
   updateLayerModeUI() {
@@ -2656,6 +2667,7 @@ class CFDApp {
     }
 
     this.resetSolverHealth();
+    this.resetMeshQuality();
 
     // Hide overlays while loading so a stale "no data" state is not shown.
     ['forces-empty-overlay', 'residuals-empty-overlay', 'coeff-empty-overlay',
@@ -3188,7 +3200,23 @@ class CFDApp {
         if (!isStale()) this.showTelemetryError(err.message);
       }
 
-      // 4. Tail log (guarded against case switches)
+      // 4. Fetch Mesh Quality (checkMesh + boundary-layer coverage)
+      try {
+        const res = await fetch(`/api/telemetry/mesh?case_name=${encodeURIComponent(caseName)}`);
+        if (!res.ok) throw new Error(`Mesh quality request failed (HTTP ${res.status})`);
+        const meshData = await res.json();
+        if (isStale()) return;
+        if (meshData.has_data) {
+          this.renderMeshQuality(meshData);
+        } else {
+          this.resetMeshQuality(meshData && meshData.message);
+        }
+      } catch (err) {
+        console.error('Mesh quality telemetry poll failed:', err);
+        if (!isStale()) this.showTelemetryError(err.message);
+      }
+
+      // 5. Tail log (guarded against case switches)
       await this.fetchLogTail(caseName, reqId);
     } finally {
       if (reqId === this.telemetryRequestId) this.telemetryInFlight = false;
@@ -3245,6 +3273,180 @@ class CFDApp {
       this.charts.solverHealthChart.data.datasets.forEach((ds) => { ds.data = []; });
       this.charts.solverHealthChart.update('none');
     }
+  }
+
+  renderMeshQuality(data) {
+    const stats = data.stats || {};
+    const num = (value) => (
+      value === null || value === undefined || !isFinite(Number(value)) ? null : Number(value)
+    );
+    const fmt = (value, digits = 4, fallback = '--') => {
+      const v = num(value);
+      return v === null ? fallback : v.toFixed(digits);
+    };
+    const cellCount = num(stats.cells);
+
+    this.setValText('mesh-cells', cellCount === null ? '--' : cellCount.toLocaleString());
+    const nonOrthoMax = fmt(stats.max_non_ortho, 2);
+    const nonOrthoAvg = num(stats.avg_non_ortho);
+    this.setValText(
+      'mesh-nonortho',
+      nonOrthoMax === '--' ? '--'
+        : (nonOrthoAvg === null ? nonOrthoMax : `${nonOrthoMax} / ${nonOrthoAvg.toFixed(2)}`),
+    );
+    this.setValText('mesh-skewness', fmt(stats.max_skewness, 3));
+    this.setValText('mesh-aspect', fmt(stats.max_aspect_ratio, 2));
+
+    const issues = Array.isArray(data.issues) ? data.issues : [];
+    const yPlusMissed = Array.isArray((data.y_plus || {}).missed) ? data.y_plus.missed : [];
+    const concernCount = issues.length + yPlusMissed.length;
+    const verdict = data.verdict || (data.ok ? 'good' : 'bad');
+    const verdictLabel = data.verdict_label || '--';
+    const badge = document.getElementById('mesh-quality-badge');
+    if (badge) {
+      const badgeClass = {
+        good: 'mesh-quality-badge-ok',
+        usable: 'mesh-quality-badge-warn',
+        marginal: 'mesh-quality-badge-warn',
+        bad: 'mesh-quality-badge-bad',
+        unknown: '',
+      }[verdict] || '';
+      badge.className = `badge badge-subtle ${badgeClass}`.trim();
+      const count = concernCount ? ` · ${concernCount} concern${concernCount === 1 ? '' : 's'}` : '';
+      badge.textContent = verdictLabel === '--' ? '--' : `${verdictLabel}${count}`;
+    }
+
+    // checkMesh metrics: value / limit / pass-fail.
+    const metricsTbody = document.getElementById('mesh-metrics-tbody');
+    if (metricsTbody) {
+      const metrics = Array.isArray(data.metrics) ? data.metrics : [];
+      if (!metrics.length) {
+        metricsTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No metrics</td></tr>';
+      } else {
+        metricsTbody.innerHTML = metrics.map((m) => {
+          const value = num(m.value);
+          const digits = m.integer ? 0 : 4;
+          const shown = value === null ? '--' : value.toLocaleString(undefined, {
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits,
+          });
+          const level = m.level || (m.pass ? 'good' : 'marginal');
+          const cls = {
+            good: 'mesh-metric-pass',
+            usable: 'mesh-metric-usable',
+            marginal: 'mesh-metric-fail',
+          }[level] || 'mesh-metric-pass';
+          const status = { good: 'OK', usable: 'CAUTION', marginal: 'FAIL' }[level] || 'OK';
+          return `<tr><td>${this.escapeHtml(m.label || m.key || '')}</td>`
+            + `<td class="monospace">${shown}</td>`
+            + `<td class="monospace text-muted">${this.escapeHtml(m.limit_text || '')}</td>`
+            + `<td class="${cls}">${status}</td></tr>`;
+        }).join('');
+      }
+    }
+
+    // Boundary layers: achieved / target + coverage + realised y+.
+    const yPlus = data.y_plus || {};
+    const yPlusPatches = yPlus.patches || {};
+    const layerTbody = document.getElementById('mesh-layer-tbody');
+    if (layerTbody) {
+      const layers = data.layers || {};
+      const patches = Object.keys(layers).sort();
+      if (!patches.length) {
+        layerTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No layer data</td></tr>';
+      } else {
+        const target = (data.target_layers !== null && data.target_layers !== undefined)
+          ? `/${data.target_layers}` : '';
+        layerTbody.innerHTML = patches.map((patch) => {
+          const info = layers[patch] || {};
+          const achieved = num(info.layers);
+          const coverage = num(info.coverage);
+          const yp = yPlusPatches[patch] || {};
+          const ypAvg = num(yp.average);
+          let ypText = '--';
+          let ypCls = 'monospace';
+          if (ypAvg !== null) {
+            const tgt = num(yPlus.target);
+            ypText = tgt === null ? ypAvg.toFixed(1) : `${ypAvg.toFixed(1)} / ${tgt}`;
+            if (yp.ok === false) ypCls += ' mesh-metric-fail';
+          }
+          return `<tr><td>${this.escapeHtml(patch)}</td>`
+            + `<td class="monospace">${achieved === null ? '--' : achieved}${target}</td>`
+            + `<td class="monospace">${coverage === null ? '--' : `${Math.round(coverage * 100)}%`}</td>`
+            + `<td class="${ypCls}">${ypText}</td></tr>`;
+        }).join('');
+      }
+    }
+    this.setValText(
+      'mesh-quality-note-yplus',
+      yPlus.available && yPlus.note ? `Near-wall y+: ${yPlus.note}` : '',
+    );
+
+    // Boundary patches: closure status.
+    const patchTbody = document.getElementById('mesh-patch-tbody');
+    if (patchTbody) {
+      const patches = data.patches || {};
+      const names = Object.keys(patches).sort();
+      if (!names.length) {
+        patchTbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No patch data</td></tr>';
+      } else {
+        patchTbody.innerHTML = names.map((name) => {
+          const info = patches[name] || {};
+          const faces = num(info.faces);
+          const closure = info.closure || (info.closed ? 'closed' : 'non-closed');
+          const cls = info.closed ? 'mesh-metric-pass' : 'text-muted';
+          return `<tr><td>${this.escapeHtml(name)}</td>`
+            + `<td class="monospace">${faces === null ? '--' : faces.toLocaleString()}</td>`
+            + `<td class="${cls}">${this.escapeHtml(closure)}</td></tr>`;
+        }).join('');
+      }
+    }
+
+    // Cell types: count + share.
+    const cellTypeTbody = document.getElementById('mesh-celltype-tbody');
+    if (cellTypeTbody) {
+      const types = data.cell_types || {};
+      const names = Object.keys(types).filter((n) => num(types[n]?.count) > 0).sort(
+        (a, b) => num(types[b].count) - num(types[a].count),
+      );
+      if (!names.length) {
+        cellTypeTbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No cell-type data</td></tr>';
+      } else {
+        cellTypeTbody.innerHTML = names.map((name) => {
+          const info = types[name] || {};
+          const count = num(info.count);
+          const fraction = num(info.fraction);
+          return `<tr><td>${this.escapeHtml(name)}</td>`
+            + `<td class="monospace">${count === null ? '--' : count.toLocaleString()}</td>`
+            + `<td class="monospace">${fraction === null ? '--' : `${(fraction * 100).toFixed(1)}%`}</td></tr>`;
+        }).join('');
+      }
+    }
+
+    this.setValText('mesh-quality-note', data.note || '');
+  }
+
+  resetMeshQuality(message) {
+    ['mesh-cells', 'mesh-nonortho', 'mesh-skewness', 'mesh-aspect'].forEach((id) => {
+      this.setValText(id, '--');
+    });
+    const badge = document.getElementById('mesh-quality-badge');
+    if (badge) {
+      badge.className = 'badge badge-subtle';
+      badge.textContent = '--';
+    }
+    const empties = {
+      'mesh-metrics-tbody': [4, 'No metrics'],
+      'mesh-layer-tbody': [4, 'No layer data'],
+      'mesh-patch-tbody': [3, 'No patch data'],
+      'mesh-celltype-tbody': [3, 'No cell-type data'],
+    };
+    Object.entries(empties).forEach(([id, [cols, text]]) => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<tr><td colspan="${cols}" class="text-center text-muted">${text}</td></tr>`;
+    });
+    this.setValText('mesh-quality-note-yplus', '');
+    this.setValText('mesh-quality-note', message || 'No mesh report yet.');
   }
 
   renderCoefficientKpis(data) {

@@ -99,7 +99,7 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
-    from rapidfoam.config import find_stl, load_config, user_set, validate
+    from rapidfoam.config import CASE_DIR, STL_DIR, find_stl, load_config, user_set, validate
     from rapidfoam.geometry import (
         compute_domain_box,
         compute_mesh_params,
@@ -140,7 +140,7 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         sys.exit(1)
 
     # Resolve STL names (strip extensions for OpenFOAM patch names)
-    stl_dir = project_dir / cfg["stl_dir"]
+    stl_dir = project_dir / STL_DIR
     stl_pairs: list[tuple[str, Path]] = []
     for name in cfg["stl_files"]:
         stem = name.rsplit(".", 1)[0] if "." in name else name
@@ -219,7 +219,8 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
 
     # Derive mesh parameters from geometry (bounds + feature statistics)
     cfg["mesh_params"] = compute_mesh_params(
-        cfg, combined_bounds, feature_stats=edge_stats, angle_stats=angle_stats
+        cfg, combined_bounds, feature_stats=edge_stats, angle_stats=angle_stats,
+        explicit_feature_angle=_is_set("feature_extract", "includedAngle"),
     )
     # Apply fidelity presets conditionally
     from rapidfoam.geometry import FIDELITY_PRESETS
@@ -336,7 +337,7 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
 
     div_u_scheme = cfg.get("schemes", {}).get("div_U", "bounded Gauss limitedLinear 1")
 
-    case_dir = project_dir / cfg["case_dir"] / cfg["case_name"]
+    case_dir = project_dir / CASE_DIR / cfg["case_name"]
     # Dry run — stop here
     if dry_run:
         print(f"\n  DRY RUN — would generate: {case_dir}")
@@ -466,6 +467,7 @@ def forces_main() -> None:
     parser.add_argument("--compare", action="store_true", help="Multi-case comparison")
     parser.add_argument("--check", action="store_true", help="Exit 0 if converged, 1 if not")
     parser.add_argument("--yplus", action="store_true", help="Verify near-wall y+ against the target")
+    parser.add_argument("--mesh", action="store_true", help="Verify mesh quality (checkMesh + boundary layers)")
     parser.add_argument("--interval", "-i", type=float, default=3, help="Live update interval (s)")
     args = parser.parse_args()
 
@@ -548,6 +550,53 @@ def forces_main() -> None:
             print(f"    {patch:<24} min {lo:>7.2f}  max {hi:>8.2f}  avg {avg:>7.2f}  [{stats['status']}]")
         print(f"    {summary['note']}")
         sys.exit(0 if not summary.get("off_target") else 2)
+
+    # Mesh-quality verification (independent of force data)
+    if args.mesh:
+        from rapidfoam.postproc.checkmesh import mesh_quality_report
+        summary = mesh_quality_report(case_dir, args.config)
+        if not summary.get("available"):
+            sys.exit(f"No checkMesh log found in {case_dir}. Did the case mesh?")
+
+        def _fmt(value: object, spec: str = ".4g") -> str | None:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return format(value, spec)
+            return None
+
+        stats = summary["stats"]
+        verdict_label = summary.get("verdict_label", "")
+        print(f"\n  Mesh quality (checkMesh) — verdict: {verdict_label}")
+        cells = _fmt(stats.get("cells"), ",d")
+        if cells is not None:
+            print(f"    cells            {cells}")
+        nonortho = _fmt(stats.get("max_non_ortho"))
+        if nonortho is not None:
+            avg = _fmt(stats.get("avg_non_ortho"))
+            suffix = f"  (avg {avg})" if avg is not None else ""
+            print(f"    max non-ortho    {nonortho}{suffix}")
+        skew = _fmt(stats.get("max_skewness"))
+        if skew is not None:
+            print(f"    max skewness     {skew}")
+        aspect = _fmt(stats.get("max_aspect_ratio"))
+        if aspect is not None:
+            print(f"    max aspect ratio {aspect}")
+        concave = _fmt(stats.get("concave_cells"), ",d")
+        if concave is not None:
+            print(f"    concave cells    {concave}")
+        failed = stats.get("failed_checks")
+        if isinstance(failed, int) and not isinstance(failed, bool):
+            print(f"    failed checks    {failed}")
+        ranked = [m for m in summary.get("metrics", []) if m.get("level") in ("usable", "marginal")]
+        for metric in ranked:
+            tag = "borderline" if metric["level"] == "usable" else "poor"
+            print(f"    {metric['label']}: {metric['value']:g} ({tag})")
+        for patch, info in sorted(summary["layers"].items()):
+            achieved = info.get("layers", "?")
+            coverage = info.get("coverage")
+            cov_txt = f" ({coverage * 100:.0f}%)" if isinstance(coverage, (int, float)) else ""
+            print(f"    layers {patch:<16} {achieved}{cov_txt}")
+        print(f"    {summary['note']}")
+        sys.exit(0 if summary.get("ok") else 2)
 
     files = find_force_files(case_dir)
     if not files:

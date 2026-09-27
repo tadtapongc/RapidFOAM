@@ -16,6 +16,15 @@ from rapidfoam.stl_utils import BBox, EdgeStats, FeatureAngleStats
 # sizing and the ground-layer clearance guard so they stay consistent.
 GROUND_EMBED = 0.01
 
+# Fraction of the first layer used as snappyHexMesh's minimum layer thickness.
+# The default is 1.0: minThickness equals the first layer, so snappy drops a
+# whole prism stack rather than extrude a poorly-conditioned thinner one at
+# tight radii. This acts as a quality gate. Lowering it (e.g. 0.5) keeps partial
+# stacks but was measured to produce degenerate prisms on a real case (layer
+# coverage 2->1, aspect ratio 20.8->62.4, determinant -585x), so it is an
+# opt-in per-case experiment via layers.min_thickness_ratio, not a default.
+DEFAULT_MIN_THICKNESS_RATIO = 1.0
+
 # ============================================================
 # AXIS UTILITIES
 # ============================================================
@@ -503,6 +512,8 @@ def compute_mesh_params(
     combined_bounds: BBox,
     feature_stats: EdgeStats | None = None,
     angle_stats: FeatureAngleStats | None = None,
+    *,
+    explicit_feature_angle: bool = False,
 ) -> dict[str, Any]:
     """Derive all mesh parameters from geometry bounds.
 
@@ -597,6 +608,24 @@ def compute_mesh_params(
             and "resolveFeatureAngle" not in user_mesh:
         feature_angle_info = _resolve_feature_angle(user_mesh, preset, angle_stats)
         resolve_feature_angle = feature_angle_info["resolveFeatureAngle"]
+
+        # Keep surfaceFeatureExtract consistent with snappy: surfaceFeatureExtract
+        # keeps an edge as an .eMesh feature when its *included* angle is below
+        # ``includedAngle`` (included = 180 - normal). snappy snaps edges whose
+        # normal angle exceeds resolveFeatureAngle, i.e. included angle below
+        # 180 - resolveFeatureAngle. The derived resolve angle can be sharper
+        # than the preset (more features), so raise the extraction angle to the
+        # recommended value to catch those creases explicitly. A user-set
+        # includedAngle always wins.
+        # Only when the derived angle actually sharpened detection (otherwise
+        # the extraction angle should stay as configured, so smooth geometry is
+        # not silently loosened).
+        if not explicit_feature_angle and feature_angle_info.get("changed"):
+            recommended = feature_angle_info["included_angle_recommended"]
+            feat = cfg.setdefault("feature_extract", {})
+            configured = feat.get("includedAngle")
+            if configured is None or recommended > float(configured):
+                feat["includedAngle"] = recommended
 
     # Wake levels (uncoupled from surface level to prevent wake bloat)
     near_wake_level = user_mesh.get("near_wake_level", preset.get("near_wake_level", 3))
@@ -868,6 +897,18 @@ def resolve_layers(
             return t * (ratio ** n_layers - 1) / (ratio - 1)
         return t * max(n_layers, 1)
 
+    try:
+        min_ratio = float(layers.get("min_thickness_ratio", DEFAULT_MIN_THICKNESS_RATIO))
+    except (TypeError, ValueError):
+        min_ratio = DEFAULT_MIN_THICKNESS_RATIO
+    if not (0.0 < min_ratio <= 1.0):
+        min_ratio = DEFAULT_MIN_THICKNESS_RATIO
+
+    def _min_thickness(t: float) -> float:
+        """Minimum layer thickness snappy may keep: a fraction of the first
+        layer, never exceeding the same fraction of the total stack."""
+        return min(min_ratio * t, min_ratio * _stack(t))
+
     resolved: dict[str, Any] = {
         "u_tau": u_tau,
         "y_plus_target": target,
@@ -902,7 +943,7 @@ def resolve_layers(
             layers["relativeSizes"] = False
             layers["first_layer_thickness"] = thickness
             if not explicit_min_thickness:
-                layers["min_thickness"] = thickness
+                layers["min_thickness"] = _min_thickness(thickness)
             resolved.update(
                 y_plus_effective=thickness * u_tau / (2.0 * nu),
                 first_layer_thickness=thickness,
@@ -916,6 +957,8 @@ def resolve_layers(
         except (TypeError, ValueError):
             thickness = None
         if thickness is not None and math.isfinite(thickness) and thickness > 0:
+            if not explicit_min_thickness:
+                layers["min_thickness"] = _min_thickness(thickness)
             resolved.update(
                 y_plus_effective=(thickness * u_tau / (2.0 * nu)) if u_tau > 0 else None,
                 first_layer_thickness=thickness,

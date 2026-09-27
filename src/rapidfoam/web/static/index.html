@@ -186,6 +186,7 @@
                   <span class="field-hint">Target directory name created inside <code>cases/&lt;case_name&gt;/</code>.</span>
                 </div>
 
+
                 <div class="form-group col-span-2">
                   <label>Mesh & Solver Fidelity Preset</label>
                   <div class="fidelity-cards">
@@ -461,6 +462,11 @@
                   <input type="text" id="cfg-slurm-mem" class="input" value="2G">
                 </div>
 
+                <div class="form-group">
+                  <label for="cfg-slurm-cpus">CPUs Per Task</label>
+                  <input type="number" id="cfg-slurm-cpus" class="input" min="1" step="1" value="1">
+                </div>
+
                 <div class="form-group col-span-2">
                   <label for="cfg-slurm-source">OpenFOAM Environment Source Script</label>
                   <input type="text" id="cfg-slurm-source" class="input" value="$HOME/OpenFOAM/OpenFOAM-v2606/etc/bashrc">
@@ -482,7 +488,8 @@
                   <div class="overrides-banner">
                     <div class="overrides-banner-content">
                       <span class="overrides-banner-title">Selective Dictionary Overrides</span>
-                      <span class="overrides-banner-desc">Leave any field blank to follow the selected fidelity preset &amp; universal defaults. Values entered here selectively override presets (matching <code>configs/config.json</code>).</span>
+                      <span class="overrides-banner-desc">Leave any field blank to follow the selected fidelity preset &amp; universal defaults. Values entered here selectively override presets (matching <code>configs/config.json</code>).
+                        <br>Solver-coupled internals (<code>schemes</code>, <code>linear_solvers</code>, <code>relaxation</code>, <code>simple</code>, <code>wall_functions</code>, <code>snap</code>, and the snappy layer/mesh_quality knobs) are intentionally not shown: the generator sets them per fidelity preset. Edit them via the JSON drawer or <code>DEFAULT_CONFIG</code> if needed.</span>
                     </div>
                     <button type="button" class="btn btn-outline btn-xs" id="btn-clear-all-overrides" title="Reset all overrides to blank / preset defaults">Clear All Overrides</button>
                   </div>
@@ -616,6 +623,12 @@
                     <span class="field-hint">Hard refinement cap protecting the cell budget; warns when auto-sizing clamps here</span>
                   </div>
 
+                  <div class="form-group">
+                    <label for="cfg-override-feature-angle">Feature Edge Extraction Angle</label>
+                    <input type="number" id="cfg-override-feature-angle" class="input" min="1" max="180" step="1" placeholder="Auto (140)">
+                    <span class="field-hint">Included angle (deg) for surfaceFeatureExtract: edges sharper than this are kept for snapping. Lower captures subtler creases but risks cosmetic CAD seams.</span>
+                  </div>
+
                   <!-- 4. Boundary Layer Mesh Overrides -->
                   <div class="form-group col-span-2 overrides-section-header">
                     <h4 class="section-subtitle">4. Boundary Layer Mesh Overrides</h4>
@@ -660,7 +673,7 @@
                   <div class="form-group">
                     <label for="cfg-override-layer-minthickness">Minimum Overall Thickness</label>
                     <input type="number" id="cfg-override-layer-minthickness" class="input" step="any" min="0" placeholder="Auto (first layer)">
-                    <span class="field-hint">Same units as the first layer; must not exceed the total stack</span>
+                    <span class="field-hint">Same units as the first layer; auto-derived as <code>min_thickness_ratio</code> × first layer (config-only, default 1.0 = full first layer). Lowering it keeps partial stacks but can hurt cell quality.</span>
                   </div>
 
                   <div class="form-group">
@@ -1155,6 +1168,100 @@
               <div class="empty-desc">Continuity, linear iterations, and timing appear once log.simpleFoam has solver output.</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Mesh Quality -->
+      <div class="panel solver-health-panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h3>Mesh Quality</h3>
+            <span class="panel-subtitle">checkMesh metrics &amp; boundary-layer coverage</span>
+          </div>
+          <div class="panel-header-actions">
+            <span class="badge badge-subtle" id="mesh-quality-badge">--</span>
+          </div>
+        </div>
+        <div class="solver-health-body">
+          <div class="solver-stat-grid">
+            <div class="solver-stat">
+              <div class="solver-stat-label">Cells</div>
+              <div class="solver-stat-value monospace" id="mesh-cells">--</div>
+            </div>
+            <div class="solver-stat">
+              <div class="solver-stat-label">Non-orthogonality (max / avg)</div>
+              <div class="solver-stat-value monospace" id="mesh-nonortho">--</div>
+            </div>
+            <div class="solver-stat">
+              <div class="solver-stat-label">Skewness (max)</div>
+              <div class="solver-stat-value monospace" id="mesh-skewness">--</div>
+            </div>
+            <div class="solver-stat">
+              <div class="solver-stat-label">Aspect ratio (max)</div>
+              <div class="solver-stat-value monospace" id="mesh-aspect">--</div>
+            </div>
+          </div>
+
+          <div class="mesh-quality-grid">
+            <div class="mesh-quality-card">
+              <h4 class="mesh-quality-card-title">checkMesh Metrics</h4>
+              <div class="table-responsive">
+                <table class="data-table mini-table" id="mesh-metrics-table">
+                  <thead>
+                    <tr><th>Metric</th><th>Value</th><th>Limit</th><th>Status</th></tr>
+                  </thead>
+                  <tbody id="mesh-metrics-tbody">
+                    <tr><td colspan="4" class="text-center text-muted">No metrics</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="mesh-quality-card">
+              <h4 class="mesh-quality-card-title">Boundary Layers</h4>
+              <div class="table-responsive">
+                <table class="data-table mini-table" id="mesh-layer-table">
+                  <thead>
+                    <tr><th>Patch</th><th>Layers</th><th>Coverage</th><th>Realised y+</th></tr>
+                  </thead>
+                  <tbody id="mesh-layer-tbody">
+                    <tr><td colspan="4" class="text-center text-muted">No layer data</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="mesh-quality-card">
+              <h4 class="mesh-quality-card-title">Boundary Patches</h4>
+              <div class="table-responsive">
+                <table class="data-table mini-table" id="mesh-patch-table">
+                  <thead>
+                    <tr><th>Patch</th><th>Faces</th><th>Closure</th></tr>
+                  </thead>
+                  <tbody id="mesh-patch-tbody">
+                    <tr><td colspan="3" class="text-center text-muted">No patch data</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="mesh-quality-card">
+              <h4 class="mesh-quality-card-title">Cell Types</h4>
+              <div class="table-responsive">
+                <table class="data-table mini-table" id="mesh-celltype-table">
+                  <thead>
+                    <tr><th>Type</th><th>Cells</th><th>Share</th></tr>
+                  </thead>
+                  <tbody id="mesh-celltype-tbody">
+                    <tr><td colspan="3" class="text-center text-muted">No cell-type data</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <p class="mesh-quality-note" id="mesh-quality-note-yplus"></p>
+          <p class="mesh-quality-note" id="mesh-quality-note">No mesh report yet.</p>
         </div>
       </div>
 

@@ -280,6 +280,375 @@ test('renderLayerPreview shows auto-size text even without a resolved first laye
   assert.ok(auto.includes('6.20 mm'), auto);
 });
 
+// ------------------------------------- Config form -> JSON merge (no rebuild)
+
+function installFormStubs(app) {
+  // Minimal getVal/getCheck so buildConfigFromVisualForm can run with a DOM
+  // that only carries the fields each test cares about.
+  app.getVal = (id) => {
+    const el = app._window.document.getElementById(id);
+    return el ? el.value : '';
+  };
+  app.getCheck = (id) => {
+    const el = app._window.document.getElementById(id);
+    return el ? !!el.checked : false;
+  };
+  app.syncConfigToJsonDrawer = () => {};
+  app.updateDomainBoxVisualization = () => {};
+}
+
+const CONFIG_STUB_IDS = [
+  'cfg-case-name', 'cfg-flow-velocity-ms', 'cfg-flow-direction', 'cfg-flow-ground',
+  'cfg-outputs-drag', 'cfg-outputs-downforce', 'cfg-domain-box', 'cfg-symmetry-plane',
+  'cfg-ground-style', 'cfg-ground-clearance', 'cfg-ground-plane',
+  'cfg-face-neg-x', 'cfg-face-pos-x', 'cfg-face-neg-y', 'cfg-face-pos-y',
+  'cfg-face-pos-z', 'cfg-face-neg-z', 'cfg-parallel-procs', 'cfg-parallel-method',
+  'cfg-slurm-qos', 'cfg-slurm-partition', 'cfg-slurm-time', 'cfg-slurm-mem',
+  'cfg-slurm-source', 'cfg-slurm-modules', 'cfg-override-feature-angle',
+  'cfg-slurm-cpus',
+];
+
+function buildStubBody() {
+  return CONFIG_STUB_IDS.map((id) => `<input id="${id}">`).join('');
+}
+
+function seedForm(app) {
+  const doc = app._window.document;
+  const set = (id, value) => { const el = doc.getElementById(id); if (el) el.value = value; };
+  set('cfg-case-name', 'my_case');
+  set('cfg-flow-velocity-ms', '16.67');
+  set('cfg-flow-direction', '-z');
+  set('cfg-outputs-drag', '-z');
+  set('cfg-outputs-downforce', '-y');
+  set('cfg-ground-style', 'none');
+  set('cfg-face-neg-x', 'symmetry');
+  set('cfg-face-pos-x', 'farField');
+  set('cfg-face-neg-y', 'ground');
+  set('cfg-face-pos-y', 'farField');
+  set('cfg-face-pos-z', 'inlet');
+  set('cfg-face-neg-z', 'outlet');
+  set('cfg-parallel-procs', '32');
+  set('cfg-parallel-method', 'scotch');
+  set('cfg-slurm-cpus', '1');
+}
+
+test('buildConfigFromVisualForm preserves unknown and comment keys', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = {
+    case_name: 'old',
+    _README: 'keep me',
+    _section_domain: '--- domain ---',
+    patches: { inlet: 'inlet', walls: 'farField' },
+    vehicle: { wheelbase: 1.6, front_weight_pct: 45 },
+    feature_extract: { extractionMethod: 'extractFromSurface', includedAngle: 140 },
+    something_future: { nested: true },
+  };
+  app.buildConfigFromVisualForm();
+  const cfg = JSON.parse(JSON.stringify(app.activeConfig));
+  assert.equal(cfg._README, 'keep me');
+  assert.equal(cfg._section_domain, '--- domain ---');
+  assert.deepEqual(cfg.patches, { inlet: 'inlet', walls: 'farField' });
+  assert.equal(cfg.vehicle.wheelbase, 1.6);
+  assert.equal(cfg.something_future.nested, true);
+  assert.equal(cfg.case_name, 'my_case');
+  // feature_extract is form-owned: a blank input resets includedAngle, while
+  // the non-owned extractionMethod survives.
+  assert.equal(cfg.feature_extract.includedAngle, undefined);
+  assert.equal(cfg.feature_extract.extractionMethod, 'extractFromSurface');
+});
+
+test('buildConfigFromVisualForm updates a form-owned field without dropping siblings', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = { case_name: 'old', fidelity: 'standard', _note: 'x' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.fidelity, 'standard');
+  assert.equal(app.activeConfig._note, 'x');
+});
+
+test('buildConfigFromVisualForm preserves untouched override sections', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = {
+    case_name: 'c',
+    overrides: { force_refs: { Aref: 2.0, _comment: 'keep' } },
+  };
+  app.buildConfigFromVisualForm();
+  // The form-owned numeric key is blank so it clears, but the comment key the
+  // form does not own survives.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(app.activeConfig.overrides.force_refs)),
+    { _comment: 'keep' },
+  );
+});
+
+test('buildConfigFromVisualForm emits cpus_per_task', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app._window.document.getElementById('cfg-slurm-cpus').value = '4';
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.slurm.cpus_per_task, 4);
+});
+
+test('buildConfigFromVisualForm defaults cpus_per_task when blank', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app._window.document.getElementById('cfg-slurm-cpus').value = '';
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.slurm.cpus_per_task, 1);
+});
+
+test('buildConfigFromVisualForm emits feature_extract includedAngle', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app._window.document.getElementById('cfg-override-feature-angle').value = '120';
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.feature_extract.includedAngle, 120);
+});
+
+test('buildConfigFromVisualForm preserves feature_extract siblings', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app._window.document.getElementById('cfg-override-feature-angle').value = '120';
+  app.activeConfig = {
+    case_name: 'c',
+    feature_extract: { extractionMethod: 'extractFromSurface', includedAngle: 140 },
+  };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.feature_extract.includedAngle, 120);
+  assert.equal(app.activeConfig.feature_extract.extractionMethod, 'extractFromSurface');
+});
+
+test('buildConfigFromVisualForm drops a section whose active inputs are blank', async () => {
+  const app = await makeApp(
+    buildStubBody() + '<input id="cfg-override-ref-aref"><input id="cfg-override-solver-endtime">',
+  );
+  installFormStubs(app);
+  seedForm(app);
+  app._window.document.getElementById('cfg-override-solver-endtime').value = '1500';
+  app.activeConfig = {
+    case_name: 'c',
+    // Aref blank in the form -> force_refs dropped; end_time present -> kept.
+    overrides: { force_refs: { Aref: 2.0 }, solver: { end_time: 999 } },
+  };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.overrides.force_refs, undefined);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(app.activeConfig.overrides.solver)),
+    { end_time: 1500 },
+  );
+});
+
+// ------------------------------------------- Fidelity cards (data-driven)
+
+test('updateFidelityCards sources cell/time text from the server presets', async () => {
+  const app = await makeApp(`
+    <label class="fidelity-card" data-fidelity="fast">
+      <span class="card-cells">stale</span><span class="card-time">stale</span>
+    </label>
+    <label class="fidelity-card" data-fidelity="standard">
+      <span class="card-cells">stale</span><span class="card-time">stale</span>
+    </label>
+  `);
+  app.fidelityPresets = {
+    fast: { cell_estimate: '~3-5M cells', runtime_estimate: '~10-20 min' },
+    standard: { cell_estimate: '~9-13M cells', runtime_estimate: '~1-2 hrs' },
+  };
+  app.updateFidelityCards();
+  const doc = app._window.document;
+  const fast = doc.querySelector('.fidelity-card[data-fidelity="fast"]');
+  assert.equal(fast.querySelector('.card-cells').textContent, '~3-5M cells');
+  assert.equal(fast.querySelector('.card-time').textContent, '~10-20 min');
+  const std = doc.querySelector('.fidelity-card[data-fidelity="standard"]');
+  assert.equal(std.querySelector('.card-cells').textContent, '~9-13M cells');
+});
+
+test('updateFidelityCards is a no-op without presets', async () => {
+  const app = await makeApp(
+    '<label class="fidelity-card" data-fidelity="fast"><span class="card-cells">keep</span></label>',
+  );
+  app.fidelityPresets = null;
+  app.updateFidelityCards();
+  assert.equal(
+    app._window.document.querySelector('.card-cells').textContent,
+    'keep',
+  );
+});
+
+// ------------------------------------------------- Studio mesh-quality panel
+
+const MESH_BODY = `
+  <span id="mesh-quality-badge"></span>
+  <span id="mesh-cells"></span>
+  <span id="mesh-nonortho"></span>
+  <span id="mesh-skewness"></span>
+  <span id="mesh-aspect"></span>
+  <table><tbody id="mesh-metrics-tbody"></tbody></table>
+  <table><tbody id="mesh-layer-tbody"></tbody></table>
+  <table><tbody id="mesh-patch-tbody"></tbody></table>
+  <table><tbody id="mesh-celltype-tbody"></tbody></table>
+  <p id="mesh-quality-note-yplus"></p>
+  <p id="mesh-quality-note"></p>
+`;
+
+test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
+  const app = await makeApp(MESH_BODY);
+  app.renderMeshQuality({
+    ok: true,
+    verdict: 'good',
+    verdict_label: 'Good',
+    stats: { cells: 9008844, max_non_ortho: 45.2, avg_non_ortho: 3.1, max_skewness: 1.2, max_aspect_ratio: 12.5 },
+    metrics: [
+      { key: 'max_non_ortho', label: 'Max non-orthogonality', value: 45.2, limit_text: '<= 65', pass: true, level: 'good' },
+      { key: 'concave_cells', label: 'Concave cells', value: 0, limit_text: '== 0', pass: true, level: 'good', integer: true },
+    ],
+    layers: { geometry: { layers: 2, coverage: 1.0 } },
+    patches: { geometry: { faces: 124862, closed: true, closure: 'closed singly connected' } },
+    cell_types: { hexahedra: { count: 8881583, fraction: 0.9859 } },
+    y_plus: { available: true, target: 40, patches: { geometry: { average: 42.0 } }, missed: [], note: 'all patches within 50% of target' },
+    target_layers: 2,
+    issues: [],
+    note: 'mesh quality OK',
+  });
+  const doc = app._window.document;
+  assert.equal(doc.getElementById('mesh-cells').textContent, (9008844).toLocaleString());
+  assert.equal(doc.getElementById('mesh-nonortho').textContent, '45.20 / 3.10');
+  const badge = doc.getElementById('mesh-quality-badge');
+  assert.ok(badge.className.includes('mesh-quality-badge-ok'));
+  assert.equal(badge.textContent, 'Good');
+  const rows = doc.getElementById('mesh-layer-tbody').innerHTML;
+  assert.ok(rows.includes('geometry'));
+  assert.ok(rows.includes('2/2'));
+  assert.ok(rows.includes('100%'));
+  assert.ok(rows.includes('42.0 / 40'), 'realised y+ vs target');
+  assert.ok(doc.getElementById('mesh-quality-note-yplus').textContent.includes('all patches'));
+  // metrics table
+  const metrics = doc.getElementById('mesh-metrics-tbody').innerHTML;
+  assert.ok(metrics.includes('Max non-orthogonality'));
+  assert.ok(metrics.includes('mesh-metric-pass'));
+  // patch table
+  const patch = doc.getElementById('mesh-patch-tbody').innerHTML;
+  assert.ok(patch.includes('closed singly connected'));
+  // cell types
+  const ct = doc.getElementById('mesh-celltype-tbody').innerHTML;
+  assert.ok(ct.includes('hexahedra'));
+  assert.ok(ct.includes('98.6%'));
+});
+
+test('renderMeshQuality flags concerns and escapes the patch name', async () => {
+  const app = await makeApp(MESH_BODY);
+  app.renderMeshQuality({
+    ok: false,
+    verdict: 'bad',
+    verdict_label: 'Bad',
+    stats: { cells: 10, max_non_ortho: 68.3 },
+    metrics: [
+      { key: 'max_non_ortho', label: 'Max non-orthogonality', value: 68.3, limit_text: '<= 65', pass: false, level: 'usable' },
+      { key: 'concave_cells', label: 'Concave cells', value: 42, limit_text: '== 0', pass: false, level: 'marginal', integer: true },
+    ],
+    layers: { 'a<b>': { layers: 1, coverage: 0.5 } },
+    patches: { 'body<x>': { faces: 10, closed: false, closure: 'non-closed singly connected' } },
+    target_layers: 2,
+    issues: ['max non-orthogonality 68.3 > limit 65', 'boundary-layer dropout'],
+    note: '2 concerns',
+  });
+  const doc = app._window.document;
+  const badge = doc.getElementById('mesh-quality-badge');
+  assert.ok(badge.className.includes('mesh-quality-badge-bad'));
+  assert.equal(badge.textContent, 'Bad · 2 concerns');
+  const rows = doc.getElementById('mesh-layer-tbody').innerHTML;
+  assert.ok(!rows.includes('<b>'), 'raw tag must not survive');
+  assert.ok(rows.includes('&lt;b&gt;'));
+  assert.ok(rows.includes('50%'));
+  const metrics = doc.getElementById('mesh-metrics-tbody').innerHTML;
+  assert.ok(metrics.includes('mesh-metric-usable'), 'caution band');
+  assert.ok(metrics.includes('CAUTION'));
+  assert.ok(metrics.includes('mesh-metric-fail'), 'fail band');
+  const patch = doc.getElementById('mesh-patch-tbody').innerHTML;
+  assert.ok(!patch.includes('<x>'), 'patch tag must not survive');
+  assert.ok(patch.includes('non-closed'));
+});
+
+test('renderMeshQuality counts y+ misses as concerns and flags the row', async () => {
+  const app = await makeApp(MESH_BODY);
+  app.renderMeshQuality({
+    ok: true,
+    verdict: 'usable',
+    verdict_label: 'Usable',
+    stats: {},
+    metrics: [],
+    layers: { geometry: { layers: 2, coverage: 1.0 } },
+    patches: {},
+    target_layers: 2,
+    y_plus: { available: true, target: 100, patches: { geometry: { average: 9.0, ok: false } }, missed: ['geometry'] },
+    issues: [],
+    note: 'usable',
+  });
+  const doc = app._window.document;
+  const badge = doc.getElementById('mesh-quality-badge');
+  assert.equal(badge.textContent, 'Usable · 1 concern');
+  const rows = doc.getElementById('mesh-layer-tbody').innerHTML;
+  assert.ok(rows.includes('9.0 / 100'));
+  assert.ok(rows.includes('mesh-metric-fail'), 'missed y+ row is flagged');
+});
+
+test('resetMeshQuality clears the panel and shows a message', async () => {
+  const app = await makeApp(MESH_BODY);
+  app.renderMeshQuality({ ok: true, stats: { cells: 5 }, layers: {}, note: 'x' });
+  app.resetMeshQuality('no logs');
+  const doc = app._window.document;
+  assert.equal(doc.getElementById('mesh-cells').textContent, '--');
+  assert.equal(doc.getElementById('mesh-quality-note').textContent, 'no logs');
+  const badge = doc.getElementById('mesh-quality-badge');
+  assert.equal(badge.textContent, '--');
+  assert.ok(!badge.className.includes('mesh-quality-badge-ok'));
+  assert.ok(doc.getElementById('mesh-metrics-tbody').innerHTML.includes('No metrics'));
+});
+
+test('pollTelemetry fetches and renders the mesh-quality endpoint', async () => {
+  const app = await makeApp(`
+    <select id="telemetry-case-select"><option value="case_a" selected>case_a</option></select>
+    <span id="telemetry-error-banner"></span>
+    <div id="telemetry-convergence-pill"><span class="pill-text"></span></div>
+    ${MESH_BODY}
+  `);
+  const calls = [];
+  app._window.console.error = () => {};
+  app._window.fetch = async (url) => {
+    calls.push(String(url));
+    const target = String(url);
+    if (target.includes('/api/telemetry/forces')) {
+      return { ok: false, status: 500, json: async () => ({ detail: 'boom' }) };
+    }
+    if (target.includes('/api/telemetry/mesh')) {
+      return {
+        ok: true,
+        json: async () => ({
+          has_data: true, ok: true, stats: { cells: 7 }, layers: {}, issues: [],
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ has_data: false }) };
+  };
+  await app.pollTelemetry();
+  assert.ok(calls.some((u) => u.includes('/api/telemetry/mesh')));
+  assert.equal(
+    app._window.document.getElementById('mesh-cells').textContent,
+    (7).toLocaleString(),
+  );
+});
+
 test('updateDomainBoxVisualization refreshes the auto-size preview from the payload', async () => {
   const app = await makeApp('<span id="cfg-layer-preview"></span><span id="cfg-auto-size-preview"></span>');
   let updated = false;

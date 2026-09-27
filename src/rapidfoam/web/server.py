@@ -50,7 +50,16 @@ from rapidfoam.postproc.forces import (
     read_forces,
     window_stats,
 )
+from rapidfoam.postproc.checkmesh import (
+    _config_has_symmetry,
+    check_mesh_quality,
+    checkmesh_targets_from_dict,
+    parse_checkmesh,
+    parse_layer_coverage,
+    verdict_bands_from_dict,
+)
 from rapidfoam.postproc.residuals import find_residual_files, read_residuals
+from rapidfoam.postproc.yplus import find_yplus_files, read_yplus
 from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats, stl_analyze_full, stl_info
 from rapidfoam.web.ssh_client import ClusterSSHClient
 
@@ -204,7 +213,8 @@ def layer_preview(
         if preset.get("y_plus_target") is not None:
             layers["y_plus_target"] = preset["y_plus_target"]
     mesh_params = compute_mesh_params(
-        preview_cfg, bounds, feature_stats=feature_stats, angle_stats=angle_stats
+        preview_cfg, bounds, feature_stats=feature_stats, angle_stats=angle_stats,
+        explicit_feature_angle=user_set(raw_cfg, "feature_extract", "includedAngle"),
     )
     preview_cfg["mesh_params"] = mesh_params
     resolved = resolve_layers(
@@ -933,6 +943,12 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
         (f"cases/{case_name}/postProcessing/residuals/*/solverInfo.dat", None),
         (f"cases/{case_name}/postProcessing/residuals/*/residuals.dat", None),
         (f"cases/{case_name}/log.simpleFoam", 20000),
+        # Mesh-quality inputs: checkMesh is small; the final snappy layer table
+        # sits near the end of the log, so a modest tail is enough.
+        (f"cases/{case_name}/log.checkMesh", 400),
+        (f"cases/{case_name}/log.snappyHexMesh", 600),
+        (f"cases/{case_name}/postProcessing/yPlus/*/yPlus.dat", None),
+        (f"cases/{case_name}/case_config.json", None),
     ])
     with _remote_telemetry_lock:
         _remote_telemetry_cache[key] = (now, bundle)
@@ -2048,6 +2064,185 @@ async def api_telemetry_solver(case_name: str) -> dict[str, Any]:
             "linear_iters_max": [linear_iters_max[i] for i in sub_indices],
         },
     }
+
+
+def _read_yplus_texts(texts: list[str]) -> dict[str, dict[str, float]]:
+    """Parse y+ data directly from text segments (no temp files)."""
+    rows: dict[str, dict[str, float]] = {}
+    for text in texts:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            try:
+                time = float(parts[0])
+                lo = float(parts[2])
+                hi = float(parts[3])
+                avg = float(parts[4])
+            except ValueError:
+                continue
+            if not math.isfinite(time):
+                continue
+            patch = parts[1]
+            prev = rows.get(patch)
+            if prev is None or time >= prev.get("time", -math.inf):
+                rows[patch] = {"min": lo, "max": hi, "average": avg, "time": time}
+    return rows
+
+
+def _yplus_target_from_config(config_dict: Optional[dict[str, Any]]) -> Optional[float]:
+    """Read ``layers.y_plus_target`` (or its resolved fallback) from a config."""
+    if not isinstance(config_dict, dict):
+        return None
+    layers = config_dict.get("layers", {})
+    if not isinstance(layers, dict):
+        return None
+    for source in (layers, layers.get("_resolved", {})):
+        if not isinstance(source, dict):
+            continue
+        target = source.get("y_plus_target")
+        if isinstance(target, (int, float)) and not isinstance(target, bool) and target > 0:
+            return float(target)
+    return None
+
+
+def _summarise_yplus(
+    data: dict[str, dict[str, float]],
+    target: Optional[float],
+) -> dict[str, Any]:
+    """Attach realised y+ to a target and flag patches that miss it.
+
+    Mirrors the CLI's ``--yplus`` verdict in a compact JSON-friendly shape. A
+    patch is "missed" when no target is configured and its average is outside
+    the wall-function band, or when a target exists and the average is further
+    than 50% from it.
+    """
+    if not data:
+        return {"available": False}
+
+    per_patch: dict[str, dict[str, Any]] = {}
+    missed: list[str] = []
+    for patch, stats in data.items():
+        avg = stats.get("average")
+        entry: dict[str, Any] = {
+            "min": stats.get("min"),
+            "max": stats.get("max"),
+            "average": avg,
+        }
+        if target and target > 0 and avg is not None and math.isfinite(avg):
+            ratio = avg / target
+            ok = abs(ratio - 1.0) <= 0.5
+            entry["ratio"] = round(ratio, 3)
+            entry["ok"] = ok
+            if not ok:
+                missed.append(patch)
+        per_patch[patch] = entry
+
+    return {
+        "available": True,
+        "target": target,
+        "patches": per_patch,
+        "missed": missed,
+        "note": (
+            "no y+ target configured"
+            if not target
+            else ("all patches within 50% of target" if not missed
+                  else f"y+ target missed on {', '.join(missed)}")
+        ),
+    }
+
+
+@app.get("/api/telemetry/mesh")
+async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
+    """Verify mesh quality from the checkMesh and snappyHexMesh logs.
+
+    Returns the parsed checkMesh metrics, the per-patch boundary-layer coverage
+    and an overall verdict, using the case's configured limits where available.
+    """
+    if not CASE_NAME_REGEX.match(case_name):
+        raise HTTPException(status_code=400, detail="Invalid case_name")
+
+    checkmesh_text = ""
+    snappy_text = ""
+    config_dict: Optional[dict[str, Any]] = None
+    yplus_files: list[Path] = []
+    yplus_data: dict[str, dict[str, float]] = {}
+
+    # 1. Remote cluster first if connected (shared telemetry bundle).
+    if ssh_client.is_connected:
+        bundle = await _read_remote_telemetry(case_name)
+        checkmesh_text = next(
+            (value for path, value in bundle.items() if path.endswith("/log.checkMesh")), ""
+        )
+        snappy_text = next(
+            (value for path, value in bundle.items() if path.endswith("/log.snappyHexMesh")), ""
+        )
+        yplus_data = _read_yplus_texts(_sorted_segments(bundle, "/yPlus.dat"))
+        cfg_text = next(
+            (value for path, value in bundle.items() if path.endswith("/case_config.json")), ""
+        )
+        if cfg_text:
+            try:
+                parsed_cfg = json.loads(cfg_text)
+                if isinstance(parsed_cfg, dict):
+                    config_dict = parsed_cfg
+            except ValueError:
+                config_dict = None
+
+    # 2. Local case directory fallback.
+    local_case = PROJECT_ROOT / "cases" / case_name
+    if not checkmesh_text and (local_case / "log.checkMesh").is_file():
+        checkmesh_text = _read_text_tail_lines(local_case / "log.checkMesh")
+    if not snappy_text and (local_case / "log.snappyHexMesh").is_file():
+        snappy_text = _read_text_tail_lines(local_case / "log.snappyHexMesh")
+    if not yplus_data:
+        yplus_files = find_yplus_files(local_case)
+        if yplus_files:
+            yplus_data = read_yplus(yplus_files)
+    if config_dict is None:
+        for candidate in (
+            PROJECT_ROOT / "configs" / f"{case_name}.json",
+            local_case / "case_config.json",
+        ):
+            if candidate.is_file():
+                try:
+                    loaded = json.loads(candidate.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if isinstance(loaded, dict):
+                    config_dict = loaded
+                    break
+
+    if not checkmesh_text and not snappy_text:
+        return {
+            "has_data": False,
+            "case_name": case_name,
+            "message": f"No checkMesh or snappyHexMesh log found for case '{case_name}'.",
+        }
+
+    stats = parse_checkmesh(checkmesh_text)
+    layers = parse_layer_coverage(snappy_text)
+    targets = checkmesh_targets_from_dict(config_dict)
+    summary = check_mesh_quality(
+        stats,
+        layers,
+        int(targets["target_layers"]) if "target_layers" in targets else None,
+        max_non_ortho=targets.get("max_non_ortho", 65.0),
+        max_skewness=targets.get("max_skewness", 4.0),
+        bands=verdict_bands_from_dict(config_dict),
+        has_symmetry=_config_has_symmetry(config_dict),
+    )
+
+    # Cross-reference the realised near-wall y+ (from the yPlus function object)
+    # against the sizing target so "layers all present" is not mistaken for
+    # "layers at the right height".
+    yplus_target = _yplus_target_from_config(config_dict)
+    summary["y_plus"] = _summarise_yplus(yplus_data, yplus_target)
+
+    return {"has_data": True, "case_name": case_name, **summary}
 
 
 @app.get("/api/telemetry/logs")

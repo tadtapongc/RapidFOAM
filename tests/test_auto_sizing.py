@@ -282,6 +282,51 @@ class TestFeatureAngleDerivation(unittest.TestCase):
         self.assertEqual(params["resolveFeatureAngle"], 35)
 
 
+class TestFeatureExtractAlignment(unittest.TestCase):
+    def _cfg(self, preset="standard"):
+        return deep_merge(DEFAULT_CONFIG, {
+            "flow": {"velocity": 16.67, "direction": "-z", "ground": True},
+            "outputs": {"downforce_axis": "-y"},
+            "fidelity": preset,
+        })
+
+    def _angles(self, normal_angle, count=30):
+        stats = FeatureAngleStats()
+        for _ in range(count):
+            stats.add(normal_angle)
+        return stats
+
+    def test_sharp_crease_raises_extraction_angle(self):
+        # 20 deg normal crease -> resolve 15 -> included recommended 165.
+        cfg = self._cfg()
+        compute_mesh_params(cfg, BOUNDS, angle_stats=self._angles(20.0))
+        self.assertEqual(cfg["feature_extract"]["includedAngle"], 165.0)
+
+    def test_smooth_geometry_keeps_default_extraction_angle(self):
+        cfg = self._cfg()
+        compute_mesh_params(cfg, BOUNDS, angle_stats=self._angles(5.0))
+        self.assertEqual(cfg["feature_extract"]["includedAngle"], 140)
+
+    def test_explicit_extraction_angle_wins(self):
+        cfg = self._cfg()
+        cfg["feature_extract"]["includedAngle"] = 130
+        compute_mesh_params(
+            cfg, BOUNDS, angle_stats=self._angles(20.0), explicit_feature_angle=True
+        )
+        self.assertEqual(cfg["feature_extract"]["includedAngle"], 130)
+
+    def test_auto_feature_angle_disabled_leaves_extraction(self):
+        cfg = self._cfg()
+        cfg["mesh_params"] = {"auto_feature_angle": False}
+        compute_mesh_params(cfg, BOUNDS, angle_stats=self._angles(20.0))
+        self.assertEqual(cfg["feature_extract"]["includedAngle"], 140)
+
+    def test_no_angle_stats_leaves_extraction(self):
+        cfg = self._cfg()
+        compute_mesh_params(cfg, BOUNDS)
+        self.assertEqual(cfg["feature_extract"]["includedAngle"], 140)
+
+
 class TestAutoSizeValidation(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

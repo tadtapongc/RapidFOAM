@@ -47,7 +47,7 @@ class ProjectTest(unittest.TestCase):
         path = self.config(**extra)
         with contextlib.redirect_stdout(io.StringIO()):
             _do_generate(path, self.root)
-        return self.root / extra.get("case_dir", "cases") / "test_case"
+        return self.root / "cases" / "test_case"
 
     def test_missing_geometry_fails_before_creating_case(self):
         with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
@@ -70,14 +70,13 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(cfg["domain_faces"]["-x"], "symmetry")
         self.assertTrue(is_symmetry_case(case_dir=case))
 
-    def test_overrides_and_custom_output_directory(self):
+    def test_overrides_are_applied(self):
         case = self.generate(
-            case_dir="custom", solver={"end_time": 123}, layers={"n_layers": 2},
+            solver={"end_time": 123}, layers={"n_layers": 2},
             slurm={"time": "04:00:00"},
             mesh_params={"locationInMesh": [0.2, 0.3, 0.4], "maxLoadUnbalance": 0.25},
         )
         cfg = json.loads((case / "case_config.json").read_text())
-        self.assertFalse((self.root / "cases").exists())
         self.assertEqual(cfg["solver"]["end_time"], 123)
         self.assertEqual(cfg["layers"]["n_layers"], 2)
         self.assertEqual(cfg["slurm"]["time"], "04:00:00")
@@ -129,6 +128,8 @@ class ProjectTest(unittest.TestCase):
             {"case_name": "../elsewhere"}, {"stl_files": "body.stl"},
             {"stl_files": ["body.stl", "body.stl"]},
             {"mesh_params": {"surface_level": [5, 4]}},
+            {"layers": {"min_thickness_ratio": 0}},
+            {"layers": {"min_thickness_ratio": 1.5}},
         ]
         for example in examples:
             with self.subTest(example=example):
