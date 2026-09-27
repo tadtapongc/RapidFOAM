@@ -216,6 +216,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "minTriangleTwist": -1,
         "nSmoothScale": 4,
         "errorReduction": 0.75,
+        # Good/caution bands for the mesh-quality verdict (independent of the
+        # snappyHexMesh pass/fail limits above). "good" is the value at which a
+        # metric is considered healthy; "caution" is the boundary beyond which
+        # it is marginal/bad. Override per team standard.
+        "verdict_bands": {
+            "max_non_ortho": {"good": 60.0, "caution": 70.0},
+            "max_skewness": {"good": 2.0, "caution": 4.0},
+            "max_aspect_ratio": {"good": 50.0, "caution": 100.0},
+            "min_determinant": {"good": 0.05, "caution": 0.001},
+            "min_interp_weight": {"good": 0.1, "caution": 0.01},
+            "min_volume_ratio": {"good": 0.05, "caution": 0.01},
+            "concave_cells": {"good": 0.0, "caution": 0.0},
+        },
         "relaxed": {
             "maxNonOrtho": 75,
             "maxBoundarySkewness": 25,
@@ -437,6 +450,21 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         errors.append("mesh_params.resolveFeatureAngle must be a number in (0, 180]")
     if "ground_layers" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["ground_layers"], bool):
         errors.append("layers.ground_layers must be true or false")
+    verdict_bands = cfg.get("mesh_quality", {}).get("verdict_bands")
+    if verdict_bands is not None:
+        if not isinstance(verdict_bands, dict):
+            errors.append("mesh_quality.verdict_bands must be an object")
+        else:
+            for metric, band in verdict_bands.items():
+                if not isinstance(band, dict) or set(band) != {"good", "caution"}:
+                    errors.append(
+                        f"mesh_quality.verdict_bands.{metric} must have exactly "
+                        f"'good' and 'caution' numbers"
+                    )
+                elif not finite(band.get("good")) or not finite(band.get("caution")):
+                    errors.append(
+                        f"mesh_quality.verdict_bands.{metric}.good/caution must be finite numbers"
+                    )
     for section, keys in {
         "parallel": ("n_procs",), "slurm": ("nodes", "cpus_per_task"),
         "mesh_params": ("maxGlobalCells", "maxLocalCells", "nCellsBetweenLevels"),

@@ -55,6 +55,7 @@ from rapidfoam.postproc.checkmesh import (
     checkmesh_targets_from_dict,
     parse_checkmesh,
     parse_layer_coverage,
+    verdict_bands_from_dict,
 )
 from rapidfoam.postproc.residuals import find_residual_files, read_residuals
 from rapidfoam.postproc.yplus import find_yplus_files, read_yplus
@@ -2229,6 +2230,7 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
         int(targets["target_layers"]) if "target_layers" in targets else None,
         max_non_ortho=targets.get("max_non_ortho", 65.0),
         max_skewness=targets.get("max_skewness", 4.0),
+        bands=verdict_bands_from_dict(config_dict),
     )
 
     # Cross-reference the realised near-wall y+ (from the yPlus function object)

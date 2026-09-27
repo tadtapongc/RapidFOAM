@@ -99,13 +99,42 @@ _VERDICT_LABEL = {
 }
 
 
-def classify_value(key: str, value: float) -> str:
+def resolve_bands(
+    bands: dict[str, dict[str, float]] | None = None,
+) -> dict[str, tuple[float, float, str, str]]:
+    """Merge user-supplied good/caution bands over the built-in defaults.
+
+    ``bands`` may override ``good``/``caution`` per metric key; the comparison
+    kind and human label always come from the built-in table so a partial
+    override cannot change a metric's meaning.
+    """
+    resolved = dict(QUALITY_TIERS)
+    if not isinstance(bands, dict):
+        return resolved
+    for key, band in bands.items():
+        tier = resolved.get(key)
+        if tier is None or not isinstance(band, dict):
+            continue
+        good = band.get("good", tier[0])
+        caution = band.get("caution", tier[1])
+        if isinstance(good, (int, float)) and isinstance(caution, (int, float)) \
+                and not isinstance(good, bool) and not isinstance(caution, bool) \
+                and math.isfinite(good) and math.isfinite(caution):
+            resolved[key] = (float(good), float(caution), tier[2], tier[3])
+    return resolved
+
+
+def classify_value(
+    key: str,
+    value: float,
+    tiers: dict[str, tuple[float, float, str, str]] | None = None,
+) -> str:
     """Return ``good``/``usable``/``marginal`` for a single metric value.
 
     Unknown keys are treated as ``good`` so adding a metric never downgrades a
     verdict by accident.
     """
-    tier = QUALITY_TIERS.get(key)
+    tier = (tiers or QUALITY_TIERS).get(key)
     if tier is None or not math.isfinite(value):
         return "good"
     good, caution, kind, _ = tier
@@ -409,16 +438,22 @@ def check_mesh_quality(
     max_non_ortho: float = 65.0,
     max_skewness: float = 4.0,
     max_aspect_ratio: float = 100.0,
+    bands: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, Any]:
     """Compare parsed mesh metrics against quality limits.
 
     ``max_non_ortho``/``max_skewness`` default to snappyHexMesh's configured
     ``meshQualityControls``; ``max_aspect_ratio`` is a practical CFD guideline.
     A missing layer target only reports coverage, it does not flag dropout.
+
+    ``bands`` optionally overrides the good/caution verdict thresholds per
+    metric (see :func:`resolve_bands`); the built-in defaults are used when a
+    metric is not overridden.
     """
     stats = stats or {}
     layers = layers or {}
     issues: list[str] = []
+    tiers = resolve_bands(bands)
 
     if not stats and not layers:
         return {
@@ -460,7 +495,7 @@ def check_mesh_quality(
         else:  # positive
             passed = value > 0.0
             limit_text = "> 0"
-        level = classify_value(key, value)
+        level = classify_value(key, value, tiers)
         entry: dict[str, Any] = {
             "key": key,
             "label": label,
@@ -470,7 +505,7 @@ def check_mesh_quality(
             "pass": passed,
             "level": level,
         }
-        tier = QUALITY_TIERS.get(key)
+        tier = tiers.get(key)
         if tier is not None:
             good, caution, _, _ = tier
             entry["good"] = good
@@ -497,7 +532,7 @@ def check_mesh_quality(
             "limit": 0.0,
             "limit_text": "== 0",
             "pass": concave_cells == 0,
-            "level": classify_value("concave_cells", float(concave_cells)),
+            "level": classify_value("concave_cells", float(concave_cells), tiers),
             "integer": True,
         })
         if concave_cells > 0:
@@ -629,6 +664,52 @@ def checkmesh_targets_from_dict(cfg: dict[str, Any] | None) -> dict[str, float]:
     return targets
 
 
+def verdict_bands_from_dict(cfg: dict[str, Any] | None) -> dict[str, dict[str, float]]:
+    """Extract per-metric good/caution bands from a case config, if present."""
+    if not isinstance(cfg, dict):
+        return {}
+    quality = cfg.get("mesh_quality", {})
+    if not isinstance(quality, dict):
+        return {}
+    bands = quality.get("verdict_bands")
+    if not isinstance(bands, dict):
+        return {}
+    result: dict[str, dict[str, float]] = {}
+    for metric, band in bands.items():
+        if not isinstance(band, dict):
+            continue
+        good = band.get("good")
+        caution = band.get("caution")
+        if isinstance(good, (int, float)) and not isinstance(good, bool) \
+                and isinstance(caution, (int, float)) and not isinstance(caution, bool):
+            result[metric] = {"good": float(good), "caution": float(caution)}
+    return result
+
+
+def _load_config_dict(
+    config_path: str | Path | None = None,
+    case_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Load the first available case config (explicit, case, cwd)."""
+    candidates: list[Path] = []
+    if config_path:
+        candidates.append(Path(config_path))
+    if case_dir:
+        candidates.append(Path(case_dir) / "case_config.json")
+    candidates.append(Path("case_config.json"))
+
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            cfg = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if isinstance(cfg, dict):
+            return cfg
+    return {}
+
+
 def checkmesh_targets_from_case(
     config_path: str | Path | None = None,
     case_dir: str | Path | None = None,
@@ -664,11 +745,13 @@ def mesh_quality_report(
     base = Path(case_dir) if case_dir else Path(".")
     stats = read_checkmesh(find_checkmesh_logs(base))
     layers = read_layer_coverage(find_snappy_logs(base))
-    targets = checkmesh_targets_from_case(config_path, base)
+    config_dict = _load_config_dict(config_path, base)
+    targets = checkmesh_targets_from_dict(config_dict)
     return check_mesh_quality(
         stats,
         layers,
         int(targets["target_layers"]) if "target_layers" in targets else None,
         max_non_ortho=targets.get("max_non_ortho", 65.0),
         max_skewness=targets.get("max_skewness", 4.0),
+        bands=verdict_bands_from_dict(config_dict),
     )

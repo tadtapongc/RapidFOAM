@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from rapidfoam.config import load_config, validate
 from rapidfoam.postproc.checkmesh import (
     QUALITY_TIERS,
     check_mesh_quality,
@@ -23,7 +24,12 @@ from rapidfoam.postproc.checkmesh import (
     parse_layer_coverage,
     read_checkmesh,
     read_layer_coverage,
+    resolve_bands,
+    verdict_bands_from_dict,
 )
+from rapidfoam.stl_utils import write_stl
+
+BODY_TRIANGLES = [((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 3))]
 
 EXTENDED_CHECKMESH = """\
     points:           9575251
@@ -343,6 +349,84 @@ class TestVerdict(unittest.TestCase):
         for key in ("max_non_ortho", "max_skewness", "max_aspect_ratio",
                     "min_determinant", "concave_cells"):
             self.assertIn(key, QUALITY_TIERS)
+
+
+class TestVerdictBands(unittest.TestCase):
+    def test_resolve_bands_defaults_when_empty(self):
+        tiers = resolve_bands(None)
+        self.assertEqual(tiers["max_non_ortho"][:2], (60.0, 70.0))
+        self.assertEqual(tiers["max_non_ortho"][2], "max")
+
+    def test_resolve_bands_overrides_good_and_caution(self):
+        tiers = resolve_bands({"max_non_ortho": {"good": 30.0, "caution": 40.0}})
+        self.assertEqual(tiers["max_non_ortho"][:2], (30.0, 40.0))
+        # kind/label come from the built-in table, not the override
+        self.assertEqual(tiers["max_non_ortho"][2], "max")
+
+    def test_resolve_bands_ignores_unknown_and_malformed(self):
+        tiers = resolve_bands({"nope": {"good": 1, "caution": 2}, "max_skewness": "x"})
+        self.assertEqual(tiers["max_non_ortho"][:2], (60.0, 70.0))
+        self.assertNotIn("nope", tiers)
+
+    def test_override_changes_verdict(self):
+        # 45 is "good" by default but "usable" with a tighter band.
+        args = (parse_checkmesh(GOOD_CHECKMESH),)
+        default = check_mesh_quality(*args)
+        tight = check_mesh_quality(*args, bands={"max_non_ortho": {"good": 30.0, "caution": 40.0}})
+        by_default = {m["key"]: m for m in default["metrics"]}
+        by_tight = {m["key"]: m for m in tight["metrics"]}
+        self.assertEqual(by_default["max_non_ortho"]["level"], "good")
+        self.assertEqual(by_tight["max_non_ortho"]["level"], "marginal")
+
+    def test_verdict_bands_from_dict(self):
+        cfg = {"mesh_quality": {"verdict_bands": {
+            "max_non_ortho": {"good": 50, "caution": 60},
+            "bogus": {"good": 1},
+        }}}
+        bands = verdict_bands_from_dict(cfg)
+        self.assertEqual(bands["max_non_ortho"], {"good": 50.0, "caution": 60.0})
+        self.assertNotIn("bogus", bands)
+
+    def test_default_config_carries_bands(self):
+        from rapidfoam.config import DEFAULT_CONFIG
+        bands = verdict_bands_from_dict(DEFAULT_CONFIG)
+        for key in ("max_non_ortho", "max_skewness", "max_aspect_ratio", "concave_cells"):
+            self.assertIn(key, bands)
+
+
+class TestBandValidation(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        write_stl(self.root / "stl" / "body.stl", "body", BODY_TRIANGLES)
+
+    def _errors(self, mesh_quality):
+        path = self.root / "config.json"
+        path.write_text(json.dumps({
+            "case_name": "bands_case",
+            "stl_files": ["body.stl"],
+            "mesh_quality": mesh_quality,
+        }))
+        errors, _ = validate(load_config(path), self.root)
+        return errors
+
+    def test_valid_bands_accepted(self):
+        self.assertFalse(self._errors({"verdict_bands": {
+            "max_non_ortho": {"good": 55, "caution": 65},
+        }}))
+
+    def test_partial_band_merges_with_defaults(self):
+        # A lone 'good' deep-merges onto the default caution, so it stays valid.
+        self.assertFalse(self._errors({"verdict_bands": {"max_non_ortho": {"good": 55}}}))
+
+    def test_non_numeric_band_rejected(self):
+        self.assertTrue(self._errors({"verdict_bands": {
+            "max_non_ortho": {"good": "high", "caution": 65},
+        }}))
+
+    def test_non_object_band_rejected(self):
+        self.assertTrue(self._errors({"verdict_bands": "tight"}))
 
 
 class TestCheckmeshTargets(unittest.TestCase):
