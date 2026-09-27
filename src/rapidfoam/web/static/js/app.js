@@ -619,6 +619,11 @@ class CFDApp {
     this.setVal('cfg-override-featurecells', meshParams?.feature_cells ?? '');
     this.setVal('cfg-override-maxsurflevel', meshParams?.max_surface_level ?? '');
 
+    // Feature extraction sits outside the overrides block: only show a value
+    // when the loaded config actually differs from the default.
+    const featureExtract = cfg.feature_extract || {};
+    this.setVal('cfg-override-feature-angle', featureExtract.includedAngle ?? '');
+
     // 4. Boundary Layer Overrides (Priority 4: Wall y+ & inflation)
     let layerMode = 'auto';
     if (layers?.y_plus_target !== undefined && layers?.y_plus_target !== null) {
@@ -856,6 +861,14 @@ class CFDApp {
     if (maxSurfLevel !== null) meshOverrides.max_surface_level = maxSurfLevel; else delete meshOverrides.max_surface_level;
     if (Object.keys(meshOverrides).length > 0) overrides.mesh_params = meshOverrides;
     else delete overrides.mesh_params;
+
+    // 3b. Feature extraction (surfaceFeatureExtract included angle)
+    const featureExtract = cfg.feature_extract || {};
+    const featureAngle = getOptionalFloat('cfg-override-feature-angle');
+    if (featureAngle !== null) featureExtract.includedAngle = featureAngle;
+    else delete featureExtract.includedAngle;
+    if (Object.keys(featureExtract).length > 0) cfg.feature_extract = featureExtract;
+    else delete cfg.feature_extract;
 
     // 4. Boundary Layers (Priority 4)
     const layersOverrides = overrides.layers || {};

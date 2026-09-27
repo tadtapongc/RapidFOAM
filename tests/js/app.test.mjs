@@ -304,7 +304,7 @@ const CONFIG_STUB_IDS = [
   'cfg-face-neg-x', 'cfg-face-pos-x', 'cfg-face-neg-y', 'cfg-face-pos-y',
   'cfg-face-pos-z', 'cfg-face-neg-z', 'cfg-parallel-procs', 'cfg-parallel-method',
   'cfg-slurm-qos', 'cfg-slurm-partition', 'cfg-slurm-time', 'cfg-slurm-mem',
-  'cfg-slurm-source', 'cfg-slurm-modules',
+  'cfg-slurm-source', 'cfg-slurm-modules', 'cfg-override-feature-angle',
 ];
 
 function buildStubBody() {
@@ -349,9 +349,12 @@ test('buildConfigFromVisualForm preserves unknown and comment keys', async () =>
   assert.equal(cfg._section_domain, '--- domain ---');
   assert.deepEqual(cfg.patches, { inlet: 'inlet', walls: 'farField' });
   assert.equal(cfg.vehicle.wheelbase, 1.6);
-  assert.equal(cfg.feature_extract.includedAngle, 140);
   assert.equal(cfg.something_future.nested, true);
   assert.equal(cfg.case_name, 'my_case');
+  // feature_extract is form-owned: a blank input resets includedAngle, while
+  // the non-owned extractionMethod survives.
+  assert.equal(cfg.feature_extract.includedAngle, undefined);
+  assert.equal(cfg.feature_extract.extractionMethod, 'extractFromSurface');
 });
 
 test('buildConfigFromVisualForm updates a form-owned field without dropping siblings', async () => {
@@ -379,6 +382,30 @@ test('buildConfigFromVisualForm preserves untouched override sections', async ()
     JSON.parse(JSON.stringify(app.activeConfig.overrides.force_refs)),
     { _comment: 'keep' },
   );
+});
+
+test('buildConfigFromVisualForm emits feature_extract includedAngle', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app._window.document.getElementById('cfg-override-feature-angle').value = '120';
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.feature_extract.includedAngle, 120);
+});
+
+test('buildConfigFromVisualForm preserves feature_extract siblings', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app._window.document.getElementById('cfg-override-feature-angle').value = '120';
+  app.activeConfig = {
+    case_name: 'c',
+    feature_extract: { extractionMethod: 'extractFromSurface', includedAngle: 140 },
+  };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.feature_extract.includedAngle, 120);
+  assert.equal(app.activeConfig.feature_extract.extractionMethod, 'extractFromSurface');
 });
 
 test('buildConfigFromVisualForm drops a section whose active inputs are blank', async () => {

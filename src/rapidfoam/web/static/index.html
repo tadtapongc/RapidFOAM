@@ -616,6 +616,12 @@
                     <span class="field-hint">Hard refinement cap protecting the cell budget; warns when auto-sizing clamps here</span>
                   </div>
 
+                  <div class="form-group">
+                    <label for="cfg-override-feature-angle">Feature Edge Extraction Angle</label>
+                    <input type="number" id="cfg-override-feature-angle" class="input" min="1" max="180" step="1" placeholder="Auto (140)">
+                    <span class="field-hint">Included angle (deg) for surfaceFeatureExtract: edges sharper than this are kept for snapping. Lower captures subtler creases but risks cosmetic CAD seams.</span>
+                  </div>
+
                   <!-- 4. Boundary Layer Mesh Overrides -->
                   <div class="form-group col-span-2 overrides-section-header">
                     <h4 class="section-subtitle">4. Boundary Layer Mesh Overrides</h4>
