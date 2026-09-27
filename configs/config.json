@@ -103,6 +103,21 @@
             "_near_wake_level": 3,
             "_far_wake_level": 1
         },
+        "_mesh_quality_verdict_bands_comment": "Good/caution thresholds for the mesh-quality verdict shown by 'read_forces.py --mesh' and the Studio Mesh Quality panel. These are advisory CFD-practical bands, independent of the snappyHexMesh pass/fail limits (mesh_quality.maxNonOrtho / maxInternalSkewness). 'good' = healthy; a value past 'caution' is flagged as marginal/bad. Deep-merge: you may set only one of the pair against the default.",
+        "mesh_quality": {
+            "_verdict_bands": {
+                "_max_non_ortho": "Degrees. Above ~60 the segregated solver becomes less robust (default good 60, caution 70).",
+                "_max_skewness": "Default good 2, caution 4.",
+                "_max_aspect_ratio": "High aspect is expected in boundary layers; default good 50, caution 100.",
+                "_min_determinant": "Cell wellposedness; higher is better (default good 0.05, caution 0.001).",
+                "_min_interp_weight": "Face interpolation weight; ideal ~0.5 (default good 0.1, caution 0.01).",
+                "_min_volume_ratio": "Neighbour cell volume ratio; smoother is better (default good 0.05, caution 0.01).",
+                "_concave_cells": "Any concave cell is a concern (default good 0, caution 0).",
+                "_override_example": {
+                    "max_non_ortho": { "good": 55.0, "caution": 65.0 }
+                }
+            }
+        },
         "layers": {
             "_y_plus_target": "Near-wall target. 1 = wall-function-bridged at low y+ (first cell in the sublayer), 30-100 = wall-function regime. Overrides first_layer_thickness unless that is set explicitly.",
             "_n_layers": 3,
