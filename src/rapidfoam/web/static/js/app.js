@@ -1174,11 +1174,26 @@ class CFDApp {
       if (res.ok) {
         const data = await res.json();
         this.fidelityPresets = data.fidelity_presets || null;
+        this.updateFidelityCards();
         this.updateOverridePlaceholders(this.activeConfig?.fidelity || 'standard');
       }
     } catch (err) {
       console.warn('Could not load fidelity presets:', err);
     }
+  }
+
+  updateFidelityCards() {
+    // Keep the card cell/time text sourced from the server presets so the UI
+    // cannot drift from FIDELITY_PRESETS in the backend.
+    if (!this.fidelityPresets) return;
+    document.querySelectorAll('.fidelity-card').forEach((card) => {
+      const preset = this.fidelityPresets[card.dataset.fidelity];
+      if (!preset) return;
+      const cellsEl = card.querySelector('.card-cells');
+      const timeEl = card.querySelector('.card-time');
+      if (cellsEl && preset.cell_estimate) cellsEl.textContent = preset.cell_estimate;
+      if (timeEl && preset.runtime_estimate) timeEl.textContent = preset.runtime_estimate;
+    });
   }
 
   updateLayerModeUI() {

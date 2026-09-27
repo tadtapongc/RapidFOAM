@@ -428,6 +428,42 @@ test('buildConfigFromVisualForm drops a section whose active inputs are blank', 
   );
 });
 
+// ------------------------------------------- Fidelity cards (data-driven)
+
+test('updateFidelityCards sources cell/time text from the server presets', async () => {
+  const app = await makeApp(`
+    <label class="fidelity-card" data-fidelity="fast">
+      <span class="card-cells">stale</span><span class="card-time">stale</span>
+    </label>
+    <label class="fidelity-card" data-fidelity="standard">
+      <span class="card-cells">stale</span><span class="card-time">stale</span>
+    </label>
+  `);
+  app.fidelityPresets = {
+    fast: { cell_estimate: '~3-5M cells', runtime_estimate: '~10-20 min' },
+    standard: { cell_estimate: '~9-13M cells', runtime_estimate: '~1-2 hrs' },
+  };
+  app.updateFidelityCards();
+  const doc = app._window.document;
+  const fast = doc.querySelector('.fidelity-card[data-fidelity="fast"]');
+  assert.equal(fast.querySelector('.card-cells').textContent, '~3-5M cells');
+  assert.equal(fast.querySelector('.card-time').textContent, '~10-20 min');
+  const std = doc.querySelector('.fidelity-card[data-fidelity="standard"]');
+  assert.equal(std.querySelector('.card-cells').textContent, '~9-13M cells');
+});
+
+test('updateFidelityCards is a no-op without presets', async () => {
+  const app = await makeApp(
+    '<label class="fidelity-card" data-fidelity="fast"><span class="card-cells">keep</span></label>',
+  );
+  app.fidelityPresets = null;
+  app.updateFidelityCards();
+  assert.equal(
+    app._window.document.querySelector('.card-cells').textContent,
+    'keep',
+  );
+});
+
 // ------------------------------------------------- Studio mesh-quality panel
 
 const MESH_BODY = `
