@@ -16,6 +16,13 @@ from rapidfoam.stl_utils import BBox, EdgeStats, FeatureAngleStats
 # sizing and the ground-layer clearance guard so they stay consistent.
 GROUND_EMBED = 0.01
 
+# Fraction of the first layer used as snappyHexMesh's minimum layer thickness.
+# Setting minThickness equal to the first layer makes prisms all-or-nothing
+# (snappy drops a whole stack rather than extrude a thinner one at tight radii);
+# a fraction of the first layer lets it keep partial stacks instead. Overridable
+# via layers.min_thickness_ratio.
+DEFAULT_MIN_THICKNESS_RATIO = 0.5
+
 # ============================================================
 # AXIS UTILITIES
 # ============================================================
@@ -888,6 +895,18 @@ def resolve_layers(
             return t * (ratio ** n_layers - 1) / (ratio - 1)
         return t * max(n_layers, 1)
 
+    try:
+        min_ratio = float(layers.get("min_thickness_ratio", DEFAULT_MIN_THICKNESS_RATIO))
+    except (TypeError, ValueError):
+        min_ratio = DEFAULT_MIN_THICKNESS_RATIO
+    if not (0.0 < min_ratio <= 1.0):
+        min_ratio = DEFAULT_MIN_THICKNESS_RATIO
+
+    def _min_thickness(t: float) -> float:
+        """Minimum layer thickness snappy may keep: a fraction of the first
+        layer, never exceeding the same fraction of the total stack."""
+        return min(min_ratio * t, min_ratio * _stack(t))
+
     resolved: dict[str, Any] = {
         "u_tau": u_tau,
         "y_plus_target": target,
@@ -922,7 +941,7 @@ def resolve_layers(
             layers["relativeSizes"] = False
             layers["first_layer_thickness"] = thickness
             if not explicit_min_thickness:
-                layers["min_thickness"] = thickness
+                layers["min_thickness"] = _min_thickness(thickness)
             resolved.update(
                 y_plus_effective=thickness * u_tau / (2.0 * nu),
                 first_layer_thickness=thickness,
@@ -936,6 +955,8 @@ def resolve_layers(
         except (TypeError, ValueError):
             thickness = None
         if thickness is not None and math.isfinite(thickness) and thickness > 0:
+            if not explicit_min_thickness:
+                layers["min_thickness"] = _min_thickness(thickness)
             resolved.update(
                 y_plus_effective=(thickness * u_tau / (2.0 * nu)) if u_tau > 0 else None,
                 first_layer_thickness=thickness,

@@ -172,13 +172,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "relativeSizes": True,
         "first_layer_thickness": 0.3,   # fraction of cell (or metres if relativeSizes=false)
         "min_thickness": 0.05,          # same units as first_layer_thickness
+        # When y+-derived (or absolute) layer sizing resolves min_thickness, it
+        # uses this fraction of the first layer rather than the full first layer,
+        # so snappyHexMesh can keep partial stacks instead of dropping them all
+        # at tight radii. Set explicitly to override.
+        "min_thickness_ratio": 0.5,
         "y_plus_target": None,          # absolute near-wall target; overrides first_layer_thickness
         "featureAngle": 170,
         "slipFeatureAngle": 30,
         "nGrow": 0,
         "maxFaceThicknessRatio": 0.5,
         "nSmoothSurfaceNormals": 3,
-        "nSmoothThickness": 10,
+        "nSmoothThickness": 15,
         "nSmoothNormals": 3,
         "nRelaxIter": 10,
         "nBufferCellsNoExtrude": 0,
@@ -450,6 +455,9 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         errors.append("mesh_params.resolveFeatureAngle must be a number in (0, 180]")
     if "ground_layers" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["ground_layers"], bool):
         errors.append("layers.ground_layers must be true or false")
+    min_ratio = cfg.get("layers", {}).get("min_thickness_ratio")
+    if min_ratio is not None and (not finite(min_ratio) or not (0.0 < min_ratio <= 1.0)):
+        errors.append("layers.min_thickness_ratio must be a number in (0, 1]")
     verdict_bands = cfg.get("mesh_quality", {}).get("verdict_bands")
     if verdict_bands is not None:
         if not isinstance(verdict_bands, dict):
