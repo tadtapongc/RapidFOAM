@@ -3287,6 +3287,8 @@ class CFDApp {
     this.setValText('mesh-aspect', fmt(stats.max_aspect_ratio, 2));
 
     const issues = Array.isArray(data.issues) ? data.issues : [];
+    const yPlusMissed = Array.isArray((data.y_plus || {}).missed) ? data.y_plus.missed : [];
+    const concernCount = issues.length + yPlusMissed.length;
     const verdict = data.verdict || (data.ok ? 'good' : 'bad');
     const verdictLabel = data.verdict_label || '--';
     const badge = document.getElementById('mesh-quality-badge');
@@ -3299,7 +3301,7 @@ class CFDApp {
         unknown: '',
       }[verdict] || '';
       badge.className = `badge badge-subtle ${badgeClass}`.trim();
-      const count = issues.length ? ` · ${issues.length} concern${issues.length === 1 ? '' : 's'}` : '';
+      const count = concernCount ? ` · ${concernCount} concern${concernCount === 1 ? '' : 's'}` : '';
       badge.textContent = verdictLabel === '--' ? '--' : `${verdictLabel}${count}`;
     }
 
@@ -3332,13 +3334,15 @@ class CFDApp {
       }
     }
 
-    // Boundary layers: achieved / target + coverage.
+    // Boundary layers: achieved / target + coverage + realised y+.
+    const yPlus = data.y_plus || {};
+    const yPlusPatches = yPlus.patches || {};
     const layerTbody = document.getElementById('mesh-layer-tbody');
     if (layerTbody) {
       const layers = data.layers || {};
       const patches = Object.keys(layers).sort();
       if (!patches.length) {
-        layerTbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No layer data</td></tr>';
+        layerTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No layer data</td></tr>';
       } else {
         const target = (data.target_layers !== null && data.target_layers !== undefined)
           ? `/${data.target_layers}` : '';
@@ -3346,12 +3350,26 @@ class CFDApp {
           const info = layers[patch] || {};
           const achieved = num(info.layers);
           const coverage = num(info.coverage);
+          const yp = yPlusPatches[patch] || {};
+          const ypAvg = num(yp.average);
+          let ypText = '--';
+          let ypCls = 'monospace';
+          if (ypAvg !== null) {
+            const tgt = num(yPlus.target);
+            ypText = tgt === null ? ypAvg.toFixed(1) : `${ypAvg.toFixed(1)} / ${tgt}`;
+            if (yp.ok === false) ypCls += ' mesh-metric-fail';
+          }
           return `<tr><td>${this.escapeHtml(patch)}</td>`
             + `<td class="monospace">${achieved === null ? '--' : achieved}${target}</td>`
-            + `<td class="monospace">${coverage === null ? '--' : `${Math.round(coverage * 100)}%`}</td></tr>`;
+            + `<td class="monospace">${coverage === null ? '--' : `${Math.round(coverage * 100)}%`}</td>`
+            + `<td class="${ypCls}">${ypText}</td></tr>`;
         }).join('');
       }
     }
+    this.setValText(
+      'mesh-quality-note-yplus',
+      yPlus.available && yPlus.note ? `Near-wall y+: ${yPlus.note}` : '',
+    );
 
     // Boundary patches: closure status.
     const patchTbody = document.getElementById('mesh-patch-tbody');
@@ -3408,7 +3426,7 @@ class CFDApp {
     }
     const empties = {
       'mesh-metrics-tbody': [4, 'No metrics'],
-      'mesh-layer-tbody': [3, 'No layer data'],
+      'mesh-layer-tbody': [4, 'No layer data'],
       'mesh-patch-tbody': [3, 'No patch data'],
       'mesh-celltype-tbody': [3, 'No cell-type data'],
     };
@@ -3416,6 +3434,7 @@ class CFDApp {
       const el = document.getElementById(id);
       if (el) el.innerHTML = `<tr><td colspan="${cols}" class="text-center text-muted">${text}</td></tr>`;
     });
+    this.setValText('mesh-quality-note-yplus', '');
     this.setValText('mesh-quality-note', message || 'No mesh report yet.');
   }
 

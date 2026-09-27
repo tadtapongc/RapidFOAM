@@ -57,6 +57,7 @@ from rapidfoam.postproc.checkmesh import (
     parse_layer_coverage,
 )
 from rapidfoam.postproc.residuals import find_residual_files, read_residuals
+from rapidfoam.postproc.yplus import find_yplus_files, read_yplus
 from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats, stl_analyze_full, stl_info
 from rapidfoam.web.ssh_client import ClusterSSHClient
 
@@ -943,6 +944,7 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
         # sits near the end of the log, so a modest tail is enough.
         (f"cases/{case_name}/log.checkMesh", 400),
         (f"cases/{case_name}/log.snappyHexMesh", 600),
+        (f"cases/{case_name}/postProcessing/yPlus/*/yPlus.dat", None),
         (f"cases/{case_name}/case_config.json", None),
     ])
     with _remote_telemetry_lock:
@@ -2061,6 +2063,95 @@ async def api_telemetry_solver(case_name: str) -> dict[str, Any]:
     }
 
 
+def _read_yplus_texts(texts: list[str]) -> dict[str, dict[str, float]]:
+    """Parse y+ data directly from text segments (no temp files)."""
+    rows: dict[str, dict[str, float]] = {}
+    for text in texts:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            try:
+                time = float(parts[0])
+                lo = float(parts[2])
+                hi = float(parts[3])
+                avg = float(parts[4])
+            except ValueError:
+                continue
+            if not math.isfinite(time):
+                continue
+            patch = parts[1]
+            prev = rows.get(patch)
+            if prev is None or time >= prev.get("time", -math.inf):
+                rows[patch] = {"min": lo, "max": hi, "average": avg, "time": time}
+    return rows
+
+
+def _yplus_target_from_config(config_dict: Optional[dict[str, Any]]) -> Optional[float]:
+    """Read ``layers.y_plus_target`` (or its resolved fallback) from a config."""
+    if not isinstance(config_dict, dict):
+        return None
+    layers = config_dict.get("layers", {})
+    if not isinstance(layers, dict):
+        return None
+    for source in (layers, layers.get("_resolved", {})):
+        if not isinstance(source, dict):
+            continue
+        target = source.get("y_plus_target")
+        if isinstance(target, (int, float)) and not isinstance(target, bool) and target > 0:
+            return float(target)
+    return None
+
+
+def _summarise_yplus(
+    data: dict[str, dict[str, float]],
+    target: Optional[float],
+) -> dict[str, Any]:
+    """Attach realised y+ to a target and flag patches that miss it.
+
+    Mirrors the CLI's ``--yplus`` verdict in a compact JSON-friendly shape. A
+    patch is "missed" when no target is configured and its average is outside
+    the wall-function band, or when a target exists and the average is further
+    than 50% from it.
+    """
+    if not data:
+        return {"available": False}
+
+    per_patch: dict[str, dict[str, Any]] = {}
+    missed: list[str] = []
+    for patch, stats in data.items():
+        avg = stats.get("average")
+        entry: dict[str, Any] = {
+            "min": stats.get("min"),
+            "max": stats.get("max"),
+            "average": avg,
+        }
+        if target and target > 0 and avg is not None and math.isfinite(avg):
+            ratio = avg / target
+            ok = abs(ratio - 1.0) <= 0.5
+            entry["ratio"] = round(ratio, 3)
+            entry["ok"] = ok
+            if not ok:
+                missed.append(patch)
+        per_patch[patch] = entry
+
+    return {
+        "available": True,
+        "target": target,
+        "patches": per_patch,
+        "missed": missed,
+        "note": (
+            "no y+ target configured"
+            if not target
+            else ("all patches within 50% of target" if not missed
+                  else f"y+ target missed on {', '.join(missed)}")
+        ),
+    }
+
+
 @app.get("/api/telemetry/mesh")
 async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
     """Verify mesh quality from the checkMesh and snappyHexMesh logs.
@@ -2074,6 +2165,8 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
     checkmesh_text = ""
     snappy_text = ""
     config_dict: Optional[dict[str, Any]] = None
+    yplus_files: list[Path] = []
+    yplus_data: dict[str, dict[str, float]] = {}
 
     # 1. Remote cluster first if connected (shared telemetry bundle).
     if ssh_client.is_connected:
@@ -2084,6 +2177,7 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
         snappy_text = next(
             (value for path, value in bundle.items() if path.endswith("/log.snappyHexMesh")), ""
         )
+        yplus_data = _read_yplus_texts(_sorted_segments(bundle, "/yPlus.dat"))
         cfg_text = next(
             (value for path, value in bundle.items() if path.endswith("/case_config.json")), ""
         )
@@ -2101,6 +2195,10 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
         checkmesh_text = _read_text_tail_lines(local_case / "log.checkMesh")
     if not snappy_text and (local_case / "log.snappyHexMesh").is_file():
         snappy_text = _read_text_tail_lines(local_case / "log.snappyHexMesh")
+    if not yplus_data:
+        yplus_files = find_yplus_files(local_case)
+        if yplus_files:
+            yplus_data = read_yplus(yplus_files)
     if config_dict is None:
         for candidate in (
             PROJECT_ROOT / "configs" / f"{case_name}.json",
@@ -2132,6 +2230,13 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
         max_non_ortho=targets.get("max_non_ortho", 65.0),
         max_skewness=targets.get("max_skewness", 4.0),
     )
+
+    # Cross-reference the realised near-wall y+ (from the yPlus function object)
+    # against the sizing target so "layers all present" is not mistaken for
+    # "layers at the right height".
+    yplus_target = _yplus_target_from_config(config_dict)
+    summary["y_plus"] = _summarise_yplus(yplus_data, yplus_target)
+
     return {"has_data": True, "case_name": case_name, **summary}
 
 

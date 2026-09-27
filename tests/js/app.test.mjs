@@ -292,6 +292,7 @@ const MESH_BODY = `
   <table><tbody id="mesh-layer-tbody"></tbody></table>
   <table><tbody id="mesh-patch-tbody"></tbody></table>
   <table><tbody id="mesh-celltype-tbody"></tbody></table>
+  <p id="mesh-quality-note-yplus"></p>
   <p id="mesh-quality-note"></p>
 `;
 
@@ -309,6 +310,7 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
     layers: { geometry: { layers: 2, coverage: 1.0 } },
     patches: { geometry: { faces: 124862, closed: true, closure: 'closed singly connected' } },
     cell_types: { hexahedra: { count: 8881583, fraction: 0.9859 } },
+    y_plus: { available: true, target: 40, patches: { geometry: { average: 42.0 } }, missed: [], note: 'all patches within 50% of target' },
     target_layers: 2,
     issues: [],
     note: 'mesh quality OK',
@@ -323,6 +325,8 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
   assert.ok(rows.includes('geometry'));
   assert.ok(rows.includes('2/2'));
   assert.ok(rows.includes('100%'));
+  assert.ok(rows.includes('42.0 / 40'), 'realised y+ vs target');
+  assert.ok(doc.getElementById('mesh-quality-note-yplus').textContent.includes('all patches'));
   // metrics table
   const metrics = doc.getElementById('mesh-metrics-tbody').innerHTML;
   assert.ok(metrics.includes('Max non-orthogonality'));
@@ -368,6 +372,29 @@ test('renderMeshQuality flags concerns and escapes the patch name', async () => 
   const patch = doc.getElementById('mesh-patch-tbody').innerHTML;
   assert.ok(!patch.includes('<x>'), 'patch tag must not survive');
   assert.ok(patch.includes('non-closed'));
+});
+
+test('renderMeshQuality counts y+ misses as concerns and flags the row', async () => {
+  const app = await makeApp(MESH_BODY);
+  app.renderMeshQuality({
+    ok: true,
+    verdict: 'usable',
+    verdict_label: 'Usable',
+    stats: {},
+    metrics: [],
+    layers: { geometry: { layers: 2, coverage: 1.0 } },
+    patches: {},
+    target_layers: 2,
+    y_plus: { available: true, target: 100, patches: { geometry: { average: 9.0, ok: false } }, missed: ['geometry'] },
+    issues: [],
+    note: 'usable',
+  });
+  const doc = app._window.document;
+  const badge = doc.getElementById('mesh-quality-badge');
+  assert.equal(badge.textContent, 'Usable · 1 concern');
+  const rows = doc.getElementById('mesh-layer-tbody').innerHTML;
+  assert.ok(rows.includes('9.0 / 100'));
+  assert.ok(rows.includes('mesh-metric-fail'), 'missed y+ row is flagged');
 });
 
 test('resetMeshQuality clears the panel and shows a message', async () => {

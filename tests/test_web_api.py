@@ -285,7 +285,14 @@ class TestWebAPI(unittest.TestCase):
             encoding="utf-8",
         )
         (case_dir / "case_config.json").write_text(
-            json.dumps({"layers": {"n_layers": 2}}), encoding="utf-8"
+            json.dumps({"layers": {"n_layers": 2, "y_plus_target": 40}}), encoding="utf-8"
+        )
+        yplus_dir = case_dir / "postProcessing" / "yPlus" / "0"
+        yplus_dir.mkdir(parents=True, exist_ok=True)
+        (yplus_dir / "yPlus.dat").write_text(
+            "# Time\tpatch\tmin\tmax\taverage\n"
+            "0\tgeometry\t10.0\t80.0\t45.0\n",
+            encoding="utf-8",
         )
 
         res = asyncio.run(api_telemetry_mesh(case_name))
@@ -299,6 +306,31 @@ class TestWebAPI(unittest.TestCase):
         self.assertTrue(any(m["key"] == "max_non_ortho" for m in res["metrics"]))
         self.assertIn("patches", res)
         self.assertIn("cell_types", res)
+        # Realised y+ is cross-referenced against the sizing target.
+        self.assertTrue(res["y_plus"]["available"])
+        self.assertEqual(res["y_plus"]["target"], 40.0)
+        self.assertAlmostEqual(res["y_plus"]["patches"]["geometry"]["average"], 45.0)
+        self.assertEqual(res["y_plus"]["missed"], [])
+
+    def test_telemetry_mesh_yplus_miss(self):
+        """A realised y+ far from target is reported as missed."""
+        from rapidfoam.web.server import _read_yplus_texts, _summarise_yplus
+        data = _read_yplus_texts(["0\tgeometry\t1.0\t20.0\t9.0\n"])
+        summary = _summarise_yplus(data, 100.0)
+        self.assertTrue(summary["available"])
+        self.assertEqual(summary["target"], 100.0)
+        self.assertEqual(summary["missed"], ["geometry"])
+        self.assertFalse(summary["patches"]["geometry"]["ok"])
+        self.assertAlmostEqual(summary["patches"]["geometry"]["ratio"], 0.09)
+        self.assertIn("missed", summary["note"])
+
+    def test_telemetry_mesh_yplus_no_target(self):
+        from rapidfoam.web.server import _read_yplus_texts, _summarise_yplus
+        summary = _summarise_yplus(_read_yplus_texts(["0\tbody\t1.0\t20.0\t9.0\n"]), None)
+        self.assertTrue(summary["available"])
+        self.assertIsNone(summary["target"])
+        self.assertEqual(summary["missed"], [])
+        self.assertIn("no y+ target", summary["note"])
 
     def test_telemetry_mesh_invalid_and_missing(self):
         """Invalid case names are rejected; absent logs report no data."""
