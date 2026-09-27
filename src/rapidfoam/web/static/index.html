@@ -186,6 +186,18 @@
                   <span class="field-hint">Target directory name created inside <code>cases/&lt;case_name&gt;/</code>.</span>
                 </div>
 
+                <div class="form-group">
+                  <label for="cfg-stl-dir">Geometry Folder (stl_dir)</label>
+                  <input type="text" id="cfg-stl-dir" class="input" placeholder="stl">
+                  <span class="field-hint">Folder under the project root holding the STL files.</span>
+                </div>
+
+                <div class="form-group">
+                  <label for="cfg-case-dir">Output Folder (case_dir)</label>
+                  <input type="text" id="cfg-case-dir" class="input" placeholder="cases">
+                  <span class="field-hint">Folder under the project root where cases are generated.</span>
+                </div>
+
                 <div class="form-group col-span-2">
                   <label>Mesh & Solver Fidelity Preset</label>
                   <div class="fidelity-cards">
@@ -461,6 +473,11 @@
                   <input type="text" id="cfg-slurm-mem" class="input" value="2G">
                 </div>
 
+                <div class="form-group">
+                  <label for="cfg-slurm-cpus">CPUs Per Task</label>
+                  <input type="number" id="cfg-slurm-cpus" class="input" min="1" step="1" value="1">
+                </div>
+
                 <div class="form-group col-span-2">
                   <label for="cfg-slurm-source">OpenFOAM Environment Source Script</label>
                   <input type="text" id="cfg-slurm-source" class="input" value="$HOME/OpenFOAM/OpenFOAM-v2606/etc/bashrc">
@@ -482,7 +499,8 @@
                   <div class="overrides-banner">
                     <div class="overrides-banner-content">
                       <span class="overrides-banner-title">Selective Dictionary Overrides</span>
-                      <span class="overrides-banner-desc">Leave any field blank to follow the selected fidelity preset &amp; universal defaults. Values entered here selectively override presets (matching <code>configs/config.json</code>).</span>
+                      <span class="overrides-banner-desc">Leave any field blank to follow the selected fidelity preset &amp; universal defaults. Values entered here selectively override presets (matching <code>configs/config.json</code>).
+                        <br>Solver-coupled internals (<code>schemes</code>, <code>linear_solvers</code>, <code>relaxation</code>, <code>simple</code>, <code>wall_functions</code>, <code>snap</code>, and the snappy layer/mesh_quality knobs) are intentionally not shown: the generator sets them per fidelity preset. Edit them via the JSON drawer or <code>DEFAULT_CONFIG</code> if needed.</span>
                     </div>
                     <button type="button" class="btn btn-outline btn-xs" id="btn-clear-all-overrides" title="Reset all overrides to blank / preset defaults">Clear All Overrides</button>
                   </div>

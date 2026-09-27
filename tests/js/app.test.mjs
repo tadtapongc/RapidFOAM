@@ -305,6 +305,7 @@ const CONFIG_STUB_IDS = [
   'cfg-face-pos-z', 'cfg-face-neg-z', 'cfg-parallel-procs', 'cfg-parallel-method',
   'cfg-slurm-qos', 'cfg-slurm-partition', 'cfg-slurm-time', 'cfg-slurm-mem',
   'cfg-slurm-source', 'cfg-slurm-modules', 'cfg-override-feature-angle',
+  'cfg-stl-dir', 'cfg-case-dir', 'cfg-slurm-cpus',
 ];
 
 function buildStubBody() {
@@ -328,6 +329,9 @@ function seedForm(app) {
   set('cfg-face-neg-z', 'outlet');
   set('cfg-parallel-procs', '32');
   set('cfg-parallel-method', 'scotch');
+  set('cfg-stl-dir', 'stl');
+  set('cfg-case-dir', 'cases');
+  set('cfg-slurm-cpus', '1');
 }
 
 test('buildConfigFromVisualForm preserves unknown and comment keys', async () => {
@@ -382,6 +386,36 @@ test('buildConfigFromVisualForm preserves untouched override sections', async ()
     JSON.parse(JSON.stringify(app.activeConfig.overrides.force_refs)),
     { _comment: 'keep' },
   );
+});
+
+test('buildConfigFromVisualForm emits stl_dir, case_dir and cpus_per_task', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  const doc = app._window.document;
+  doc.getElementById('cfg-stl-dir').value = 'geometry';
+  doc.getElementById('cfg-case-dir').value = 'runs';
+  doc.getElementById('cfg-slurm-cpus').value = '4';
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.stl_dir, 'geometry');
+  assert.equal(app.activeConfig.case_dir, 'runs');
+  assert.equal(app.activeConfig.slurm.cpus_per_task, 4);
+});
+
+test('buildConfigFromVisualForm defaults dir fields when blank', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  const doc = app._window.document;
+  doc.getElementById('cfg-stl-dir').value = '';
+  doc.getElementById('cfg-case-dir').value = '';
+  doc.getElementById('cfg-slurm-cpus').value = '';
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.stl_dir, 'stl');
+  assert.equal(app.activeConfig.case_dir, 'cases');
+  assert.equal(app.activeConfig.slurm.cpus_per_task, 1);
 });
 
 test('buildConfigFromVisualForm emits feature_extract includedAngle', async () => {

@@ -482,6 +482,8 @@ class CFDApp {
 
     // General
     this.setVal('cfg-case-name', cfg.case_name || 'my_case');
+    this.setVal('cfg-stl-dir', cfg.stl_dir || 'stl');
+    this.setVal('cfg-case-dir', cfg.case_dir || 'cases');
 
     const fidelity = cfg.fidelity || 'standard';
     document.querySelectorAll('.fidelity-card').forEach((card) => {
@@ -563,6 +565,7 @@ class CFDApp {
     this.setVal('cfg-slurm-partition', slurm.partition || 'cpu');
     this.setVal('cfg-slurm-time', slurm.time || '08:00:00');
     this.setVal('cfg-slurm-mem', slurm.mem_per_cpu || '2G');
+    this.setVal('cfg-slurm-cpus', slurm.cpus_per_task ?? 1);
     this.setVal('cfg-slurm-source', slurm.openfoam_source || '$HOME/OpenFOAM/OpenFOAM-v2606/etc/bashrc');
     
     if (Array.isArray(slurm.openfoam_module)) {
@@ -695,6 +698,8 @@ class CFDApp {
 
     // General
     cfg.case_name = this.getVal('cfg-case-name') || 'my_case';
+    cfg.stl_dir = this.getVal('cfg-stl-dir') || cfg.stl_dir || 'stl';
+    cfg.case_dir = this.getVal('cfg-case-dir') || cfg.case_dir || 'cases';
 
     const selectedFidelityCard = document.querySelector('.fidelity-card.selected');
     cfg.fidelity = selectedFidelityCard ? selectedFidelityCard.dataset.fidelity : 'standard';
@@ -777,6 +782,7 @@ class CFDApp {
       nodes: prevSlurm.nodes !== undefined ? prevSlurm.nodes : 1,
       time: this.getVal('cfg-slurm-time'),
       mem_per_cpu: this.getVal('cfg-slurm-mem'),
+      cpus_per_task: parseInt(this.getVal('cfg-slurm-cpus'), 10) || prevSlurm.cpus_per_task || 1,
       openfoam_module: modules,
       openfoam_source: this.getVal('cfg-slurm-source'),
     };
