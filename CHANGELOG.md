@@ -5,6 +5,23 @@ All notable changes to RapidFOAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-09-28
+
+### Added
+- **Mesh-quality verification**: `rapidfoam.postproc.checkmesh` parses the `checkMesh` log and snappyHexMesh's per-patch layer tables, reporting non-orthogonality, skewness, aspect ratio, cell volumes, concave cells, cell types, boundary-patch closure and boundary-layer coverage. Exposed via `read_forces.py --mesh` (exit 0 ok, 2 concerns) and a Studio **Mesh Quality** panel.
+- **Tiered mesh-quality verdict**: each metric is judged against CFD-practical good/caution bands (independent of snappy's give-up limits) and rolled up into a Good/Usable/Marginal/Bad verdict, downgraded to Bad on any hard failure. Configurable via `mesh_quality.verdict_bands`.
+- **Realised y+ cross-reference**: the Studio mesh panel reads the `yPlus` function object and reports per-patch realised y+ against `layers.y_plus_target`, flagging dropout and missed targets in the same view as layer coverage.
+- **Config-form merge**: the Studio now merges form edits over the loaded config instead of rebuilding it, so unknown/future fields and comment keys survive edits and JSON round-trips. Exposes `feature_extract.includedAngle` and `slurm.cpus_per_task`, and sources the fidelity-card cell/time text from the server presets.
+- **Geometry-aligned feature extraction**: when the derived `resolveFeatureAngle` sharpens detection, `surfaceFeatureExtract`'s `includedAngle` is raised to match (`180 - resolve`) so explicit `.eMesh` edges and snappy's implicit snapping agree; an explicit `includedAngle` still wins.
+
+### Changed
+- **`stl/` and `cases/` are fixed project conventions**: the half-wired `stl_dir`/`case_dir` config fields (honoured by the CLI, ignored by every Studio endpoint) were removed.
+- `nSmoothThickness` default raised 10 -> 15 for more stable layer thickness on curved surfaces.
+
+### Fixed
+- **Half-model patches no longer flagged as open leaks**: checkMesh reports a symmetry-cut body patch as "non-closed"; the report now suppresses open-patch findings on symmetry cases (only a full model can leak) and treats `ground`/`farField` as domain boundaries.
+- **`min_thickness_ratio` default reverted to 1.0**: a measured before/after showed the 0.5 default kept poorly-conditioned partial prisms (layer coverage 2/2 -> 1/2, aspect ratio 20.8 -> 62.4, determinant -585x), so the all-or-nothing floor is restored as a quality gate; the knob remains for deliberate per-case use.
+
 ## [1.4.0] - 2026-09-26
 
 ### Added
