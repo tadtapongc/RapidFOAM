@@ -503,6 +503,8 @@ def compute_mesh_params(
     combined_bounds: BBox,
     feature_stats: EdgeStats | None = None,
     angle_stats: FeatureAngleStats | None = None,
+    *,
+    explicit_feature_angle: bool = False,
 ) -> dict[str, Any]:
     """Derive all mesh parameters from geometry bounds.
 
@@ -597,6 +599,24 @@ def compute_mesh_params(
             and "resolveFeatureAngle" not in user_mesh:
         feature_angle_info = _resolve_feature_angle(user_mesh, preset, angle_stats)
         resolve_feature_angle = feature_angle_info["resolveFeatureAngle"]
+
+        # Keep surfaceFeatureExtract consistent with snappy: surfaceFeatureExtract
+        # keeps an edge as an .eMesh feature when its *included* angle is below
+        # ``includedAngle`` (included = 180 - normal). snappy snaps edges whose
+        # normal angle exceeds resolveFeatureAngle, i.e. included angle below
+        # 180 - resolveFeatureAngle. The derived resolve angle can be sharper
+        # than the preset (more features), so raise the extraction angle to the
+        # recommended value to catch those creases explicitly. A user-set
+        # includedAngle always wins.
+        # Only when the derived angle actually sharpened detection (otherwise
+        # the extraction angle should stay as configured, so smooth geometry is
+        # not silently loosened).
+        if not explicit_feature_angle and feature_angle_info.get("changed"):
+            recommended = feature_angle_info["included_angle_recommended"]
+            feat = cfg.setdefault("feature_extract", {})
+            configured = feat.get("includedAngle")
+            if configured is None or recommended > float(configured):
+                feat["includedAngle"] = recommended
 
     # Wake levels (uncoupled from surface level to prevent wake bloat)
     near_wake_level = user_mesh.get("near_wake_level", preset.get("near_wake_level", 3))

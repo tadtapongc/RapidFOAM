@@ -219,7 +219,8 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
 
     # Derive mesh parameters from geometry (bounds + feature statistics)
     cfg["mesh_params"] = compute_mesh_params(
-        cfg, combined_bounds, feature_stats=edge_stats, angle_stats=angle_stats
+        cfg, combined_bounds, feature_stats=edge_stats, angle_stats=angle_stats,
+        explicit_feature_angle=_is_set("feature_extract", "includedAngle"),
     )
     # Apply fidelity presets conditionally
     from rapidfoam.geometry import FIDELITY_PRESETS

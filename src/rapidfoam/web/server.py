@@ -212,7 +212,8 @@ def layer_preview(
         if preset.get("y_plus_target") is not None:
             layers["y_plus_target"] = preset["y_plus_target"]
     mesh_params = compute_mesh_params(
-        preview_cfg, bounds, feature_stats=feature_stats, angle_stats=angle_stats
+        preview_cfg, bounds, feature_stats=feature_stats, angle_stats=angle_stats,
+        explicit_feature_angle=user_set(raw_cfg, "feature_extract", "includedAngle"),
     )
     preview_cfg["mesh_params"] = mesh_params
     resolved = resolve_layers(
