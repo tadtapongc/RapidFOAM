@@ -99,7 +99,7 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
-    from rapidfoam.config import find_stl, load_config, user_set, validate
+    from rapidfoam.config import CASE_DIR, STL_DIR, find_stl, load_config, user_set, validate
     from rapidfoam.geometry import (
         compute_domain_box,
         compute_mesh_params,
@@ -140,7 +140,7 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         sys.exit(1)
 
     # Resolve STL names (strip extensions for OpenFOAM patch names)
-    stl_dir = project_dir / cfg["stl_dir"]
+    stl_dir = project_dir / STL_DIR
     stl_pairs: list[tuple[str, Path]] = []
     for name in cfg["stl_files"]:
         stem = name.rsplit(".", 1)[0] if "." in name else name
@@ -337,7 +337,7 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
 
     div_u_scheme = cfg.get("schemes", {}).get("div_U", "bounded Gauss limitedLinear 1")
 
-    case_dir = project_dir / cfg["case_dir"] / cfg["case_name"]
+    case_dir = project_dir / CASE_DIR / cfg["case_name"]
     # Dry run — stop here
     if dry_run:
         print(f"\n  DRY RUN — would generate: {case_dir}")

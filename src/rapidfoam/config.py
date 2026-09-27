@@ -19,11 +19,15 @@ log = logging.getLogger(__name__)
 # UNIVERSAL DEFAULTS — Settings that work for any geometry
 # ============================================================
 
+# Fixed project-relative layout (not configurable): the Studio and CLI both
+# resolve geometry and cases against these, and the web layer relies on the
+# fixed base for its path-traversal checks.
+STL_DIR = "stl"
+CASE_DIR = "cases"
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "case_name": "my_case",
     "stl_files": [],
-    "stl_dir": "stl",
-    "case_dir": "cases",
 
     # Flow conditions
     "flow": {
@@ -352,9 +356,6 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
     name = cfg.get("case_name")
     if not isinstance(name, str) or not name or name in (".", "..") or any(c in name for c in '/\\\r\n'):
         errors.append("'case_name' must be a nonempty folder name without path separators")
-    for key in ("stl_dir", "case_dir"):
-        if not isinstance(cfg.get(key), str) or not cfg[key]:
-            errors.append(f"'{key}' must be a nonempty path string")
     if not isinstance(cfg.get("fidelity", "standard"), str) or cfg.get("fidelity", "standard") not in FIDELITY_PRESETS:
         errors.append("fidelity must be fast, standard, or fine")
 
@@ -378,7 +379,7 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
             errors.append(f"outputs.{key}: {e}")
 
     # STL files
-    stl_dir = project_dir / (cfg.get("stl_dir") if isinstance(cfg.get("stl_dir"), str) else "stl")
+    stl_dir = project_dir / STL_DIR
     if not stl_dir.is_dir():
         errors.append(f"STL directory not found: {stl_dir}")
     else:

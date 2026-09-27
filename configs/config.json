@@ -7,13 +7,8 @@
     "_case_name": "Folder name created under cases/<case_name>/",
     "case_name": "my_case",
 
-    "_stl_files": "ASCII STL geometry files located in the stl/ directory",
+    "_stl_files": "ASCII STL geometry files located in the fixed stl/ directory (project root)",
     "stl_files": ["geometry.stl"],
-
-    "_stl_dir_comment": "Optional: geometry folder name relative to the project root (default 'stl').",
-    "_stl_dir": "stl",
-    "_case_dir_comment": "Optional: output folder for generated cases, relative to the project root (default 'cases').",
-    "_case_dir": "cases",
 
     "_fidelity": "Presets: 'fast' (~2-4M cells, 10 min, y+~100), 'standard' (~6-9M cells, 45 min, y+~40, RECOMMENDED for general aerodynamics), 'fine' (~12-16M cells, 2-4 hrs, y+~1). Each preset carries a near-wall y+ target that is converted to an absolute first-layer thickness from the flow velocity and fluid properties. All presets use Spalding-bridging wall functions, so 'fine' is wall-function-bridged at low y+ (not classical wall-resolved).",
     "fidelity": "standard",
