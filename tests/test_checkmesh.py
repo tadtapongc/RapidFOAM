@@ -11,8 +11,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.postproc.checkmesh import (
+    QUALITY_TIERS,
     check_mesh_quality,
     checkmesh_targets_from_case,
+    classify_value,
     find_checkmesh_logs,
     find_snappy_logs,
     mesh_quality_report,
@@ -276,6 +278,71 @@ class TestCheckMeshQuality(unittest.TestCase):
         stats["max_non_ortho"] = 70.0
         self.assertTrue(check_mesh_quality(stats, max_non_ortho=75.0)["ok"])
         self.assertFalse(check_mesh_quality(stats, max_non_ortho=65.0)["ok"])
+
+
+class TestClassifyValue(unittest.TestCase):
+    def test_max_kind_bands(self):
+        self.assertEqual(classify_value("max_non_ortho", 10.0), "good")
+        self.assertEqual(classify_value("max_non_ortho", 65.0), "usable")
+        self.assertEqual(classify_value("max_non_ortho", 75.0), "marginal")
+
+    def test_min_kind_bands(self):
+        self.assertEqual(classify_value("min_determinant", 0.5), "good")
+        self.assertEqual(classify_value("min_determinant", 0.005), "usable")
+        self.assertEqual(classify_value("min_determinant", 0.0001), "marginal")
+
+    def test_zero_kind(self):
+        self.assertEqual(classify_value("concave_cells", 0.0), "good")
+        self.assertEqual(classify_value("concave_cells", 5.0), "marginal")
+
+    def test_unknown_key_is_good(self):
+        self.assertEqual(classify_value("not_a_metric", 9999.0), "good")
+
+
+class TestVerdict(unittest.TestCase):
+    def test_clean_mesh_is_good(self):
+        result = check_mesh_quality(parse_checkmesh(GOOD_CHECKMESH))
+        self.assertEqual(result["verdict"], "good")
+        self.assertEqual(result["verdict_label"], "Good")
+
+    def test_marginal_but_passing_is_not_good(self):
+        # Non-orthogonality 65 passes the configured 65 limit but is > the 60
+        # "good" band, so the verdict should be usable, not good.
+        text = GOOD_CHECKMESH.replace(
+            "Mesh non-orthogonality Max: 45.2 average: 3.1",
+            "Mesh non-orthogonality Max: 65.0 average: 3.1",
+        ).replace("Mesh OK.", "Mesh OK.")
+        result = check_mesh_quality(parse_checkmesh(text))
+        self.assertEqual(result["verdict"], "usable")
+
+    def test_hard_failure_is_bad(self):
+        result = check_mesh_quality(parse_checkmesh(FAILING_CHECKMESH))
+        self.assertEqual(result["verdict"], "bad")
+        self.assertTrue(result["note"].startswith("[Bad]"))
+
+    def test_open_patch_forces_bad(self):
+        result = check_mesh_quality(parse_checkmesh(OPEN_PATCH_CHECKMESH))
+        self.assertEqual(result["verdict"], "bad")
+
+    def test_layer_dropout_forces_bad(self):
+        layers = {"geometry": {"faces": 100, "layers": 1, "coverage": 0.5}}
+        result = check_mesh_quality(
+            parse_checkmesh(GOOD_CHECKMESH), layers, target_layers=2
+        )
+        self.assertEqual(result["verdict"], "bad")
+
+    def test_metric_entries_carry_level_and_bands(self):
+        result = check_mesh_quality(parse_checkmesh(EXTENDED_CHECKMESH))
+        by_key = {m["key"]: m for m in result["metrics"]}
+        non_ortho = by_key["max_non_ortho"]  # 68.34: > 60 good band, <= 70 caution
+        self.assertEqual(non_ortho["level"], "usable")
+        self.assertEqual(non_ortho["good"], 60.0)
+        self.assertEqual(non_ortho["caution"], 70.0)
+
+    def test_tiers_cover_expected_keys(self):
+        for key in ("max_non_ortho", "max_skewness", "max_aspect_ratio",
+                    "min_determinant", "concave_cells"):
+            self.assertIn(key, QUALITY_TIERS)
 
 
 class TestCheckmeshTargets(unittest.TestCase):

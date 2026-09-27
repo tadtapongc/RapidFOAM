@@ -299,10 +299,12 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
   const app = await makeApp(MESH_BODY);
   app.renderMeshQuality({
     ok: true,
+    verdict: 'good',
+    verdict_label: 'Good',
     stats: { cells: 9008844, max_non_ortho: 45.2, avg_non_ortho: 3.1, max_skewness: 1.2, max_aspect_ratio: 12.5 },
     metrics: [
-      { key: 'max_non_ortho', label: 'Max non-orthogonality', value: 45.2, limit_text: '<= 65', pass: true },
-      { key: 'concave_cells', label: 'Concave cells', value: 0, limit_text: '== 0', pass: true, integer: true },
+      { key: 'max_non_ortho', label: 'Max non-orthogonality', value: 45.2, limit_text: '<= 65', pass: true, level: 'good' },
+      { key: 'concave_cells', label: 'Concave cells', value: 0, limit_text: '== 0', pass: true, level: 'good', integer: true },
     ],
     layers: { geometry: { layers: 2, coverage: 1.0 } },
     patches: { geometry: { faces: 124862, closed: true, closure: 'closed singly connected' } },
@@ -316,7 +318,7 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
   assert.equal(doc.getElementById('mesh-nonortho').textContent, '45.20 / 3.10');
   const badge = doc.getElementById('mesh-quality-badge');
   assert.ok(badge.className.includes('mesh-quality-badge-ok'));
-  assert.equal(badge.textContent, 'Mesh OK');
+  assert.equal(badge.textContent, 'Good');
   const rows = doc.getElementById('mesh-layer-tbody').innerHTML;
   assert.ok(rows.includes('geometry'));
   assert.ok(rows.includes('2/2'));
@@ -338,9 +340,12 @@ test('renderMeshQuality flags concerns and escapes the patch name', async () => 
   const app = await makeApp(MESH_BODY);
   app.renderMeshQuality({
     ok: false,
+    verdict: 'bad',
+    verdict_label: 'Bad',
     stats: { cells: 10, max_non_ortho: 68.3 },
     metrics: [
-      { key: 'max_non_ortho', label: 'Max non-orthogonality', value: 68.3, limit_text: '<= 65', pass: false },
+      { key: 'max_non_ortho', label: 'Max non-orthogonality', value: 68.3, limit_text: '<= 65', pass: false, level: 'usable' },
+      { key: 'concave_cells', label: 'Concave cells', value: 42, limit_text: '== 0', pass: false, level: 'marginal', integer: true },
     ],
     layers: { 'a<b>': { layers: 1, coverage: 0.5 } },
     patches: { 'body<x>': { faces: 10, closed: false, closure: 'non-closed singly connected' } },
@@ -350,14 +355,16 @@ test('renderMeshQuality flags concerns and escapes the patch name', async () => 
   });
   const doc = app._window.document;
   const badge = doc.getElementById('mesh-quality-badge');
-  assert.ok(badge.className.includes('mesh-quality-badge-warn'));
-  assert.equal(badge.textContent, '2 concerns');
+  assert.ok(badge.className.includes('mesh-quality-badge-bad'));
+  assert.equal(badge.textContent, 'Bad · 2 concerns');
   const rows = doc.getElementById('mesh-layer-tbody').innerHTML;
   assert.ok(!rows.includes('<b>'), 'raw tag must not survive');
   assert.ok(rows.includes('&lt;b&gt;'));
   assert.ok(rows.includes('50%'));
   const metrics = doc.getElementById('mesh-metrics-tbody').innerHTML;
-  assert.ok(metrics.includes('mesh-metric-fail'));
+  assert.ok(metrics.includes('mesh-metric-usable'), 'caution band');
+  assert.ok(metrics.includes('CAUTION'));
+  assert.ok(metrics.includes('mesh-metric-fail'), 'fail band');
   const patch = doc.getElementById('mesh-patch-tbody').innerHTML;
   assert.ok(!patch.includes('<x>'), 'patch tag must not survive');
   assert.ok(patch.includes('non-closed'));

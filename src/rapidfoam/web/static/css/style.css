@@ -1616,7 +1616,12 @@ body.dark-theme {
 }
 
 .mesh-metric-pass { color: #4ade80; }
+.mesh-metric-usable { color: #fbbf24; }
 .mesh-metric-fail { color: #f87171; }
+
+.mesh-quality-badge-bad {
+  color: #f87171;
+}
 
 @media (max-width: 900px) {
   .mesh-quality-grid { grid-template-columns: 1fr; }

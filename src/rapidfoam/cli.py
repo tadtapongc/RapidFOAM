@@ -563,7 +563,8 @@ def forces_main() -> None:
             return None
 
         stats = summary["stats"]
-        print("\n  Mesh quality (checkMesh)")
+        verdict_label = summary.get("verdict_label", "")
+        print(f"\n  Mesh quality (checkMesh) — verdict: {verdict_label}")
         cells = _fmt(stats.get("cells"), ",d")
         if cells is not None:
             print(f"    cells            {cells}")
@@ -584,6 +585,10 @@ def forces_main() -> None:
         failed = stats.get("failed_checks")
         if isinstance(failed, int) and not isinstance(failed, bool):
             print(f"    failed checks    {failed}")
+        ranked = [m for m in summary.get("metrics", []) if m.get("level") in ("usable", "marginal")]
+        for metric in ranked:
+            tag = "borderline" if metric["level"] == "usable" else "poor"
+            print(f"    {metric['label']}: {metric['value']:g} ({tag})")
         for patch, info in sorted(summary["layers"].items()):
             achieved = info.get("layers", "?")
             coverage = info.get("coverage")

@@ -68,6 +68,59 @@ _PATCH_ROW_RE = re.compile(
     r"(ok|failed|notOk)\s*\(([^)]*)\)"
 )
 
+# CFD-practical quality bands, independent of snappy's give-up limits.
+#
+# snappyHexMesh's ``meshQualityControls`` are where it stops *trying*, not where
+# a mesh becomes good: non-orthogonality 65 and skewness 4 are survivable, not
+# desirable. Each entry is ``key -> (good, caution, kind, label)`` where the
+# value is judged:
+#   kind "max": good <= value <= caution ; fail > caution
+#   kind "min": good >= value >= caution ; fail < caution
+#   kind "zero": good == 0 ; caution when positive (counts)
+# The checkMesh *configured* limits still trigger the hard ``ok`` failure; these
+# bands drive the good/usable/marginal verdict shown to the user.
+QUALITY_TIERS: dict[str, tuple[float, float, str, str]] = {
+    "max_non_ortho": (60.0, 70.0, "max", "Max non-orthogonality"),
+    "max_skewness": (2.0, 4.0, "max", "Max skewness"),
+    "max_aspect_ratio": (50.0, 100.0, "max", "Max aspect ratio"),
+    "min_determinant": (0.05, 0.001, "min", "Min cell determinant"),
+    "min_interp_weight": (0.1, 0.01, "min", "Min face interpolation weight"),
+    "min_volume_ratio": (0.05, 0.01, "min", "Min face volume ratio"),
+    "concave_cells": (0.0, 0.0, "zero", "Concave cells"),
+}
+
+# Verdict ordering, worst last: index is severity.
+_VERDICT_ORDER = ["good", "usable", "marginal", "bad"]
+_VERDICT_LABEL = {
+    "good": "Good",
+    "usable": "Usable",
+    "marginal": "Marginal",
+    "bad": "Bad",
+}
+
+
+def classify_value(key: str, value: float) -> str:
+    """Return ``good``/``usable``/``marginal`` for a single metric value.
+
+    Unknown keys are treated as ``good`` so adding a metric never downgrades a
+    verdict by accident.
+    """
+    tier = QUALITY_TIERS.get(key)
+    if tier is None or not math.isfinite(value):
+        return "good"
+    good, caution, kind, _ = tier
+    if kind == "max":
+        if value <= good:
+            return "good"
+        return "usable" if value <= caution else "marginal"
+    if kind == "min":
+        if value >= good:
+            return "good"
+        return "usable" if value >= caution else "marginal"
+    # zero: any positive count is a concern
+    return "good" if value <= 0 else "marginal"
+
+
 # snappy layer table rows come in two shapes:
 #   mid-run:  patch  faces  layers  near-wall-thickness  overall-thickness
 #   final:    patch  faces  target  mesh  overall-thickness  coverage-percent
@@ -370,8 +423,14 @@ def check_mesh_quality(
     if not stats and not layers:
         return {
             "available": False,
+            "verdict": "unknown",
+            "verdict_label": "Unknown",
             "stats": {},
+            "metrics": [],
             "layers": {},
+            "patches": {},
+            "open_patches": [],
+            "cell_types": {},
             "issues": [],
             "ok": False,
             "note": "no checkMesh or snappyHexMesh log found",
@@ -401,20 +460,28 @@ def check_mesh_quality(
         else:  # positive
             passed = value > 0.0
             limit_text = "> 0"
-        metrics.append({
+        level = classify_value(key, value)
+        entry: dict[str, Any] = {
             "key": key,
             "label": label,
             "value": value,
             "limit": limit,
             "limit_text": limit_text,
             "pass": passed,
-        })
+            "level": level,
+        }
+        tier = QUALITY_TIERS.get(key)
+        if tier is not None:
+            good, caution, _, _ = tier
+            entry["good"] = good
+            entry["caution"] = caution
+        metrics.append(entry)
         if not passed:
             issues.append(f"{label} {value:g} violates {limit_text}")
         return value
 
-    non_ortho = _metric("Max non-orthogonality", "max_non_ortho", max_non_ortho, "max")
-    skewness = _metric("Max skewness", "max_skewness", max_skewness, "max")
+    _metric("Max non-orthogonality", "max_non_ortho", max_non_ortho, "max")
+    _metric("Max skewness", "max_skewness", max_skewness, "max")
     _metric("Max aspect ratio", "max_aspect_ratio", max_aspect_ratio, "max")
     _metric("Min cell volume", "min_volume", 0.0, "positive")
     _metric("Min cell determinant", "min_determinant", 0.001, "min")
@@ -430,6 +497,7 @@ def check_mesh_quality(
             "limit": 0.0,
             "limit_text": "== 0",
             "pass": concave_cells == 0,
+            "level": classify_value("concave_cells", float(concave_cells)),
             "integer": True,
         })
         if concave_cells > 0:
@@ -480,25 +548,33 @@ def check_mesh_quality(
 
     ok = not issues and bool(stats or layers)
 
-    if ok:
-        parts = []
-        if non_ortho is not None:
-            parts.append(f"max non-ortho {non_ortho:g}")
-        if skewness is not None:
-            parts.append(f"max skewness {skewness:g}")
-        if layer_entries:
-            worst = min(
-                (
-                    e["coverage"] for e in layer_entries.values()
-                    if e.get("coverage") is not None
-                ),
-                default=None,
-            )
-            if worst is not None:
-                parts.append(f"min layer coverage {worst * 100:.0f}%")
-        note = "mesh quality OK" + (f" ({', '.join(parts)})" if parts else "")
+    # Overall verdict: the worst tier across every metric, downgraded to "bad"
+    # when a hard checkMesh failure, an open patch or layer dropout occurred.
+    verdict = "good"
+    for entry in metrics:
+        level = entry.get("level", "good")
+        if _VERDICT_ORDER.index(level) > _VERDICT_ORDER.index(verdict):
+            verdict = level
+    hard_fail = (
+        bool(open_patches)
+        or any(
+            e.get("coverage") is not None and e["coverage"] < 1.0
+            for e in layer_entries.values()
+        )
+        or (isinstance(stats.get("failed_checks"), int) and stats["failed_checks"] > 0)
+    )
+    if hard_fail:
+        verdict = "bad"
+    verdict_label = _VERDICT_LABEL[verdict]
+
+    if ok and verdict == "good":
+        note = "mesh quality OK"
+    elif ok:
+        note = f"mesh quality {verdict_label.lower()} — no hard failures"
     else:
         note = f"{len(issues)} mesh-quality concern(s): " + "; ".join(issues)
+    if verdict != "good":
+        note = f"[{verdict_label}] " + note
 
     cell_types = stats.get("cell_types")
     if isinstance(cell_types, dict) and cell_types:
@@ -514,6 +590,8 @@ def check_mesh_quality(
 
     return {
         "available": True,
+        "verdict": verdict,
+        "verdict_label": verdict_label,
         "stats": stats,
         "metrics": metrics,
         "layers": layer_entries,

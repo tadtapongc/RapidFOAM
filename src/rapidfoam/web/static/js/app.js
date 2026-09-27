@@ -3287,18 +3287,20 @@ class CFDApp {
     this.setValText('mesh-aspect', fmt(stats.max_aspect_ratio, 2));
 
     const issues = Array.isArray(data.issues) ? data.issues : [];
+    const verdict = data.verdict || (data.ok ? 'good' : 'bad');
+    const verdictLabel = data.verdict_label || '--';
     const badge = document.getElementById('mesh-quality-badge');
     if (badge) {
-      if (data.ok) {
-        badge.className = 'badge badge-subtle mesh-quality-badge-ok';
-        badge.textContent = 'Mesh OK';
-      } else if (issues.length) {
-        badge.className = 'badge badge-subtle mesh-quality-badge-warn';
-        badge.textContent = `${issues.length} concern${issues.length === 1 ? '' : 's'}`;
-      } else {
-        badge.className = 'badge badge-subtle';
-        badge.textContent = '--';
-      }
+      const badgeClass = {
+        good: 'mesh-quality-badge-ok',
+        usable: 'mesh-quality-badge-warn',
+        marginal: 'mesh-quality-badge-warn',
+        bad: 'mesh-quality-badge-bad',
+        unknown: '',
+      }[verdict] || '';
+      badge.className = `badge badge-subtle ${badgeClass}`.trim();
+      const count = issues.length ? ` · ${issues.length} concern${issues.length === 1 ? '' : 's'}` : '';
+      badge.textContent = verdictLabel === '--' ? '--' : `${verdictLabel}${count}`;
     }
 
     // checkMesh metrics: value / limit / pass-fail.
@@ -3315,8 +3317,13 @@ class CFDApp {
             minimumFractionDigits: digits,
             maximumFractionDigits: digits,
           });
-          const cls = m.pass ? 'mesh-metric-pass' : 'mesh-metric-fail';
-          const status = m.pass ? 'OK' : 'FAIL';
+          const level = m.level || (m.pass ? 'good' : 'marginal');
+          const cls = {
+            good: 'mesh-metric-pass',
+            usable: 'mesh-metric-usable',
+            marginal: 'mesh-metric-fail',
+          }[level] || 'mesh-metric-pass';
+          const status = { good: 'OK', usable: 'CAUTION', marginal: 'FAIL' }[level] || 'OK';
           return `<tr><td>${this.escapeHtml(m.label || m.key || '')}</td>`
             + `<td class="monospace">${shown}</td>`
             + `<td class="monospace text-muted">${this.escapeHtml(m.limit_text || '')}</td>`
