@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from rapidfoam.config import load_config, validate
 from rapidfoam.postproc.checkmesh import (
     QUALITY_TIERS,
+    _config_has_symmetry,
     check_mesh_quality,
     checkmesh_targets_from_case,
     classify_value,
@@ -166,6 +167,46 @@ class TestParseBoundaryPatches(unittest.TestCase):
     def test_domain_patches_not_flagged(self):
         result = check_mesh_quality(parse_checkmesh(EXTENDED_CHECKMESH))
         self.assertEqual(result["open_patches"], [])
+
+    def test_ground_and_farfield_never_flagged(self):
+        text = (
+            "    cells: 10\n"
+            "Checking patch topology for multiply connected surfaces...\n"
+            "                   Patch    Faces   Points  Surface topology\n"
+            "                  ground    15522    16614  ok (non-closed singly connected) (0 0 0) (1 1 1)\n"
+            "                farField     5040     5422  ok (non-closed singly connected) (0 0 0) (1 1 1)\n"
+            "Mesh OK.\n"
+        )
+        result = check_mesh_quality(parse_checkmesh(text))
+        self.assertEqual(result["open_patches"], [])
+
+    def test_symmetry_case_suppresses_open_patches(self):
+        # A half model cut on symmetry is legitimately non-closed everywhere.
+        result = check_mesh_quality(parse_checkmesh(OPEN_PATCH_CHECKMESH), has_symmetry=True)
+        self.assertEqual(result["open_patches"], [])
+        self.assertFalse(any("open (non-closed)" in i for i in result["issues"]))
+
+    def test_full_model_still_flags_open_body_patch(self):
+        result = check_mesh_quality(parse_checkmesh(OPEN_PATCH_CHECKMESH), has_symmetry=False)
+        self.assertIn("geometry", result["open_patches"])
+
+
+class TestConfigHasSymmetry(unittest.TestCase):
+    def test_explicit_symmetry_plane(self):
+        self.assertTrue(_config_has_symmetry({"symmetry_plane": 0.0}))
+        self.assertTrue(_config_has_symmetry({"centerline": 0.0}))
+
+    def test_domain_faces_symmetry_patch(self):
+        cfg = {
+            "patches": {"symmetry": "symmetry"},
+            "domain_faces": {"-x": "symmetry", "+x": "farField"},
+        }
+        self.assertTrue(_config_has_symmetry(cfg))
+
+    def test_no_symmetry(self):
+        self.assertFalse(_config_has_symmetry({}))
+        self.assertFalse(_config_has_symmetry({"symmetry_plane": None}))
+        self.assertFalse(_config_has_symmetry({"domain_faces": {"-x": "farField", "+x": "farField"}}))
 
 
 class TestParseLayerCoverage(unittest.TestCase):

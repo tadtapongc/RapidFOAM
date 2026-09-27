@@ -439,6 +439,7 @@ def check_mesh_quality(
     max_skewness: float = 4.0,
     max_aspect_ratio: float = 100.0,
     bands: dict[str, dict[str, float]] | None = None,
+    has_symmetry: bool = False,
 ) -> dict[str, Any]:
     """Compare parsed mesh metrics against quality limits.
 
@@ -449,6 +450,10 @@ def check_mesh_quality(
     ``bands`` optionally overrides the good/caution verdict thresholds per
     metric (see :func:`resolve_bands`); the built-in defaults are used when a
     metric is not overridden.
+
+    ``has_symmetry`` marks a half model cut on a symmetry plane. There, body and
+    boundary patches are legitimately non-closed along the cut, so open-patch
+    reports are suppressed (only a full model can leak).
     """
     stats = stats or {}
     layers = layers or {}
@@ -543,18 +548,20 @@ def check_mesh_quality(
         issues.append(f"{failed} failed mesh check(s)")
 
     # Open (non-closed) body patches are leaking geometry — the highest
-    # severity meshing defect. Domain boundaries (symmetry/inlet/outlet/farField)
-    # and the catch-all ".*" patch are legitimately non-closed, so only report
-    # named surfaces: a body patch is recognisable by its closure text while
-    # the far-field patches are not. We flag any non-closed patch that is not a
-    # known domain boundary.
-    _DOMAIN_PATCHES = {"symmetry", "inlet", "outlet", "farfield", "front", "back", ".*"}
+    # severity meshing defect, but only a FULL model can leak: a half model cut
+    # on a symmetry plane is legitimately open along the cut, as are the domain
+    # boundary patches (symmetry/inlet/outlet/ground/farField, the catch-all
+    # ".*"). So on a symmetry case we do not report open patches at all; on a
+    # full model we flag any non-domain patch that is not closed.
+    _DOMAIN_PATCHES = {
+        "symmetry", "inlet", "outlet", "ground", "farfield", "front", "back", ".*",
+    }
     open_patches: list[str] = []
     patch_info = stats.get("patches")
-    if isinstance(patch_info, dict):
+    if isinstance(patch_info, dict) and not has_symmetry:
         for name, info in patch_info.items():
             key = name.strip('"').lower()
-            if key in _DOMAIN_PATCHES or key.startswith(("inlet", "outlet", "symmetry")):
+            if key in _DOMAIN_PATCHES or key.startswith(("inlet", "outlet", "symmetry", "ground", "farfield")):
                 continue
             if info.get("closed") is False:
                 open_patches.append(name)
@@ -710,6 +717,29 @@ def _load_config_dict(
     return {}
 
 
+def _config_has_symmetry(config_dict: dict[str, Any] | None) -> bool:
+    """True when a case is a half model (symmetry plane / symmetry boundary).
+
+    Prefers an explicit ``symmetry_plane``/``centerline``; falls back to any
+    ``domain_faces`` entry mapped to the configured symmetry patch name, then
+    to a ``none``-free default where the generator assigns ``-<lateral>``.
+    """
+    if not isinstance(config_dict, dict):
+        return False
+    for key in ("symmetry_plane", "centerline"):
+        value = config_dict.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return True
+    domain_faces = config_dict.get("domain_faces")
+    if isinstance(domain_faces, dict):
+        patches = config_dict.get("patches", {})
+        sym_name = patches.get("symmetry") if isinstance(patches, dict) else None
+        if isinstance(sym_name, str):
+            return any(str(v) == sym_name for v in domain_faces.values())
+        return any(str(v).lower().startswith("symmetry") for v in domain_faces.values())
+    return False
+
+
 def checkmesh_targets_from_case(
     config_path: str | Path | None = None,
     case_dir: str | Path | None = None,
@@ -754,4 +784,5 @@ def mesh_quality_report(
         max_non_ortho=targets.get("max_non_ortho", 65.0),
         max_skewness=targets.get("max_skewness", 4.0),
         bands=verdict_bands_from_dict(config_dict),
+        has_symmetry=_config_has_symmetry(config_dict),
     )

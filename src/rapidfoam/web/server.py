@@ -51,6 +51,7 @@ from rapidfoam.postproc.forces import (
     window_stats,
 )
 from rapidfoam.postproc.checkmesh import (
+    _config_has_symmetry,
     check_mesh_quality,
     checkmesh_targets_from_dict,
     parse_checkmesh,
@@ -2232,6 +2233,7 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
         max_non_ortho=targets.get("max_non_ortho", 65.0),
         max_skewness=targets.get("max_skewness", 4.0),
         bands=verdict_bands_from_dict(config_dict),
+        has_symmetry=_config_has_symmetry(config_dict),
     )
 
     # Cross-reference the realised near-wall y+ (from the yPlus function object)
