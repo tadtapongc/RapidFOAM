@@ -1121,8 +1121,8 @@ class CFDApp {
 
   updateOverridePlaceholders(fidelity = 'standard') {
     const fallback = {
-      fast: { base_cell: 'L/20', surf_min: '3', surf_max: '4', edge: '5', nearwake: '2', farwake: '1', featurecells: '3', maxsurflevel: '6', endtime: '800', writeint: '400', n_layers: '2', expansion: '1.30', yplus: '100' },
-      standard: { base_cell: 'L/30', surf_min: '4', surf_max: '5', edge: '6', nearwake: '3', farwake: '1', featurecells: '4', maxsurflevel: '7', endtime: '1500', writeint: '500', n_layers: '3', expansion: '1.20', yplus: '40' },
+      fast: { base_cell: 'L/20', surf_min: '3', surf_max: '4', edge: '5', nearwake: '2', farwake: '1', featurecells: '3', maxsurflevel: '6', endtime: '800', writeint: '400', n_layers: '2', expansion: '1.30', yplus: '30' },
+      standard: { base_cell: 'L/30', surf_min: '4', surf_max: '5', edge: '6', nearwake: '3', farwake: '1', featurecells: '4', maxsurflevel: '7', endtime: '1500', writeint: '500', n_layers: '3', expansion: '1.20', yplus: '10' },
       fine: { base_cell: 'L/37.5', surf_min: '4', surf_max: '5', edge: '7', nearwake: '4', farwake: '2', featurecells: '5', maxsurflevel: '8', endtime: '2500', writeint: '500', n_layers: '12', expansion: '1.20', yplus: '1' },
     };
     const p = { ...(fallback[fidelity] || fallback.standard) };
@@ -1247,8 +1247,11 @@ class CFDApp {
     const first = (p.first_layer_thickness * 1e6).toFixed(1);
     const yPlus = p.y_plus_effective != null ? p.y_plus_effective.toFixed(1) : '—';
     const stack = p.stack != null ? (p.stack * 1000).toFixed(3) : '—';
-    const clamped = p.clamped ? ' (clamped)' : '';
-    let text = `u_tau ≈ ${uTau} m/s | first layer ${first} µm (y+ ${yPlus}${clamped}) | stack ${stack} mm`;
+    // Show the requested target when clamping moved the realised y+ down.
+    const yDisplay = (p.clamped && p.y_plus_target != null)
+      ? `y+ target ${p.y_plus_target} → realised ${yPlus} (capped by the finest cell)`
+      : `y+ ${yPlus}`;
+    let text = `u_tau ≈ ${uTau} m/s | first layer ${first} µm (${yDisplay}) | stack ${stack} mm`;
     if (p.ground_layers_note) text += ` | ground layers ${p.ground_layers_note}`;
     el.textContent = text;
     this.renderAutoSizePreview(auto, fangle);
@@ -1262,7 +1265,7 @@ class CFDApp {
       const small = (auto.small_feature_m * 1000).toFixed(2);
       const finest = (auto.finest_surface_cell_m * 1000).toFixed(2);
       const level = Array.isArray(auto.surface_level) ? auto.surface_level[1] : '—';
-      const pct = auto.feature_percentile != null ? auto.feature_percentile : 5;
+      const pct = auto.feature_percentile != null ? auto.feature_percentile : 10;
       let t = `Auto-sizing: smallest feature ${small} mm (${pct}th pct edge) → ` +
         `finest surface cell ${finest} mm (level ${level})`;
       if (auto.capped) t += ` — capped at level ${auto.max_surface_level}`;
