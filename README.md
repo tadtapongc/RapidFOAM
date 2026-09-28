@@ -22,9 +22,11 @@ RapidFOAM streamlines the OpenFOAM workflow for external vehicle aerodynamics: C
 - **Symmetry Plane Support**: Half-car simulations (e.g. `x = 0`) cut mesh cell count roughly in half, with automatic 2x force scaling in summaries and comparison tables.
 - **Web Studio Interface**: Browser-based UI with Three.js 3D domain visualization, interactive parameter editor, real-time convergence charts, and remote SLURM cluster job submission over SSH.
 - **Full Aerodynamic Telemetry**: Force/moment component breakdown, coefficients (`Cd`, `Cl`, `Cs`, `CmPitch`, `CmRoll`, `CmYaw`), 2D/3D aero-load views, aero balance / center of pressure, and a post-run reference editor for recomputing coefficients without re-running the solver.
+- **Mesh-Quality Verification**: Parses the `checkMesh` log and snappyHexMesh's per-patch layer table to report non-orthogonality, skewness, aspect ratio, concave cells, boundary closure and boundary-layer coverage, then rolls them into a tiered Good/Usable/Marginal/Bad verdict. Cross-references the realised `yPlus` output against the layer sizing target.
+- **Geometry-Adaptive Meshing**: Streaming STL analysis drives feature-based surface/edge auto-sizing (so small features are resolved without coarsening the preset) and derives `resolveFeatureAngle` from the crease distribution so real aero edges snap while smooth tessellation does not.
 - **Remote Case Management**: Submit, monitor and gracefully cancel SLURM jobs; download finished cases from the cluster with live progress (streamed and published atomically, so an interrupted transfer never leaves a partial case).
 - **Convergence Auto-Stop**: Background monitor tracks rolling force variation and signals `stopAt writeNow;` once drag and downforce stabilize within a user-defined threshold (default +/- 0.5%).
-- **Post-Processing CLI**: Tabulates aerodynamic forces (Drag, Downforce, L/D), plots live convergence curves, and compares multiple case iterations side-by-side.
+- **Post-Processing CLI**: Tabulates aerodynamic forces (Drag, Downforce, L/D), plots live convergence curves, compares multiple case iterations side-by-side, verifies near-wall y+ against the sizing target, and reports mesh quality.
 
 ---
 
@@ -213,6 +215,9 @@ python read_forces.py --check
 
 # Verify near-wall y+ against the layer sizing target (exit 0 if met, 2 if missed):
 python read_forces.py --yplus
+
+# Verify mesh quality from the checkMesh + snappyHexMesh logs (exit 0 if ok, 2 if concerns):
+python read_forces.py --mesh
 ```
 
 The force summary also prints a one-line near-wall y+ note (patch averages vs. the
@@ -243,13 +248,15 @@ Key settings available in `configs/config.json`:
 
 ### Mesh Fidelity Presets
 
-| Preset | Base Cell | Surface Levels | Edge Level | Boundary Layers | Max Iterations | Target Cells | Estimated Runtime* |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `fast` | 0.15 m | [3, 4] | 5 | 3 | 800 | ~2–4 M | ~5–10 min |
-| `standard` | 0.10 m | [4, 5] | 6 | 5 | 1500 | ~6–9 M | ~30–60 min |
-| `fine` | 0.08 m | [5, 6] | 7 | 6 | 3000 | ~12–16 M | ~2–4 hrs |
+| Preset | Base Cell* | Surface Levels | Edge Level | Boundary Layers | y+ Target | Max Iterations | Target Cells | Estimated Runtime** |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `fast` | 0.15 m | [3, 4] | 5 | 2 | ~30 | 800 | ~3–5 M | ~10–20 min |
+| `standard` | 0.10 m | [4, 5] | 6 | 3 | ~10 | 1500 | ~9–13 M | ~1–2 hrs |
+| `fine` | 0.08 m | [4, 5] | 7 | 12 | ~1 | 2500 | ~20–28 M | ~4–6 hrs |
 
-*\* Rough guidance only — not benchmarked. Actual cell counts and solve times depend on geometry complexity, core count, and convergence rate.*
+*\* The base cell is derived at generation time as the longest STL extent divided by the preset's `cells_per_length` (20 / 30 / 37.5); the values shown are for a ~3 m model. Surface and edge levels are raised further by feature-based auto-sizing when the geometry has small features.*
+
+*\*\* Rough guidance only — not benchmarked. Actual cell counts and solve times depend on geometry complexity, core count, and convergence rate. All presets use Spalding-bridging wall functions, so `fine` (y+ ~ 1) is wall-function-bridged at low y+, not classical wall-resolved.*
 
 ---
 
@@ -354,6 +361,8 @@ RapidFOAM/
 │   │   ├── plotting.py # Matplotlib static & live convergence plots
 │   │   ├── compare.py  # Multi-case comparison table
 │   │   ├── residuals.py# Residual parser
+│   │   ├── yplus.py    # yPlus.dat reader and target verification
+│   │   ├── checkmesh.py# checkMesh + layer-coverage parser & tiered verdict
 │   │   └── convergence_monitor.py # Standalone convergence auto-stop monitor
 │   └── web/            # RapidFOAM Web Studio
 │       ├── server.py   # FastAPI backend & static file server
@@ -361,6 +370,7 @@ RapidFOAM/
 │       └── static/     # Web Studio UI (Three.js 3D viewport, telemetry graphs)
 ├── tests/              # Python unit & regression tests
 │   └── js/             # JSDOM front-end tests (npm test)
+├── docs/               # Historical bug-hunt reports
 ├── package.json        # Front-end test tooling (jsdom)
 ├── CHANGELOG.md        # Release history
 ├── run_app.bat         # 1-click launcher for Windows
