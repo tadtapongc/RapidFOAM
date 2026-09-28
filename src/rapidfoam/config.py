@@ -159,8 +159,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "snap": {
         "nSmoothPatch": 5,
         "tolerance": 2.0,
-        "nSolveIter": 200,
-        "nRelaxIter": 8,
+        "nSolveIter": 300,
+        "nRelaxIter": 10,
         "nFeatureSnapIter": 15,
         "implicitFeatureSnap": True,
         "explicitFeatureSnap": True,
@@ -210,11 +210,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "includedAngle": 140,
     },
 
-    # Mesh quality controls (relaxed — works with any geometry)
+    # Mesh quality controls. snappyHexMesh's limits are where it stops *trying*,
+    # not where a mesh becomes good, so they are set near the CFD-practical good
+    # bands (verdict_bands below) to push it to actually fix bad faces. Tightening
+    # costs meshing time; verify with `read_forces.py --mesh`.
     "mesh_quality": {
-        "maxNonOrtho": 65,
+        "maxNonOrtho": 60,
         "maxBoundarySkewness": 20,
-        "maxInternalSkewness": 4,
+        "maxInternalSkewness": 3.5,
         "maxConcave": 80,
         "minVol": 1e-13,
         "minTetQuality": 1e-15,
@@ -224,7 +227,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "minFaceWeight": 0.05,
         "minVolRatio": 0.01,
         "minTriangleTwist": -1,
-        "nSmoothScale": 4,
+        "nSmoothScale": 6,
         "errorReduction": 0.75,
         # Good/caution bands for the mesh-quality verdict (independent of the
         # snappyHexMesh pass/fail limits above). "good" is the value at which a
@@ -240,7 +243,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "concave_cells": {"good": 0.0, "caution": 0.0},
         },
         "relaxed": {
-            "maxNonOrtho": 75,
+            "maxNonOrtho": 70,
             "maxBoundarySkewness": 25,
             "maxInternalSkewness": 5,
             "maxConcave": 85,
