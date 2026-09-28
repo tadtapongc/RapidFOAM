@@ -102,12 +102,12 @@ class TestResolveLayers(unittest.TestCase):
         # keeps boundary-layer coverage high (a measured regression showed the
         # thicker level0 ceiling collapsed coverage ~91% -> ~20%).
         cfg = base_cfg("standard")
+        cfg["layers"]["y_plus_target"] = 40  # needs ~1.87 mm; finest cell allows ~0.41 mm
         res = resolve_layers(cfg, BOUNDS)
         level1 = cfg["mesh_params"]["surface_level"][1]
         cell_fine = cfg["mesh_params"]["base_cell_size"] / 2 ** level1
         self.assertLessEqual(cfg["layers"]["first_layer_thickness"], 0.5 * cell_fine + 1e-12)
-        # Standard's y+40 needs ~1.87 mm but the finest cell allows only ~0.41 mm,
-        # so it IS clamped; the target is unreachable at this surface resolution.
+        # A high target is unreachable at this surface resolution, so it IS clamped.
         self.assertTrue(res["clamped"])
         self.assertLess(res["y_plus_effective"], res["y_plus_target"])
         # Provenance for the CLI warning is populated.
@@ -206,10 +206,15 @@ class TestPresetSchema(unittest.TestCase):
                 self.assertTrue(p.get("distance_shells"))
                 self.assertIn("slurm_mem_per_cpu", p)
 
-    def test_wall_function_and_wall_resolved_tiers(self):
-        self.assertGreaterEqual(FIDELITY_PRESETS["fast"]["y_plus_target"], 30)
-        self.assertGreaterEqual(FIDELITY_PRESETS["standard"]["y_plus_target"], 30)
-        self.assertLessEqual(FIDELITY_PRESETS["fine"]["y_plus_target"], 5)
+    def test_y_plus_tiers_are_ordered(self):
+        # Targets approximate the y+ an auto-sized surface can actually deliver:
+        # the coarser the preset, the higher the target. fine stays the low-y+ tier.
+        fast = FIDELITY_PRESETS["fast"]["y_plus_target"]
+        std = FIDELITY_PRESETS["standard"]["y_plus_target"]
+        fine = FIDELITY_PRESETS["fine"]["y_plus_target"]
+        self.assertGreater(fast, std)
+        self.assertGreater(std, fine)
+        self.assertLessEqual(fine, 5)
         for name, preset in FIDELITY_PRESETS.items():
             with self.subTest(preset=name):
                 self.assertFalse(preset["ground_layers"])

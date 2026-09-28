@@ -259,7 +259,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "edge_level": 5,               # 4.69mm at edges
         "n_layers": 2,
         "expansion_ratio": 1.3,
-        "y_plus_target": 100,
+        "y_plus_target": 30,
         "ground_layers": False,
         "end_time": 800,
         "write_interval": 400,
@@ -301,7 +301,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "edge_level": 6,               # 1.56mm at sharp aero edges (wings/gurneys)
         "n_layers": 3,
         "expansion_ratio": 1.2,
-        "y_plus_target": 40,
+        "y_plus_target": 10,
         "ground_layers": False,
         "end_time": 1500,
         "write_interval": 500,

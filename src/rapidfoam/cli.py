@@ -323,13 +323,17 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         if layer_resolution.get("y_plus_effective") is not None:
             suffix = " (clamped by maxFaceThicknessRatio)" if layer_resolution.get("clamped") else ""
             print(f"    effective y+:   {layer_resolution['y_plus_effective']:.1f}{suffix}")
-        if layer_resolution.get("clamped") and layer_resolution.get("y_plus_target") is not None:
-            requested = layer_resolution.get("y_plus_target")
+        # Only flag a *significant* shortfall: the flat-plate u_tau is itself
+        # ~30-40% off, so a minor clamp is not worth alarming the user about.
+        requested = layer_resolution.get("y_plus_target")
+        effective = layer_resolution.get("y_plus_effective")
+        if (layer_resolution.get("clamped") and requested is not None and effective is not None
+                and effective < 0.75 * float(requested)):
             level = layer_resolution.get("clamp_level")
             cell_mm = float(layer_resolution.get("clamp_cell_m") or 0.0) * 1000.0
             print(f"    ⚠  y+ target {requested:g} not achievable: the level-{level} "
                   f"surface cell ({cell_mm:.2f} mm) floors it at "
-                  f"y+ {layer_resolution['y_plus_effective']:.1f}. Defeature, lower "
+                  f"y+ {effective:.1f}. Defeature, lower "
                   f"surface_level, or raise maxFaceThicknessRatio.")
         if layer_resolution.get("stack") is not None:
             print(f"    {cfg['layers'].get('n_layers')} layers, expansion "

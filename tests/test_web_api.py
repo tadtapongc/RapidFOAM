@@ -89,7 +89,7 @@ class TestWebAPI(unittest.TestCase):
         self.assertIn("fast", res["fidelity_presets"])
         self.assertIn("standard", res["fidelity_presets"])
         standard = res["fidelity_presets"]["standard"]
-        self.assertEqual(standard.get("layers", {}).get("y_plus_target"), 40)
+        self.assertEqual(standard.get("layers", {}).get("y_plus_target"), 10)
         self.assertFalse(standard.get("layers", {}).get("ground_layers"))
         self.assertEqual(standard.get("mesh", {}).get("cells_per_length"), 30)
         self.assertIn("mesh", standard)
@@ -487,7 +487,8 @@ class TestWebAPI(unittest.TestCase):
         self.assertGreater(preview["u_tau"], 0.0)
         self.assertGreater(preview["y_plus_effective"], 1.0)
         base_cell = round(3.257 / 30.0, 4)
-        unclamped = 2.0 * 40 * 1.516e-5 / preview["u_tau"]
+        target = preview["y_plus_target"]
+        unclamped = 2.0 * target * 1.516e-5 / preview["u_tau"]
         level1 = preview["surface_level"][1]
         clamped = 0.5 * base_cell / 2 ** level1
         self.assertAlmostEqual(preview["first_layer_thickness"], min(unclamped, clamped), places=9)

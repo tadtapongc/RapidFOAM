@@ -263,16 +263,21 @@ written with `relativeSizes false`. The stack is clamped to
 `maxFaceThicknessRatio` of the finest surface cell so snappyHexMesh can actually
 extrude it.
 
-**Wall treatment.** All presets use the Spalding-bridging wall functions
-(`nutUSpaldingWallFunction`, `omegaWallFunction`, `kqRWallFunction`). These are
-valid across the whole y+ range, so:
+The preset targets are set near what an auto-sized surface can actually deliver.
+Because feature refinement makes the near-wall cells small, a high y+ (which
+needs a thick first cell) would be dropped by snappyHexMesh, so the clamp lowers
+the realised y+ and the CLI warns when the shortfall is significant. In short,
+sub-millimetre feature resolution and a wall-function y+ target are mutually
+exclusive on the same surface — pick which matters for the run.
 
-- `fast` (y+ ~ 100) and `standard` (y+ ~ 40) sit in the **wall-function** regime.
-- `fine` (y+ ~ 1) places the first cell in the viscous sublayer but still uses
-  the same wall functions — it is **wall-function-bridged at low y+**, not a
-  classical low-Re wall-resolved setup. Treat its near-wall solution as
-  higher-fidelity than the wall-function tiers, not as true LES/DNS-grade
-  resolution.
+**Wall treatment.** All presets use the Spalding-bridging wall functions
+(`nutUSpaldingWallFunction`, `omegaWallFunction`, `kqRWallFunction`), valid
+across the whole y+ range. The original wall-function targets were `fast` y+
+100 / `standard` y+ 40; they are now `fast` ~30 / `standard` ~10 to match the
+realised values on an auto-refined surface (still the wall-function-bridged
+regime). `fine` (y+ ~ 1) places the first cell in the viscous sublayer but still
+uses the same wall functions — it is **wall-function-bridged at low y+**, not a
+classical low-Re wall-resolved setup.
 
 **Verify, don't assume.** The `u_tau` estimate is a flat-plate correlation and
 is typically 30-40% off the local value on a real car. It also uses the *model
