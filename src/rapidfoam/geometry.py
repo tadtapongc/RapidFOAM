@@ -268,8 +268,8 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "resolveFeatureAngle": 35,
         "nSolveIter": 200,             # snap iterations (OpenFOAM default)
         "nFeatureSnapIter": 10,
-        "nLayerIter": 30,
-        "nRelaxIter_layers": 5,
+        "nLayerIter": 50,
+        "nRelaxIter_layers": 10,
         "slurm_time": "04:00:00",
         "slurm_mem_per_cpu": "2G",
         # Feature-based auto-sizing: refine until the smallest feature spans
