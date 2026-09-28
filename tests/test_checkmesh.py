@@ -111,6 +111,15 @@ geometry 124862   2      0.000391  0.000898
 trailing text
 """
 
+# snappyHexMesh's final per-patch table: faces, target layers, average (mesh)
+# layers (fractional), overall thickness, thickness fraction [%].
+FINAL_LAYER_TABLE = """\
+patch             faces        layers        overall thickness
+                           target   mesh     [m]       [%]
+-----             -----    -----    ----     ---       ---
+geometry          124862   3        2.84     0.00134   90.6
+"""
+
 
 class TestParseCheckmesh(unittest.TestCase):
     def test_parses_core_metrics(self):
@@ -226,6 +235,15 @@ class TestParseLayerCoverage(unittest.TestCase):
     def test_unrelated_text_returns_empty(self):
         self.assertEqual(parse_layer_coverage("no tables here\n"), {})
 
+    def test_final_table_keeps_fractional_layers(self):
+        coverage = parse_layer_coverage(FINAL_LAYER_TABLE)
+        entry = coverage["geometry"]
+        # 2.84 must not be truncated to 2 (the historical bug).
+        self.assertAlmostEqual(entry["layers"], 2.84)
+        self.assertEqual(entry["target_layers"], 3)
+        self.assertAlmostEqual(entry["coverage"], 2.84 / 3.0)
+        self.assertAlmostEqual(entry["percent"], 90.6)
+
 
 class TestFindLogs(unittest.TestCase):
     def test_finds_root_logs(self):
@@ -300,6 +318,29 @@ class TestCheckMeshQuality(unittest.TestCase):
                                "near_wall_thickness": 1e-4, "overall_thickness": 2e-4}}
         result = check_mesh_quality(parse_checkmesh(GOOD_CHECKMESH), layers, target_layers=3)
         self.assertTrue(result["ok"])
+
+    def test_fractional_final_coverage_is_not_dropout(self):
+        # snappy's 2.84/3 (~95%) must not be flagged as dropout, and the
+        # fractional coverage must survive into the report.
+        result = check_mesh_quality(
+            parse_checkmesh(GOOD_CHECKMESH),
+            parse_layer_coverage(FINAL_LAYER_TABLE),
+            target_layers=3,
+        )
+        self.assertAlmostEqual(result["layers"]["geometry"]["coverage"], 2.84 / 3.0)
+        self.assertFalse(any("dropout" in i for i in result["issues"]))
+        self.assertTrue(result["ok"])
+
+    def test_low_fractional_final_coverage_is_dropout(self):
+        table = FINAL_LAYER_TABLE.replace("2.84     0.00134   90.6", "1.50     0.00070   50.0")
+        result = check_mesh_quality(
+            parse_checkmesh(GOOD_CHECKMESH),
+            parse_layer_coverage(table),
+            target_layers=3,
+        )
+        self.assertAlmostEqual(result["layers"]["geometry"]["coverage"], 0.5)
+        self.assertTrue(any("dropout" in i for i in result["issues"]))
+        self.assertFalse(result["ok"])
 
     def test_metrics_table_has_pass_flags(self):
         result = check_mesh_quality(parse_checkmesh(EXTENDED_CHECKMESH))

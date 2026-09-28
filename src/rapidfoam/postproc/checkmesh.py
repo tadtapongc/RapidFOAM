@@ -98,6 +98,12 @@ _VERDICT_LABEL = {
     "bad": "Bad",
 }
 
+# snappyHexMesh's final layer table reports the *average* number of layers added
+# per patch, which is routinely fractional (e.g. 2.84 of a 3-layer target) and
+# almost never reaches 100% on complex geometry. Coverage at or above this
+# fraction is treated as adequately layered; below it the patch is real dropout.
+LAYER_COVERAGE_MIN = 0.9
+
 
 def resolve_bands(
     bands: dict[str, dict[str, float]] | None = None,
@@ -357,7 +363,9 @@ def _parse_layer_row(line: str) -> tuple[str, dict[str, float | int]] | None:
         faces, target, mesh, overall, percent = values
         entry: dict[str, float | int] = {
             "faces": int(faces),
-            "layers": int(mesh),
+            # snappy reports the *average* layers achieved, which is fractional
+            # (e.g. 2.84). Keep the fraction so coverage is not understated.
+            "layers": mesh,
             "target_layers": int(target),
             "overall_thickness": overall,
             "percent": percent,
@@ -569,7 +577,7 @@ def check_mesh_quality(
 
     layer_entries: dict[str, dict[str, Any]] = {}
     for patch, info in layers.items():
-        achieved = int(info.get("layers", 0))
+        achieved = _finite(info.get("layers"))
         entry: dict[str, Any] = dict(info)
         # A per-patch target from snappy's final table wins over the case-wide
         # config value; otherwise fall back to the configured layer count.
@@ -579,12 +587,22 @@ def check_mesh_quality(
             if isinstance(patch_target, int) and not isinstance(patch_target, bool) and patch_target > 0
             else target_layers
         )
-        if effective_target and effective_target > 0:
-            entry["coverage"] = achieved / effective_target
-            if achieved < effective_target:
+        # Prefer the coverage the parser already derived (a fractional average
+        # layer count / target from snappy's final table). Only synthesise it
+        # from an integer achieved count when no coverage was available, so a
+        # fractional result like 2.84/3 is not truncated to 2/3.
+        coverage = _finite(info.get("coverage"))
+        if coverage is None and effective_target and effective_target > 0 and achieved is not None:
+            coverage = achieved / effective_target
+        if coverage is not None:
+            entry["coverage"] = coverage
+            if coverage < LAYER_COVERAGE_MIN:
+                shown = f"{achieved:g}" if achieved is not None else "?"
+                target_text = effective_target if effective_target else "?"
                 issues.append(
                     f"boundary-layer dropout on '{patch}': "
-                    f"{achieved} of {effective_target} layers"
+                    f"{shown} of {target_text} layers "
+                    f"({coverage * 100:.0f}% coverage)"
                 )
         layer_entries[patch] = entry
 
@@ -600,7 +618,7 @@ def check_mesh_quality(
     hard_fail = (
         bool(open_patches)
         or any(
-            e.get("coverage") is not None and e["coverage"] < 1.0
+            e.get("coverage") is not None and e["coverage"] < LAYER_COVERAGE_MIN
             for e in layer_entries.values()
         )
         or (isinstance(stats.get("failed_checks"), int) and stats["failed_checks"] > 0)

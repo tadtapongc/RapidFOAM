@@ -28,6 +28,7 @@ from rapidfoam.web.server import (
     api_telemetry_solver,
     api_telemetry_mesh,
     parse_solver_diagnostics_from_log,
+    parse_residuals_from_log,
     api_list_cases,
     api_case_delete,
     api_stl_check_exists,
@@ -1164,6 +1165,39 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(sorted(rows), [1.0, 2.0])
         self.assertAlmostEqual(rows[2.0]["execution_time"], 8.0)
         self.assertAlmostEqual(rows[1.0]["execution_time"], 4.0)
+
+    def test_parse_residuals_from_log_names_epsilon(self):
+        """epsilon must stay epsilon, not be relabelled as omega."""
+        text = (
+            "Time = 1\n"
+            "DILUPBiCGStab:  Solving for Ux, Initial residual = 0.01, Final residual = 1e-6, No Iterations 1\n"
+            "DILUPBiCGStab:  Solving for epsilon, Initial residual = 0.002, Final residual = 1e-6, No Iterations 1\n"
+        )
+        rows = parse_residuals_from_log(text)
+        self.assertEqual(set(rows[1.0]), {"Ux", "epsilon"})
+        self.assertAlmostEqual(rows[1.0]["epsilon"], 0.002)
+
+    def test_parse_residuals_from_log_restart(self):
+        """A restarted run replaces the old residual trajectory, matching the diagnostics parser."""
+        text = (
+            "Time = 100\n"
+            "DILUPBiCGStab:  Solving for Ux, Initial residual = 0.01, Final residual = 1e-6, No Iterations 1\n"
+            "Time = 1\n"
+            "DILUPBiCGStab:  Solving for Ux, Initial residual = 0.02, Final residual = 1e-6, No Iterations 1\n"
+        )
+        rows = parse_residuals_from_log(text)
+        self.assertEqual(sorted(rows), [1.0])
+        self.assertAlmostEqual(rows[1.0]["Ux"], 0.02)
+
+    def test_parse_residuals_from_log_ignores_execution_time(self):
+        """ExecutionTime/ClockTime must not be read as the iteration counter."""
+        text = (
+            "Time = 7\n"
+            "DILUPBiCGStab:  Solving for Ux, Initial residual = 0.01, Final residual = 1e-6, No Iterations 1\n"
+            "ExecutionTime = 2502.45 s  ClockTime = 2509 s\n"
+        )
+        rows = parse_residuals_from_log(text)
+        self.assertEqual(sorted(rows), [7.0])
 
     def test_telemetry_includes_stl_files(self):
         """Telemetry payload exposes STL basenames for the 3D aero-load view."""

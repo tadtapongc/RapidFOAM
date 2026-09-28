@@ -1699,48 +1699,57 @@ async def api_telemetry_export(case_name: str, format: str = "csv") -> Response:
     )
 
 
+_RESIDUAL_RE = re.compile(
+    r"Solving for (p|Ux|Uy|Uz|k|omega|epsilon|nuTilda),\s+Initial residual\s+=\s+([0-9\.eE\+\-]+)",
+    re.IGNORECASE,
+)
+
+# Canonical residual field names. Anything unrecognised is kept verbatim so a
+# field is never silently relabelled (the historical epsilon -> omega bug).
+_RESIDUAL_VAR_NAMES = {
+    "p": "p", "ux": "Ux", "uy": "Uy", "uz": "Uz",
+    "k": "k", "omega": "omega", "epsilon": "epsilon", "nutilda": "nuTilda",
+}
+
+
 def parse_residuals_from_log(log_text: str) -> dict[float, dict[str, float]]:
     """Extract initial residuals from OpenFOAM solver log text."""
-    pattern = re.compile(
-        r"Solving for (p|Ux|Uy|Uz|k|omega|epsilon|nuTilda),\s+Initial residual\s+=\s+([0-9\.eE\+\-]+)",
-        re.IGNORECASE,
-    )
     rows: dict[float, dict[str, float]] = {}
     current_iter: Optional[float] = None
-    for line in log_text.splitlines():
-        if "Time = " in line:
+    previous: Optional[float] = None
+    for raw in log_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        # Anchored match, so "ExecutionTime ="/"ClockTime =" are not mistaken
+        # for the iteration counter.
+        time_match = _LOG_TIME_RE.match(line)
+        if time_match:
             try:
-                current_iter = float(line.split("Time = ")[-1].strip())
+                current_iter = float(time_match.group(1))
             except ValueError:
-                pass
-        if current_iter is not None and current_iter > 0:
-            match = pattern.search(line)
-            if match:
-                raw_var = match.group(1)
-                v_lower = raw_var.lower()
-                if v_lower == "p":
-                    var = "p"
-                elif v_lower == "ux":
-                    var = "Ux"
-                elif v_lower == "uy":
-                    var = "Uy"
-                elif v_lower == "uz":
-                    var = "Uz"
-                elif v_lower == "k":
-                    var = "k"
-                else:
-                    var = "omega"
-                t_key = round(current_iter, 8)
-                if t_key not in rows:
-                    rows[t_key] = {}
-                # Keep the FIRST residual for each variable in this time-step (initial residual)
-                if var not in rows[t_key]:
-                    try:
-                        val = float(match.group(2))
-                        if math.isfinite(val) and val > 0:
-                            rows[t_key][var] = val
-                    except ValueError:
-                        pass
+                current_iter = None
+            # A restarted/requeued run supersedes the old trajectory from here on.
+            if current_iter is not None and previous is not None and current_iter <= previous:
+                rows = {key: value for key, value in rows.items() if key < round(current_iter, 8)}
+            previous = current_iter
+            continue
+        if current_iter is None or current_iter <= 0:
+            continue
+        match = _RESIDUAL_RE.search(line)
+        if not match:
+            continue
+        var = _RESIDUAL_VAR_NAMES.get(match.group(1).lower(), match.group(1))
+        t_key = round(current_iter, 8)
+        entry = rows.setdefault(t_key, {})
+        # Keep the FIRST residual for each variable in this time-step (initial residual)
+        if var not in entry:
+            try:
+                val = float(match.group(2))
+            except ValueError:
+                continue
+            if math.isfinite(val) and val > 0:
+                entry[var] = val
     return rows
 
 
