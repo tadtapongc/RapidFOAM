@@ -918,6 +918,11 @@ def resolve_layers(
         "stack": None,
         "mode": "relative" if relative else "absolute",
         "clamped": False,
+        # Clamp provenance, so the CLI/Studio can explain a shortfall.
+        "requested_thickness": None,
+        "thickness_max": None,
+        "clamp_level": None,
+        "clamp_cell_m": None,
     }
     layers["_resolved"] = resolved
 
@@ -934,8 +939,19 @@ def resolve_layers(
             levels = mesh.get("surface_level") or [0, 0]
             ratio_limit = float(layers.get("maxFaceThicknessRatio", 0.5) or 0.5)
             if base_cell > 0 and len(levels) == 2:
-                cell_fine = base_cell / (2 ** int(levels[1]))
-                thickness_max = ratio_limit * cell_fine
+                # Clamp against the *typical* surface cell (level0), which most
+                # faces use, not the finest auto-sized cell (level1). Clamping to
+                # level1 over-thinned the whole wall because level1 only occurs
+                # on the smallest features, pulling a y+40 target down to ~y+9.
+                # The level0 ceiling keeps wall-function targets achievable while
+                # snappy still thins or drops layers locally on the tiniest faces.
+                level_typ = int(levels[0])
+                cell_typ = base_cell / (2 ** level_typ)
+                thickness_max = ratio_limit * cell_typ
+                resolved["requested_thickness"] = thickness
+                resolved["thickness_max"] = thickness_max
+                resolved["clamp_level"] = level_typ
+                resolved["clamp_cell_m"] = cell_typ
                 if thickness > thickness_max:
                     thickness = thickness_max
                     resolved["clamped"] = True

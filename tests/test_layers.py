@@ -96,13 +96,27 @@ class TestResolveLayers(unittest.TestCase):
         self.assertIsNotNone(res["stack"])
         self.assertIn("_resolved", layers)
 
-    def test_clamp_respects_max_face_thickness_ratio(self):
+    def test_clamp_uses_typical_surface_cell(self):
+        # The ceiling uses level0 (the cell most surface faces use), not the
+        # finest auto-sized level1, so wall-function targets are not over-clamped.
         cfg = base_cfg("standard")
         res = resolve_layers(cfg, BOUNDS)
-        cell_fine = cfg["mesh_params"]["base_cell_size"] / 2 ** cfg["mesh_params"]["surface_level"][1]
-        self.assertLessEqual(cfg["layers"]["first_layer_thickness"], 0.5 * cell_fine + 1e-12)
-        if res["clamped"]:
-            self.assertLess(res["y_plus_effective"], res["y_plus_target"])
+        level0 = cfg["mesh_params"]["surface_level"][0]
+        cell_typ = cfg["mesh_params"]["base_cell_size"] / 2 ** level0
+        self.assertLessEqual(cfg["layers"]["first_layer_thickness"], 0.5 * cell_typ + 1e-12)
+        # Standard's y+ 40 fits under the level0 ceiling, so it is NOT clamped
+        # and the effective y+ reaches the target.
+        self.assertFalse(res["clamped"])
+        self.assertAlmostEqual(res["y_plus_effective"], 40.0, delta=1.0)
+
+    def test_clamp_bites_when_target_exceeds_typical_cell(self):
+        cfg = base_cfg("standard")
+        cfg["layers"]["y_plus_target"] = 200
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertTrue(res["clamped"])
+        self.assertLess(res["y_plus_effective"], res["y_plus_target"])
+        self.assertEqual(res["clamp_level"], cfg["mesh_params"]["surface_level"][0])
+        self.assertIsNotNone(res["clamp_cell_m"])
 
     def test_explicit_first_layer_wins(self):
         cfg = base_cfg("standard")
