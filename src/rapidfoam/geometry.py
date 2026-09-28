@@ -939,19 +939,21 @@ def resolve_layers(
             levels = mesh.get("surface_level") or [0, 0]
             ratio_limit = float(layers.get("maxFaceThicknessRatio", 0.5) or 0.5)
             if base_cell > 0 and len(levels) == 2:
-                # Clamp against the *typical* surface cell (level0), which most
-                # faces use, not the finest auto-sized cell (level1). Clamping to
-                # level1 over-thinned the whole wall because level1 only occurs
-                # on the smallest features, pulling a y+40 target down to ~y+9.
-                # The level0 ceiling keeps wall-function targets achievable while
-                # snappy still thins or drops layers locally on the tiniest faces.
-                level_typ = int(levels[0])
-                cell_typ = base_cell / (2 ** level_typ)
-                thickness_max = ratio_limit * cell_typ
+                # Clamp against the *finest* surface cell (level1). snappy will
+                # not build a layer thicker than maxFaceThicknessRatio of the
+                # local cell, and because min_thickness tracks the first layer it
+                # DROPS the whole stack (rather than thinning) on any face finer
+                # than that. Requesting the thin, always-buildable thickness keeps
+                # layer coverage high; the y+ target is then simply unreachable at
+                # this surface resolution, which the provenance + CLI warning
+                # report honestly instead of silently degrading the mesh.
+                level_fine = int(levels[1])
+                cell_fine = base_cell / (2 ** level_fine)
+                thickness_max = ratio_limit * cell_fine
                 resolved["requested_thickness"] = thickness
                 resolved["thickness_max"] = thickness_max
-                resolved["clamp_level"] = level_typ
-                resolved["clamp_cell_m"] = cell_typ
+                resolved["clamp_level"] = level_fine
+                resolved["clamp_cell_m"] = cell_fine
                 if thickness > thickness_max:
                     thickness = thickness_max
                     resolved["clamped"] = True

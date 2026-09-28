@@ -488,8 +488,8 @@ class TestWebAPI(unittest.TestCase):
         self.assertGreater(preview["y_plus_effective"], 1.0)
         base_cell = round(3.257 / 30.0, 4)
         unclamped = 2.0 * 40 * 1.516e-5 / preview["u_tau"]
-        level0 = preview["surface_level"][0]
-        clamped = 0.5 * base_cell / 2 ** level0
+        level1 = preview["surface_level"][1]
+        clamped = 0.5 * base_cell / 2 ** level1
         self.assertAlmostEqual(preview["first_layer_thickness"], min(unclamped, clamped), places=9)
 
     def test_geometry_domain_box_layer_preview_explicit_absolute(self):

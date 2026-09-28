@@ -96,27 +96,34 @@ class TestResolveLayers(unittest.TestCase):
         self.assertIsNotNone(res["stack"])
         self.assertIn("_resolved", layers)
 
-    def test_clamp_uses_typical_surface_cell(self):
-        # The ceiling uses level0 (the cell most surface faces use), not the
-        # finest auto-sized level1, so wall-function targets are not over-clamped.
+    def test_clamp_uses_finest_surface_cell_to_preserve_coverage(self):
+        # The ceiling uses level1 (the finest surface cell) so a layer thick
+        # enough for snappy to drop is never requested in the first place; this
+        # keeps boundary-layer coverage high (a measured regression showed the
+        # thicker level0 ceiling collapsed coverage ~91% -> ~20%).
         cfg = base_cfg("standard")
         res = resolve_layers(cfg, BOUNDS)
-        level0 = cfg["mesh_params"]["surface_level"][0]
-        cell_typ = cfg["mesh_params"]["base_cell_size"] / 2 ** level0
-        self.assertLessEqual(cfg["layers"]["first_layer_thickness"], 0.5 * cell_typ + 1e-12)
-        # Standard's y+ 40 fits under the level0 ceiling, so it is NOT clamped
-        # and the effective y+ reaches the target.
-        self.assertFalse(res["clamped"])
-        self.assertAlmostEqual(res["y_plus_effective"], 40.0, delta=1.0)
-
-    def test_clamp_bites_when_target_exceeds_typical_cell(self):
-        cfg = base_cfg("standard")
-        cfg["layers"]["y_plus_target"] = 200
-        res = resolve_layers(cfg, BOUNDS)
+        level1 = cfg["mesh_params"]["surface_level"][1]
+        cell_fine = cfg["mesh_params"]["base_cell_size"] / 2 ** level1
+        self.assertLessEqual(cfg["layers"]["first_layer_thickness"], 0.5 * cell_fine + 1e-12)
+        # Standard's y+40 needs ~1.87 mm but the finest cell allows only ~0.41 mm,
+        # so it IS clamped; the target is unreachable at this surface resolution.
         self.assertTrue(res["clamped"])
         self.assertLess(res["y_plus_effective"], res["y_plus_target"])
-        self.assertEqual(res["clamp_level"], cfg["mesh_params"]["surface_level"][0])
+        # Provenance for the CLI warning is populated.
+        self.assertEqual(res["clamp_level"], level1)
         self.assertIsNotNone(res["clamp_cell_m"])
+        self.assertIsNotNone(res["requested_thickness"])
+        self.assertIsNotNone(res["thickness_max"])
+
+    def test_low_target_fits_under_finest_cell(self):
+        # A tiny first layer fits easily, so no clamp and y+ meets the target.
+        cfg = base_cfg("standard")
+        cfg["layers"]["y_plus_target"] = 5
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertFalse(res["clamped"])
+        self.assertEqual(res["clamp_level"], cfg["mesh_params"]["surface_level"][1])
+        self.assertAlmostEqual(res["y_plus_effective"], 5.0, delta=0.5)
 
     def test_explicit_first_layer_wins(self):
         cfg = base_cfg("standard")
