@@ -274,7 +274,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "slurm_mem_per_cpu": "2G",
         # Feature-based auto-sizing: refine until the smallest feature spans
         # feature_cells, capped at max_surface_level.
-        "feature_percentile": 5.0,
+        "feature_percentile": 10.0,
         "feature_cells": 3.0,
         "max_surface_level": 6,
         # Feature-angle derivation: resolve creases in the high tail of the
@@ -316,7 +316,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "slurm_mem_per_cpu": "3G",
         # Feature-based auto-sizing: refine until the smallest feature spans
         # feature_cells, capped at max_surface_level.
-        "feature_percentile": 5.0,
+        "feature_percentile": 10.0,
         "feature_cells": 4.0,
         "max_surface_level": 7,
         # Feature-angle derivation: resolve creases in the high tail of the
@@ -334,7 +334,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
     },
     "fine": {
         # Wall-resolved validation (~4-6 hours, ~20-28M cells on 32 cores)
-        "desc": "High-resolution near-wall validation quality (wall-function-bridged at low y+)",
+        "desc": "Edge + near-wall validation tier (wall-function-bridged at low y+; not a uniform upscale of standard)",
         "cell_estimate": "~20-28M cells",
         "n_cells_target": 24000000,
         "runtime_estimate": "~4-6 hrs",
@@ -358,7 +358,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "slurm_mem_per_cpu": "4G",
         # Feature-based auto-sizing: refine until the smallest feature spans
         # feature_cells, capped at max_surface_level.
-        "feature_percentile": 5.0,
+        "feature_percentile": 10.0,
         "feature_cells": 5.0,
         "max_surface_level": 8,
         # Feature-angle derivation: resolve creases in the high tail of the
@@ -399,7 +399,7 @@ def _resolve_feature_sizing(
     ``feature / feature_cells``. Levels are only ever raised above the preset and
     are capped by ``max_surface_level`` to bound the cell budget.
     """
-    pct = float(user_mesh.get("feature_percentile", preset.get("feature_percentile", 5.0)))
+    pct = float(user_mesh.get("feature_percentile", preset.get("feature_percentile", 10.0)))
     cells_per_feature = max(float(user_mesh.get("feature_cells", preset.get("feature_cells", 3.0))), 1.0)
     max_level = int(user_mesh.get("max_surface_level", preset.get("max_surface_level", 7)))
     max_level = max(1, min(max_level, 14))
