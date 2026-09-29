@@ -1,0 +1,8 @@
+# Normalise text files to LF in the repository and on checkout, so the same
+# working tree is clean whether viewed from Windows or WSL. Geometry and other
+# binary assets are never line-ending-converted.
+* text=auto eol=lf
+*.stl binary
+*.png binary
+*.jpg binary
+*.pdf binary
