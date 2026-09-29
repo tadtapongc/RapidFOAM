@@ -683,9 +683,9 @@ async def api_case_generate_and_submit(req: GenerateCaseRequest) -> dict[str, An
 
     # 3. Generate locally if requested
     if req.generate_locally:
-        from rapidfoam.cli import _do_generate
+        from rapidfoam.casegen.builder import build_case
         try:
-            await asyncio.to_thread(_do_generate, local_cfg_path, PROJECT_ROOT, dry_run=False)
+            await asyncio.to_thread(build_case, local_cfg_path, PROJECT_ROOT, False)
             local_actions["generated_locally"] = True
             local_actions["case_path"] = str(PROJECT_ROOT / "cases" / case_name)
         except Exception as exc:

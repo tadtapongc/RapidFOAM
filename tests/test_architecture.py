@@ -24,12 +24,12 @@ FORBIDDEN = {
     "meshing": {"postproc", "writers", "web", "cli"},
     "postproc": {"meshing", "writers", "web", "cli"},
     "writers": {"postproc", "web", "cli"},
+    "casegen": {"postproc", "web", "cli"},
     "web": {"cli"},
 }
 
 # (source module, imported module) pairs that are known debt.
 KNOWN_DEBT = {
-    ("rapidfoam.web.server", "rapidfoam.cli"),            # removed in Phase 4
     ("rapidfoam.writers.scripts", "rapidfoam.postproc"),  # removed in Phase 5
 }
 
