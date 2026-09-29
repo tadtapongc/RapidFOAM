@@ -39,6 +39,16 @@ def _get_face_assignments(cfg: dict[str, Any]) -> dict[str, str]:
     return face_assignments(cfg)
 
 
+def _grading_str(grading: Any) -> str:
+    """Format a 3-component simpleGrading tuple, defaulting to uniform."""
+    if isinstance(grading, (list, tuple)) and len(grading) == 3:
+        try:
+            return "(" + " ".join(f"{float(g):g}" for g in grading) + ")"
+        except (TypeError, ValueError):
+            pass
+    return "(1 1 1)"
+
+
 # ============================================================
 # BLOCKMESH
 # ============================================================
@@ -47,11 +57,22 @@ def write_block_mesh_dict(cfg: dict[str, Any], case_dir: Path) -> None:
     """Generate blockMeshDict from domain box and base cell size."""
     box = cfg["domain_box"]
     bmin, bmax = box["min"], box["max"]
-    cell_size = cfg["mesh_params"]["base_cell_size"]
+    mesh = cfg["mesh_params"]
+    cell_size = mesh["base_cell_size"]
 
-    nx = max(1, round((bmax[0] - bmin[0]) / cell_size))
-    ny = max(1, round((bmax[1] - bmin[1]) / cell_size))
-    nz = max(1, round((bmax[2] - bmin[2]) / cell_size))
+    # Graded block cell counts (from compute_block_grading) keep the near-body
+    # cell at base_cell while coarsening the far field; fall back to a uniform
+    # count for configs generated before grading existed.
+    cells = mesh.get("block_cells")
+    if isinstance(cells, (list, tuple)) and len(cells) == 3 \
+            and all(isinstance(c, int) and not isinstance(c, bool) and c >= 1 for c in cells):
+        nx, ny, nz = (int(c) for c in cells)
+    else:
+        nx = max(1, round((bmax[0] - bmin[0]) / cell_size))
+        ny = max(1, round((bmax[1] - bmin[1]) / cell_size))
+        nz = max(1, round((bmax[2] - bmin[2]) / cell_size))
+
+    grading_str = _grading_str(mesh.get("grading"))
 
     face_assignments = _get_face_assignments(cfg)
 
@@ -97,7 +118,7 @@ vertices
 
 blocks
 (
-    hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1)
+    hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading {grading_str}
 );
 
 edges ();

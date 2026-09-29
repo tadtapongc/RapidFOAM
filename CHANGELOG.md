@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Graded background mesh**: `mesh_params.grading` (default `"auto"`) derives a
+  per-axis `blockMesh` `simpleGrading` toward the ground and symmetry planes —
+  coarsening *away* from the body while keeping the near-body cell at the base
+  cell size, cutting the far-field background cell count (~50–70% on typical
+  FSAE domains). The flow/wake axis stays uniform, so downstream resolution is
+  untouched; `"off"` restores `(1 1 1)` and `[gx, gy, gz]` sets explicit
+  ratios. `mesh_params.grading_ratio` (default 3.0) tunes the far/near ratio,
+  and the CLI dry-run reports the grading, block cell counts and reduction.
 - **Surface-integrity reporting**: the generated `Allrun`, `Allrun.parallel` and
   `run.sh` run `surfaceCheck` on every STL *before* meshing and write
   `log.surfaceCheck`. `rapidfoam.postproc.surfacecheck` parses it (closure/open

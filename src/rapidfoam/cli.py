@@ -290,6 +290,22 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
     for r in mesh.get("refinement_regions", []):
         print(f"    Region {r['name']}: Level {r['level']}")
 
+    grading = mesh.get("grading_info")
+    if grading:
+        mode = grading.get("mode", "off")
+        cells = grading.get("block_cells")
+        uniform = grading.get("uniform_cells")
+        if mode == "auto" and cells:
+            ratios = " ".join(f"{g:g}" for g in grading["grading"])
+            reduction = grading.get("cell_reduction", 0.0) * 100.0
+            print(f"    Block grading:  ({ratios})")
+            print(f"    Block cells:    {cells[0]}×{cells[1]}×{cells[2]} "
+                  f"(uniform {uniform[0]}×{uniform[1]}×{uniform[2]}, "
+                  f"-{reduction:.0f}% background cells)")
+        elif mode == "explicit":
+            ratios = " ".join(f"{g:g}" for g in grading["grading"])
+            print(f"    Block grading:  ({ratios}) (explicit)")
+
     sizing = mesh.get("auto_size")
     if sizing:
         small = sizing.get("small_feature_m")

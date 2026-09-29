@@ -25,6 +25,7 @@ RapidFOAM streamlines the OpenFOAM workflow for external vehicle aerodynamics: C
 - **Surface Integrity Report**: Runs `surfaceCheck` on every STL before meshing and reports closure/open edges, self-intersections, illegal triangles and part count in the Studio and via `read_forces.py --surface`. Report-only by default (`surface_check.enforce` aborts the run on a defect); symmetry half models are exempt from the closure requirement.
 - **Mesh-Quality Verification**: Parses the `checkMesh` log and snappyHexMesh's per-patch layer table to report non-orthogonality, skewness, aspect ratio, concave cells, boundary closure and boundary-layer coverage, then rolls them into a tiered Good/Usable/Marginal/Bad verdict. Cross-references the realised `yPlus` output against the layer sizing target.
 - **Geometry-Adaptive Meshing**: Streaming STL analysis drives feature-based surface/edge auto-sizing (so small features are resolved without coarsening the preset) and derives `resolveFeatureAngle` from the crease distribution so real aero edges snap while smooth tessellation does not.
+- **Graded Background Mesh**: Auto-derives `blockMesh` `simpleGrading` toward the ground and symmetry planes, keeping the near-body cell at the base cell size while coarsening *away* from the body (~50–70% fewer background cells); the flow/wake axis stays uniform. Configure with `mesh_params.grading` (`"auto"` / `"off"` / `[gx, gy, gz]`).
 - **Remote Case Management**: Submit, monitor and gracefully cancel SLURM jobs; download finished cases from the cluster with live progress (streamed and published atomically, so an interrupted transfer never leaves a partial case).
 - **Convergence Auto-Stop**: Background monitor tracks rolling force variation and signals `stopAt writeNow;` once drag and downforce stabilize within a user-defined threshold (default +/- 0.5%).
 - **Post-Processing CLI**: Tabulates aerodynamic forces (Drag, Downforce, L/D), plots live convergence curves, compares multiple case iterations side-by-side, verifies near-wall y+ against the sizing target, and reports mesh quality.
@@ -253,6 +254,8 @@ Key settings available in `configs/config.json`:
 | `surface_check.enforce` | `bool` | Abort the run on a surface defect (report-only when false) | `false` |
 | `surface_check.check_self_intersection` | `bool` | Also check self-intersection (slower on large meshes) | `true` |
 | `surface_check.allow_open` | `bool` | Permit an open surface without a symmetry plane | `false` |
+| `mesh_params.grading` | `string` / `list` | Background grading: `"auto"`, `"off"`, or `[gx, gy, gz]` | `"auto"` |
+| `mesh_params.grading_ratio` | `float` | Far/near cell-size ratio for auto grading (1–20) | `3.0` |
 
 ### Mesh Fidelity Presets
 

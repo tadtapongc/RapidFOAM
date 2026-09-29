@@ -471,6 +471,20 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
     if resolve_feature_angle is not None and (
             not finite(resolve_feature_angle) or not (0.0 < resolve_feature_angle <= 180.0)):
         errors.append("mesh_params.resolveFeatureAngle must be a number in (0, 180]")
+    grading = cfg.get("mesh_params", {}).get("grading")
+    if grading is not None and not isinstance(grading, bool):
+        if isinstance(grading, str):
+            if grading.strip().lower() not in ("auto", "off", "none", "uniform"):
+                errors.append("mesh_params.grading must be 'auto', 'off', or three positive numbers")
+        elif isinstance(grading, (list, tuple)):
+            if len(grading) != 3 or not all(finite(v) and v > 0 for v in grading):
+                errors.append("mesh_params.grading must be three positive numbers")
+        else:
+            errors.append("mesh_params.grading must be 'auto', 'off', or three positive numbers")
+    grading_ratio = cfg.get("mesh_params", {}).get("grading_ratio")
+    if grading_ratio is not None and (
+            not finite(grading_ratio) or not (1.0 <= grading_ratio <= 20.0)):
+        errors.append("mesh_params.grading_ratio must be a number between 1 and 20")
     if "ground_layers" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["ground_layers"], bool):
         errors.append("layers.ground_layers must be true or false")
     min_ratio = cfg.get("layers", {}).get("min_thickness_ratio")
