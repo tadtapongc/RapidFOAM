@@ -445,30 +445,10 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
 # ============================================================
 
 def _yplus_target_from_case(config_path: str | None, case_dir: Path) -> float | None:
-    """Read layers.y_plus_target from a config or case_config.json, if present."""
-    candidates = []
-    if config_path:
-        candidates.append(Path(config_path))
-    candidates.append(case_dir / "case_config.json")
-    candidates.append(Path("case_config.json"))
-    for path in candidates:
-        try:
-            if not path.is_file():
-                continue
-            with open(path, encoding="utf-8") as handle:
-                cfg = json.load(handle)
-            layers = cfg.get("layers", {})
-            target = layers.get("y_plus_target")
-            if target is not None and float(target) > 0:
-                return float(target)
-            # Fall back to a resolved value written by the generator.
-            resolved = layers.get("_resolved", {})
-            t = resolved.get("y_plus_target")
-            if t is not None and float(t) > 0:
-                return float(t)
-        except (OSError, ValueError, TypeError):
-            continue
-    return None
+    """Read layers.y_plus_target from the effective case config, if present."""
+    from rapidfoam.core.caseconfig import yplus_target_from_case
+
+    return yplus_target_from_case(config_path=config_path, case_dir=case_dir)
 
 
 def forces_main() -> None:

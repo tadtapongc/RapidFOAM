@@ -1,11 +1,10 @@
-"""Studio config-sync pinning tests (Phase 0 safety net).
+"""Studio config-sync regression tests.
 
-Pins PAIN_POINTS.md #9b: two symmetry detectors disagree on the same
-``case_config.json``. ``checkmesh._config_has_symmetry`` returns True whenever
-``symmetry_plane`` is numeric (which the Studio always writes, even for a full
-car), while ``forces.is_symmetry_case`` decides from ``domain_faces``. The
-expectedFailure test documents the disagreement; Phase 1 canonicalizes both on
-one override-aware reader.
+Pins PAIN_POINTS.md #9b: two symmetry detectors used to disagree on the same
+``case_config.json``. ``checkmesh._config_has_symmetry`` returned True whenever
+``symmetry_plane`` was numeric (which the Studio always writes, even for a full
+car), while ``forces.is_symmetry_case`` decides from ``domain_faces``. Phase 1a
+canonicalized both on ``core.caseconfig.has_symmetry`` (face assignment first).
 """
 
 from __future__ import annotations
@@ -32,7 +31,6 @@ FULL_CAR_FACES = {
 
 
 class SymmetryDetectorTest(unittest.TestCase):
-    @unittest.expectedFailure  # PAIN_POINTS #9b: symmetry_plane alone marks a half model
     def test_full_car_config_has_no_symmetry(self):
         cfg = {
             "case_name": "full_car",
@@ -41,7 +39,6 @@ class SymmetryDetectorTest(unittest.TestCase):
         }
         self.assertFalse(_config_has_symmetry(cfg))
 
-    @unittest.expectedFailure  # PAIN_POINTS #9b: the two detectors disagree
     def test_detectors_agree_for_full_car(self):
         cfg = {
             "case_name": "full_car",

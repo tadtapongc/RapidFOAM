@@ -1,6 +1,7 @@
-"""Telemetry config-read pinning tests (Phase 0 safety net).
+"""Telemetry config-read regression tests.
 
-These pin the bugs described in refactor-prep/PAIN_POINTS.md #9d:
+These pin the bugs described in refactor-prep/PAIN_POINTS.md #9d and fixed by
+Phase 1a (``core.caseconfig`` + full-history export):
 
   * the telemetry reference readers ignore the ``overrides`` block and return
     universal defaults instead of the values the case was generated with;
@@ -9,10 +10,6 @@ These pin the bugs described in refactor-prep/PAIN_POINTS.md #9d:
     is invisible to the Mesh Quality panel;
   * ``/api/telemetry/export`` silently serialises the downsampled UI series
     (<= 400 points) rather than the full history.
-
-They are marked ``expectedFailure`` so the suite stays green while the bug is
-documented. Phase 1 removes the decorators once the shared override-aware
-config reader exists.
 """
 
 import asyncio
@@ -51,7 +48,6 @@ class TelemetryConfigTest(unittest.TestCase):
     def _write_raw_config(self, raw: dict) -> None:
         self.cfg_path.write_text(json.dumps(raw), encoding="utf-8")
 
-    @unittest.expectedFailure  # PAIN_POINTS #9d: overrides ignored by telemetry
     def test_reference_values_honour_overrides(self):
         self._write_raw_config({
             "case_name": self.name,
@@ -72,7 +68,6 @@ class TelemetryConfigTest(unittest.TestCase):
         self.assertAlmostEqual(ref["lRef"], 1.25)
         self.assertEqual(ref["CofR"], [0.1, 0.0, 0.5])
 
-    @unittest.expectedFailure  # PAIN_POINTS #9d: raw config preferred over case_config.json
     def test_preset_yplus_target_visible_to_mesh_panel(self):
         # Raw config has no layers (the target came from the fidelity preset).
         self._write_raw_config({
@@ -106,7 +101,6 @@ class TelemetryConfigTest(unittest.TestCase):
         self.assertTrue(res["y_plus"]["available"])
         self.assertEqual(res["y_plus"]["target"], 30.0)
 
-    @unittest.expectedFailure  # PAIN_POINTS #9d: export is downsampled to <= 400 rows
     def test_export_contains_full_history(self):
         self._write_raw_config({
             "case_name": self.name,

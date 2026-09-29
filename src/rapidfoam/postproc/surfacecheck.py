@@ -19,7 +19,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from rapidfoam.postproc.checkmesh import _config_has_symmetry, _load_config_dict
+from rapidfoam.core import caseconfig
 
 # --- surfaceCheck metric patterns (tolerant of spacing) ----------------------
 # Statistics: the surfaceCheck/triSurface::writeStats block.
@@ -332,19 +332,7 @@ def check_surface(
 
 def surface_check_policy_from_dict(cfg: dict[str, Any] | None) -> dict[str, Any]:
     """Extract surface_check thresholds from a case config, if present."""
-    if not isinstance(cfg, dict):
-        return {}
-    section = cfg.get("surface_check", {})
-    if not isinstance(section, dict):
-        return {}
-    policy: dict[str, Any] = {}
-    if "allow_open" in section:
-        policy["allow_open"] = bool(section["allow_open"])
-    for key in ("max_illegal_triangles", "max_unconnected_parts"):
-        value = section.get(key)
-        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-            policy[key] = value
-    return policy
+    return caseconfig.surface_policy(cfg)
 
 
 def surface_check_report(
@@ -354,9 +342,9 @@ def surface_check_report(
     """End-to-end surface-integrity report for a generated/run case directory."""
     base = Path(case_dir) if case_dir else Path(".")
     stats = read_surfacecheck(find_surfacecheck_logs(base))
-    config_dict = _load_config_dict(config_path, base)
+    config_dict = caseconfig.read_case_config(config_path=config_path, case_dir=base)
     return check_surface(
         stats,
-        has_symmetry=_config_has_symmetry(config_dict),
-        **surface_check_policy_from_dict(config_dict),
+        has_symmetry=caseconfig.has_symmetry(config_dict),
+        **caseconfig.surface_policy(config_dict),
     )

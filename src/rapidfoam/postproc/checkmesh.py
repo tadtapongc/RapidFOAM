@@ -11,12 +11,13 @@ Nothing here runs OpenFOAM; it reads the logs the run scripts already write.
 
 from __future__ import annotations
 
-import json
 import math
 import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+
+from rapidfoam.core import caseconfig
 
 # --- checkMesh metric patterns (tolerant of spacing and exponent signs) ---
 _CELLS_RE = re.compile(r"^\s*cells:\s+(\d+)", re.MULTILINE)
@@ -694,122 +695,35 @@ def check_mesh_quality(
 
 def checkmesh_targets_from_dict(cfg: dict[str, Any] | None) -> dict[str, float]:
     """Extract layer/quality targets from an already-loaded case config."""
-    if not isinstance(cfg, dict):
-        return {}
-    targets: dict[str, float] = {}
-
-    layers = cfg.get("layers", {})
-    if isinstance(layers, dict):
-        n_layers = layers.get("n_layers")
-        if isinstance(n_layers, int) and not isinstance(n_layers, bool) and n_layers > 0:
-            targets["target_layers"] = float(n_layers)
-
-    quality = cfg.get("mesh_quality", {})
-    if isinstance(quality, dict):
-        for key, target in (
-            ("maxNonOrtho", "max_non_ortho"),
-            ("maxInternalSkewness", "max_skewness"),
-        ):
-            value = quality.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                targets[target] = float(value)
-    return targets
+    return caseconfig.mesh_targets(cfg)
 
 
 def verdict_bands_from_dict(cfg: dict[str, Any] | None) -> dict[str, dict[str, float]]:
     """Extract per-metric good/caution bands from a case config, if present."""
-    if not isinstance(cfg, dict):
-        return {}
-    quality = cfg.get("mesh_quality", {})
-    if not isinstance(quality, dict):
-        return {}
-    bands = quality.get("verdict_bands")
-    if not isinstance(bands, dict):
-        return {}
-    result: dict[str, dict[str, float]] = {}
-    for metric, band in bands.items():
-        if not isinstance(band, dict):
-            continue
-        good = band.get("good")
-        caution = band.get("caution")
-        if isinstance(good, (int, float)) and not isinstance(good, bool) \
-                and isinstance(caution, (int, float)) and not isinstance(caution, bool):
-            result[metric] = {"good": float(good), "caution": float(caution)}
-    return result
+    return caseconfig.verdict_bands(cfg)
 
 
 def _load_config_dict(
     config_path: str | Path | None = None,
     case_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Load the first available case config (explicit, case, cwd)."""
-    candidates: list[Path] = []
-    if config_path:
-        candidates.append(Path(config_path))
-    if case_dir:
-        candidates.append(Path(case_dir) / "case_config.json")
-    candidates.append(Path("case_config.json"))
-
-    for path in candidates:
-        try:
-            if not path.is_file():
-                continue
-            cfg = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
-            continue
-        if isinstance(cfg, dict):
-            return cfg
-    return {}
+    """Load the effective case config (override-aware; see core.caseconfig)."""
+    return caseconfig.read_case_config(config_path=config_path, case_dir=case_dir)
 
 
 def _config_has_symmetry(config_dict: dict[str, Any] | None) -> bool:
-    """True when a case is a half model (symmetry plane / symmetry boundary).
-
-    Prefers an explicit ``symmetry_plane``/``centerline``; falls back to any
-    ``domain_faces`` entry mapped to the configured symmetry patch name, then
-    to a ``none``-free default where the generator assigns ``-<lateral>``.
-    """
-    if not isinstance(config_dict, dict):
-        return False
-    for key in ("symmetry_plane", "centerline"):
-        value = config_dict.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return True
-    domain_faces = config_dict.get("domain_faces")
-    if isinstance(domain_faces, dict):
-        patches = config_dict.get("patches", {})
-        sym_name = patches.get("symmetry") if isinstance(patches, dict) else None
-        if isinstance(sym_name, str):
-            return any(str(v) == sym_name for v in domain_faces.values())
-        return any(str(v).lower().startswith("symmetry") for v in domain_faces.values())
-    return False
+    """True when a case is a half model (delegates to core.caseconfig)."""
+    return caseconfig.has_symmetry(config_dict)
 
 
 def checkmesh_targets_from_case(
     config_path: str | Path | None = None,
     case_dir: str | Path | None = None,
 ) -> dict[str, float]:
-    """Read the layer/quality targets a case was generated with.
-
-    Looks at an explicit config, then ``<case>/case_config.json``, then the
-    current directory. Missing values are simply omitted.
-    """
-    candidates: list[Path] = []
-    if config_path:
-        candidates.append(Path(config_path))
-    if case_dir:
-        candidates.append(Path(case_dir) / "case_config.json")
-    candidates.append(Path("case_config.json"))
-
-    for path in candidates:
-        try:
-            if not path.is_file():
-                continue
-            cfg = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
-            continue
-        return checkmesh_targets_from_dict(cfg)
-    return {}
+    """Read the layer/quality targets a case was generated with."""
+    return caseconfig.mesh_targets(
+        caseconfig.read_case_config(config_path=config_path, case_dir=case_dir)
+    )
 
 
 def mesh_quality_report(

@@ -28,7 +28,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from rapidfoam import __version__
-from rapidfoam.config import DEFAULT_CONFIG, deep_merge, find_stl, user_set, validate
+from rapidfoam.config import DEFAULT_CONFIG, effective_config, find_stl, user_set, validate
+from rapidfoam.core import caseconfig
 from rapidfoam.geometry import (
     FIDELITY_PRESETS,
     compute_domain_box,
@@ -51,7 +52,6 @@ from rapidfoam.postproc.forces import (
     window_stats,
 )
 from rapidfoam.postproc.checkmesh import (
-    _config_has_symmetry,
     check_mesh_quality,
     checkmesh_targets_from_dict,
     find_snappy_logs,
@@ -185,14 +185,7 @@ def save_cluster_config(cfg: dict[str, Any]) -> None:
 
 def merge_config_with_defaults(raw_cfg: dict[str, Any]) -> dict[str, Any]:
     """Merge user configuration and selective overrides on top of DEFAULT_CONFIG."""
-    clean_cfg = {k: v for k, v in raw_cfg.items() if not k.startswith("_")}
-    overrides = clean_cfg.pop("overrides", {})
-    if not isinstance(overrides, dict):
-        raise ValueError("'overrides' must be an object")
-    merged = deep_merge(DEFAULT_CONFIG, clean_cfg)
-    if overrides:
-        merged = deep_merge(merged, overrides)
-    return merged
+    return effective_config(raw_cfg)
 
 
 def _local_stl_exists(name: str) -> bool:
@@ -963,8 +956,11 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
 
 
 def _subsample_indices(count: int, max_pts: int = 400) -> list[int]:
-    """Evenly spaced indices that always retain the first and last sample."""
-    if count <= max_pts:
+    """Evenly spaced indices that always retain the first and last sample.
+
+    ``max_pts <= 0`` disables downsampling (used by the full-history export).
+    """
+    if max_pts <= 0 or count <= max_pts:
         return list(range(count))
     step = math.ceil(count / max_pts)
     indices = list(range(0, count, step))
@@ -1007,18 +1003,9 @@ def _average_vector(
 
 def _load_stl_files(cfg_path: Optional[str], case_dir: Optional[Path] = None) -> list[str]:
     """Return the STL basenames referenced by a case config (for 3D telemetry)."""
-    for candidate in (cfg_path, str(case_dir / "case_config.json") if case_dir else None):
-        if not candidate:
-            continue
-        try:
-            with open(candidate, encoding="utf-8") as handle:
-                cfg_obj = json.load(handle)
-        except Exception:
-            continue
-        files = cfg_obj.get("stl_files")
-        if isinstance(files, (list, tuple)) and files:
-            return [Path(str(name)).name for name in files]
-    return []
+    return caseconfig.stl_files(
+        caseconfig.read_case_config(config_path=cfg_path, case_dir=case_dir)
+    )
 
 
 def _load_reference_quantities(
@@ -1034,16 +1021,7 @@ def _load_reference_quantities(
     cofr: list[float] = list(default_refs.get("CofR", [0.0, 0.0, 0.0]))
     ground_plane: Optional[float] = None
     ground_clearance: Optional[float] = None
-    cfg_obj: Optional[dict[str, Any]] = None
-    for candidate in (cfg_path, str(case_dir / "case_config.json") if case_dir else None):
-        if not candidate:
-            continue
-        try:
-            with open(candidate, encoding="utf-8") as handle:
-                cfg_obj = json.load(handle)
-            break
-        except Exception:
-            continue
+    cfg_obj = caseconfig.read_case_config(config_path=cfg_path, case_dir=case_dir)
     if cfg_obj:
         try:
             rho = float(cfg_obj.get("fluid", {}).get("rho", rho) or rho)
@@ -1075,27 +1053,9 @@ def _load_vehicle_geometry(
     cfg_path: Optional[str], case_dir: Optional[Path] = None
 ) -> dict[str, Optional[float]]:
     """Vehicle geometry used for aero-balance (wheelbase + static front weight %)."""
-    wheelbase: Optional[float] = None
-    front_pct: Optional[float] = None
-    for candidate in (cfg_path, str(case_dir / "case_config.json") if case_dir else None):
-        if not candidate:
-            continue
-        try:
-            with open(candidate, encoding="utf-8") as handle:
-                cfg_obj = json.load(handle)
-        except Exception:
-            continue
-        vehicle = cfg_obj.get("vehicle", {}) or {}
-        try:
-            if vehicle.get("wheelbase") is not None:
-                wheelbase = float(vehicle["wheelbase"])
-            fp = vehicle.get("front_weight_pct", vehicle.get("front_pct"))
-            if fp is not None:
-                front_pct = float(fp)
-        except (TypeError, ValueError):
-            pass
-        break
-    return {"wheelbase": wheelbase, "front_weight_pct": front_pct}
+    return caseconfig.vehicle_geometry(
+        caseconfig.read_case_config(config_path=cfg_path, case_dir=case_dir)
+    )
 
 
 def _compute_aero_balance(
@@ -1373,6 +1333,7 @@ async def api_telemetry_forces(
     cofr: Optional[str] = None,
     wheelbase: Optional[float] = None,
     front_pct: Optional[float] = None,
+    max_points: int = 400,
 ) -> dict[str, Any]:
     """Fetch force, coefficient, and component telemetry for a case.
 
@@ -1380,6 +1341,7 @@ async def api_telemetry_forces(
     Coefficient histories prefer the solver's ``forceCoeffs`` output, but can
     be recomputed from raw forces using post-run reference overrides supplied
     as ``aref``/``lref``/``rho``/``velocity``/``cofr`` query parameters.
+    ``max_points <= 0`` returns the full history (used by the CSV export).
     """
     if not CASE_NAME_REGEX.match(case_name):
         raise HTTPException(status_code=400, detail="Invalid case_name")
@@ -1556,11 +1518,11 @@ async def api_telemetry_forces(
                 "pct": round(pct, 3) if pct is not None else None,
             }
 
-    sub_indices = _subsample_indices(len(times))
-    coeff_sub_indices = _subsample_indices(len(coeff_times)) if coeff_times else []
+    sub_indices = _subsample_indices(len(times), max_points)
+    coeff_sub_indices = _subsample_indices(len(coeff_times), max_points) if coeff_times else []
 
     # ---- Force & moment component breakdown ----
-    moment_sub_indices = _subsample_indices(len(moment_times)) if moment_times else []
+    moment_sub_indices = _subsample_indices(len(moment_times), max_points) if moment_times else []
 
     force_avg_total = _average_vector(force_cols, "total")
     moment_avg_total = _average_vector(moment_cols, "total")
@@ -1655,7 +1617,7 @@ async def api_telemetry_export(case_name: str, format: str = "csv") -> Response:
     if not CASE_NAME_REGEX.match(case_name):
         raise HTTPException(status_code=400, detail="Invalid case_name")
 
-    data = await api_telemetry_forces(case_name)
+    data = await api_telemetry_forces(case_name, max_points=0)
     if not data.get("has_data"):
         raise HTTPException(status_code=404, detail=f"No telemetry available for case '{case_name}'")
 
@@ -1870,18 +1832,7 @@ def _read_text_tail_lines(path: Path, max_lines: int = 50000) -> str:
 
 
 def _load_solver_end_time(cfg_path: Optional[str], case_dir: Optional[Path] = None) -> Optional[float]:
-    for candidate in (cfg_path, str(case_dir / "case_config.json") if case_dir else None):
-        if not candidate:
-            continue
-        try:
-            with open(candidate, encoding="utf-8") as handle:
-                cfg_obj = json.load(handle)
-            end_time = cfg_obj.get("solver", {}).get("end_time")
-            if end_time is not None:
-                return float(end_time)
-        except Exception:
-            continue
-    return None
+    return caseconfig.solver_end_time_from_case(config_path=cfg_path, case_dir=case_dir)
 
 
 @app.get("/api/telemetry/residuals")
@@ -2111,18 +2062,7 @@ def _read_yplus_texts(texts: list[str]) -> dict[str, dict[str, float]]:
 
 def _yplus_target_from_config(config_dict: Optional[dict[str, Any]]) -> Optional[float]:
     """Read ``layers.y_plus_target`` (or its resolved fallback) from a config."""
-    if not isinstance(config_dict, dict):
-        return None
-    layers = config_dict.get("layers", {})
-    if not isinstance(layers, dict):
-        return None
-    for source in (layers, layers.get("_resolved", {})):
-        if not isinstance(source, dict):
-            continue
-        target = source.get("y_plus_target")
-        if isinstance(target, (int, float)) and not isinstance(target, bool) and target > 0:
-            return float(target)
-    return None
+    return caseconfig.yplus_target(config_dict)
 
 
 def _summarise_yplus(
@@ -2221,18 +2161,10 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
         if yplus_files:
             yplus_data = read_yplus(yplus_files)
     if config_dict is None:
-        for candidate in (
-            PROJECT_ROOT / "configs" / f"{case_name}.json",
-            local_case / "case_config.json",
-        ):
-            if candidate.is_file():
-                try:
-                    loaded = json.loads(candidate.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    continue
-                if isinstance(loaded, dict):
-                    config_dict = loaded
-                    break
+        config_dict = caseconfig.read_case_config(
+            config_path=str(PROJECT_ROOT / "configs" / f"{case_name}.json"),
+            case_dir=local_case,
+        )
 
     if not checkmesh_text and not snappy_text:
         return {
@@ -2251,7 +2183,7 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
         max_non_ortho=targets.get("max_non_ortho", 65.0),
         max_skewness=targets.get("max_skewness", 4.0),
         bands=verdict_bands_from_dict(config_dict),
-        has_symmetry=_config_has_symmetry(config_dict),
+        has_symmetry=caseconfig.has_symmetry(config_dict),
     )
 
     # Cross-reference the realised near-wall y+ (from the yPlus function object)
@@ -2301,18 +2233,10 @@ async def api_telemetry_surface(case_name: str) -> dict[str, Any]:
         if surface_logs:
             surface_text = "\n".join(_read_text_tail_lines(p) for p in surface_logs)
     if config_dict is None:
-        for candidate in (
-            PROJECT_ROOT / "configs" / f"{case_name}.json",
-            local_case / "case_config.json",
-        ):
-            if candidate.is_file():
-                try:
-                    loaded = json.loads(candidate.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    continue
-                if isinstance(loaded, dict):
-                    config_dict = loaded
-                    break
+        config_dict = caseconfig.read_case_config(
+            config_path=str(PROJECT_ROOT / "configs" / f"{case_name}.json"),
+            case_dir=local_case,
+        )
 
     if not surface_text:
         return {
@@ -2323,7 +2247,7 @@ async def api_telemetry_surface(case_name: str) -> dict[str, Any]:
 
     summary = check_surface(
         parse_surfacecheck(surface_text),
-        has_symmetry=_config_has_symmetry(config_dict),
+        has_symmetry=caseconfig.has_symmetry(config_dict),
         **surface_check_policy_from_dict(config_dict),
     )
     return {"has_data": True, "case_name": case_name, **summary}
