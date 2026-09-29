@@ -486,6 +486,23 @@ test('buildConfigFromVisualForm omits vehicle when both fields are blank', async
   assert.equal(app.activeConfig.vehicle, undefined);
 });
 
+// ------------------------------------------- SLURM preset governance
+test('buildConfigFromVisualForm omits slurm time/mem unless pinned (preset governs)', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.slurm.time, undefined);
+  assert.equal(app.activeConfig.slurm.mem_per_cpu, undefined);
+
+  app._window.document.getElementById('cfg-slurm-time').value = '04:00:00';
+  app._window.document.getElementById('cfg-slurm-mem').value = '4G';
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.slurm.time, '04:00:00');
+  assert.equal(app.activeConfig.slurm.mem_per_cpu, '4G');
+});
+
 // ------------------------------------------- Two-pass layering
 test('buildConfigFromVisualForm emits two_pass on/off/auto', async () => {
   const app = await makeApp(buildStubBody());

@@ -186,8 +186,6 @@ class CFDApp {
         qos: "cu_hpc",
         partition: "cpu",
         nodes: 1,
-        time: "08:00:00",
-        mem_per_cpu: "2G",
         openfoam_module: [
           "GCC/11.3.0",
           "OpenMPI/4.1.4-GCC-11.3.0"
@@ -583,8 +581,8 @@ class CFDApp {
     const slurm = cfg.slurm || {};
     this.setSelectValue('cfg-slurm-qos', slurm.qos || 'cu_hpc');
     this.setVal('cfg-slurm-partition', slurm.partition || 'cpu');
-    this.setVal('cfg-slurm-time', slurm.time || '08:00:00');
-    this.setVal('cfg-slurm-mem', slurm.mem_per_cpu || '2G');
+    this.setVal('cfg-slurm-time', slurm.time ?? '');
+    this.setVal('cfg-slurm-mem', slurm.mem_per_cpu ?? '');
     this.setVal('cfg-slurm-cpus', slurm.cpus_per_task ?? 1);
     this.setVal('cfg-slurm-source', slurm.openfoam_source || '$HOME/OpenFOAM/OpenFOAM-v2606/etc/bashrc');
     
@@ -812,12 +810,16 @@ class CFDApp {
       qos: this.getVal('cfg-slurm-qos'),
       partition: this.getVal('cfg-slurm-partition'),
       nodes: prevSlurm.nodes !== undefined ? prevSlurm.nodes : 1,
-      time: this.getVal('cfg-slurm-time'),
-      mem_per_cpu: this.getVal('cfg-slurm-mem'),
       cpus_per_task: parseInt(this.getVal('cfg-slurm-cpus'), 10) || prevSlurm.cpus_per_task || 1,
       openfoam_module: modules,
       openfoam_source: this.getVal('cfg-slurm-source'),
     };
+    // Walltime and memory follow the fidelity preset unless the user pins them:
+    // blank fields are omitted so the generator applies fast/standard/fine.
+    const slurmTime = (this.getVal('cfg-slurm-time') || '').trim();
+    if (slurmTime !== '') cfg.slurm.time = slurmTime; else delete cfg.slurm.time;
+    const slurmMem = (this.getVal('cfg-slurm-mem') || '').trim();
+    if (slurmMem !== '') cfg.slurm.mem_per_cpu = slurmMem; else delete cfg.slurm.mem_per_cpu;
 
     // Selective Overrides handling:
     // Only include fields that have a value entered. Blank fields follow presets / universal defaults.
