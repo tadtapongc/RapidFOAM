@@ -266,7 +266,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "maxGlobalCells": 10_000_000,
         "nCellsBetweenLevels": 2,
         "resolveFeatureAngle": 35,
-        "nSolveIter": 200,             # snap iterations (OpenFOAM default)
+        "nSolveIter": 100,             # snap iterations
         "nFeatureSnapIter": 10,
         "nLayerIter": 50,
         "nRelaxIter_layers": 10,
@@ -308,7 +308,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "maxGlobalCells": 20_000_000,
         "nCellsBetweenLevels": 2,      # 2 buffer cells (avoids massive 3D transition bloat)
         "resolveFeatureAngle": 35,     # Prevents general body curvature from ballooning to max level
-        "nSolveIter": 300,
+        "nSolveIter": 200,
         "nFeatureSnapIter": 15,
         "nLayerIter": 50,
         "nRelaxIter_layers": 10,
@@ -350,7 +350,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "maxGlobalCells": 32_000_000,
         "nCellsBetweenLevels": 2,
         "resolveFeatureAngle": 30,
-        "nSolveIter": 400,
+        "nSolveIter": 300,
         "nFeatureSnapIter": 20,
         "nLayerIter": 50,
         "nRelaxIter_layers": 10,

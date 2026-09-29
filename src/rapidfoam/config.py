@@ -159,7 +159,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "snap": {
         "nSmoothPatch": 5,
         "tolerance": 2.0,
-        "nSolveIter": 300,
+        "nSolveIter": 200,
         "nRelaxIter": 10,
         "nFeatureSnapIter": 15,
         "implicitFeatureSnap": True,
