@@ -254,10 +254,91 @@ def write_snappy_hex_mesh_dict(cfg: dict[str, Any], case_dir: Path) -> None:
             # No symmetry on lateral axis — center is safe
             loc[lateral_idx] = (box["min"][lateral_idx] + box["max"][lateral_idx]) / 2
 
-    content = f"""\
-castellatedMesh true;
-snap            true;
-addLayers       true;
+    two_pass = bool(layers.get("two_pass", False))
+
+    quality_text = f"""\
+meshQualityControls
+{{
+    maxNonOrtho         {quality.get("maxNonOrtho", 65)};
+    maxBoundarySkewness {quality.get("maxBoundarySkewness", 20)};
+    maxInternalSkewness {quality.get("maxInternalSkewness", 4)};
+    maxConcave          {quality.get("maxConcave", 80)};
+    minVol              {quality.get("minVol", 1e-13)};
+    minTetQuality       {quality.get("minTetQuality", 1e-15)};
+    minArea             {quality.get("minArea", -1)};
+    minTwist            {quality.get("minTwist", 0.02)};
+    minDeterminant      {quality.get("minDeterminant", 0.001)};
+    minFaceWeight       {quality.get("minFaceWeight", 0.05)};
+    minVolRatio         {quality.get("minVolRatio", 0.01)};
+    minTriangleTwist    {quality.get("minTriangleTwist", -1)};
+    nSmoothScale        {quality.get("nSmoothScale", 4)};
+    errorReduction      {quality.get("errorReduction", 0.75)};
+
+    relaxed
+    {{
+        maxNonOrtho     {relaxed.get("maxNonOrtho", 75)};
+        maxBoundarySkewness {relaxed.get("maxBoundarySkewness", 25)};
+        maxInternalSkewness {relaxed.get("maxInternalSkewness", 5)};
+        maxConcave      {relaxed.get("maxConcave", 85)};
+        minVol          {relaxed.get("minVol", 1e-13)};
+        minTetQuality   {relaxed.get("minTetQuality", 1e-30)};
+        minArea         {relaxed.get("minArea", -1)};
+        minTwist        {relaxed.get("minTwist", 0.001)};
+        minDeterminant  {relaxed.get("minDeterminant", 0.0005)};
+        minFaceWeight   {relaxed.get("minFaceWeight", 0.02)};
+        minVolRatio     {relaxed.get("minVolRatio", 0.005)};
+        minTriangleTwist {relaxed.get("minTriangleTwist", -1)};
+    }}
+}}
+
+"""
+
+    # Two-pass layering: the quality gate is disabled in the layering pass so
+    # prisms are inserted wherever geometrically possible (otherwise snappy's
+    # undo iterations strip them). Taper these values back toward quality_text
+    # with checkMesh until the mesh is just acceptable.
+    layering_quality_text = """\
+meshQualityControls
+{
+    maxNonOrtho         180;
+    maxBoundarySkewness -1;
+    maxInternalSkewness -1;
+    maxConcave          180;
+    minVol              -1e30;
+    minTetQuality       -1e30;
+    minArea             -1;
+    minTwist            -1;
+    minDeterminant      -1e30;
+    minFaceWeight       -1;
+    minVolRatio         -1;
+    minTriangleTwist    -1;
+    nSmoothScale        4;
+    errorReduction      0.75;
+
+    relaxed
+    {
+        maxNonOrtho         180;
+        maxBoundarySkewness -1;
+        maxInternalSkewness -1;
+        maxConcave          180;
+        minVol              -1e30;
+        minTetQuality       -1e30;
+        minArea             -1;
+        minTwist            -1;
+        minDeterminant      -1e30;
+        minFaceWeight       -1;
+        minVolRatio         -1;
+        minTriangleTwist    -1;
+    }
+}
+
+"""
+
+    def _render(castellated, snap_flag, add_layers, quality_block):
+        return f"""\
+castellatedMesh {bool_str(castellated)};
+snap            {bool_str(snap_flag)};
+addLayers       {bool_str(add_layers)};
 
 geometry
 {{
@@ -334,47 +415,21 @@ addLayersControls
     nRelaxedIter            {layers.get("nRelaxedIter", 20)};
 }}
 
-meshQualityControls
-{{
-    maxNonOrtho         {quality.get("maxNonOrtho", 65)};
-    maxBoundarySkewness {quality.get("maxBoundarySkewness", 20)};
-    maxInternalSkewness {quality.get("maxInternalSkewness", 4)};
-    maxConcave          {quality.get("maxConcave", 80)};
-    minVol              {quality.get("minVol", 1e-13)};
-    minTetQuality       {quality.get("minTetQuality", 1e-15)};
-    minArea             {quality.get("minArea", -1)};
-    minTwist            {quality.get("minTwist", 0.02)};
-    minDeterminant      {quality.get("minDeterminant", 0.001)};
-    minFaceWeight       {quality.get("minFaceWeight", 0.05)};
-    minVolRatio         {quality.get("minVolRatio", 0.01)};
-    minTriangleTwist    {quality.get("minTriangleTwist", -1)};
-    nSmoothScale        {quality.get("nSmoothScale", 4)};
-    errorReduction      {quality.get("errorReduction", 0.75)};
-
-    relaxed
-    {{
-        maxNonOrtho     {relaxed.get("maxNonOrtho", 75)};
-        maxBoundarySkewness {relaxed.get("maxBoundarySkewness", 25)};
-        maxInternalSkewness {relaxed.get("maxInternalSkewness", 5)};
-        maxConcave      {relaxed.get("maxConcave", 85)};
-        minVol          {relaxed.get("minVol", 1e-13)};
-        minTetQuality   {relaxed.get("minTetQuality", 1e-30)};
-        minArea         {relaxed.get("minArea", -1)};
-        minTwist        {relaxed.get("minTwist", 0.001)};
-        minDeterminant  {relaxed.get("minDeterminant", 0.0005)};
-        minFaceWeight   {relaxed.get("minFaceWeight", 0.02)};
-        minVolRatio     {relaxed.get("minVolRatio", 0.005)};
-        minTriangleTwist {relaxed.get("minTriangleTwist", -1)};
-    }}
-}}
-
+{quality_block}
 writeFlags ( scalarLevels layerSets layerFields );
 mergeTolerance 1e-6;
 
 """
     (case_dir / "system" / "snappyHexMeshDict").write_text(
-        foam_header("snappyHexMeshDict") + content + FOOTER
+        foam_header("snappyHexMeshDict") + _render(True, True, not two_pass, quality_text) + FOOTER
     )
+    if two_pass:
+        # Second pass: layering only, quality gate relaxed (see layering_quality_text).
+        (case_dir / "system" / "snappyHexMeshDict_layering").write_text(
+            foam_header("snappyHexMeshDict_layering")
+            + _render(False, False, True, layering_quality_text)
+            + FOOTER
+        )
 
 
 # ============================================================

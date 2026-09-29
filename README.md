@@ -23,8 +23,8 @@ RapidFOAM streamlines the OpenFOAM workflow for external vehicle aerodynamics: C
 - **Web Studio Interface**: Browser-based UI with Three.js 3D domain visualization, interactive parameter editor, real-time convergence charts, and remote SLURM cluster job submission over SSH.
 - **Full Aerodynamic Telemetry**: Force/moment component breakdown, coefficients (`Cd`, `Cl`, `Cs`, `CmPitch`, `CmRoll`, `CmYaw`), 2D/3D aero-load views, aero balance / center of pressure, and a post-run reference editor for recomputing coefficients without re-running the solver.
 - **Surface Integrity Report**: Runs `surfaceCheck` on every STL before meshing and reports closure/open edges, self-intersections, illegal triangles and part count in the Studio and via `read_forces.py --surface`. Report-only by default (`surface_check.enforce` aborts the run on a defect); symmetry half models are exempt from the closure requirement.
-- **Mesh-Quality Verification**: Parses the `checkMesh` log and snappyHexMesh's per-patch layer table to report non-orthogonality, skewness, aspect ratio, concave cells, boundary closure and boundary-layer coverage, then rolls them into a tiered Good/Usable/Marginal/Bad verdict. Cross-references the realised `yPlus` output against the layer sizing target.
-- **Geometry-Adaptive Meshing**: Streaming STL analysis drives feature-based surface/edge auto-sizing (so small features are resolved without coarsening the preset) and derives `resolveFeatureAngle` from the crease distribution so real aero edges snap while smooth tessellation does not.
+- **Mesh-Quality Verification**: Parses the `checkMesh` log and snappyHexMesh's per-patch layer table to report non-orthogonality, skewness, aspect ratio, concave cells, boundary closure and boundary-layer coverage (both layer count and realised thickness), then rolls them into a tiered Good/Usable/Marginal/Bad verdict. A full-but-thin layer stack (all layers present but below 70% of the requested thickness) is flagged as a warning. Cross-references the realised `yPlus` output against the layer sizing target, which remains the authoritative near-wall check.
+- **Geometry-Adaptive Meshing (opt-in)**: Streaming STL analysis can drive feature-based surface/edge auto-sizing (`mesh_params.auto_size`) and a geometry-derived `resolveFeatureAngle` (`mesh_params.auto_feature_angle`). Both are **off by default** so the generated mesh is the plain fidelity preset and stays predictable; enable them for geometries with small features or subtle creases.
 - **Graded Background Mesh (opt-in)**: `mesh_params.grading` derives a `blockMesh` `simpleGrading` toward the ground/symmetry planes, keeping the near-body cell at the base cell size while coarsening *away* from the body (flow/wake axis stays uniform). Off by default — measured on a real case it trims ~10–30% of the final cells but raises non-orthogonality/aspect ratio, so it is opted into with `"auto"` or an explicit `[gx, gy, gz]`.
 - **Remote Case Management**: Submit, monitor and gracefully cancel SLURM jobs; download finished cases from the cluster with live progress (streamed and published atomically, so an interrupted transfer never leaves a partial case).
 - **Convergence Auto-Stop**: Background monitor tracks rolling force variation and signals `stopAt writeNow;` once drag and downforce stabilize within a user-defined threshold (default +/- 0.5%).
@@ -261,13 +261,13 @@ Key settings available in `configs/config.json`:
 
 | Preset | Base Cell* | Surface Levels | Edge Level | Boundary Layers | y+ Target | Max Iterations | Target Cells | Estimated Runtime** |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `fast` | 0.15 m | [3, 4] | 5 | 2 | ~30 | 800 | ~3–5 M | ~10–20 min |
-| `standard` | 0.10 m | [4, 5] | 6 | 3 | ~10 | 1500 | ~9–13 M | ~1–2 hrs |
-| `fine` | 0.08 m | [4, 5] | 7 | 12 | ~1 | 2500 | ~20–28 M | ~4–6 hrs |
+| `fast` | 0.15 m | [3, 4] | 5 | 5 | ~50 | 800 | ~3–5 M | ~10–20 min |
+| `standard` | 0.10 m | [4, 5] | 6 | 8 | ~30 | 1500 | ~9–13 M | ~1–2 hrs |
+| `fine` | 0.08 m | [4, 5] | 7 | 20 | ~1 | 2500 | ~20–28 M | ~4–6 hrs |
 
-*\* The base cell is derived at generation time as the longest STL extent divided by the preset's `cells_per_length` (20 / 30 / 37.5); the values shown are for a ~3 m model. Surface and edge levels are raised further by feature-based auto-sizing when the geometry has small features.*
+*\* The base cell is derived at generation time as the longest STL extent divided by the preset's `cells_per_length` (20 / 30 / 37.5); the values shown are for a ~3 m model. Surface and edge levels are raised further only when `mesh_params.auto_size` is enabled (off by default).*
 
-*\*\* Rough guidance only — not benchmarked. Actual cell counts and solve times depend on geometry complexity, core count, and convergence rate. All presets use Spalding-bridging wall functions, so `fine` (y+ ~ 1) is wall-function-bridged at low y+, not classical wall-resolved.*
+*\*\* Rough guidance only — not benchmarked. Actual cell counts and solve times depend on geometry complexity, core count, and convergence rate. All presets use Spalding-bridging wall functions; `fine` targets y+ ~ 1 but keeps those wall functions, so it is a low-y+ mesh rather than a classical low-Re formulation.*
 
 ---
 
@@ -281,21 +281,27 @@ written with `relativeSizes false`. The stack is clamped to
 `maxFaceThicknessRatio` of the finest surface cell so snappyHexMesh can actually
 extrude it.
 
-The preset targets are set near what an auto-sized surface can actually deliver.
-Because feature refinement makes the near-wall cells small, a high y+ (which
-needs a thick first cell) would be dropped by snappyHexMesh, so the clamp lowers
-the realised y+ and the CLI warns when the shortfall is significant. In short,
-sub-millimetre feature resolution and a wall-function y+ target are mutually
-exclusive on the same surface — pick which matters for the run.
+**Pick a regime and hit it.** For k-ω SST the first-cell y+ should be either
+~1 (wall-resolved) or ~30–100 (wall functions); the buffer layer (5–30) is
+neither and should be avoided. The presets follow that rule:
+
+| Preset | Regime | y+ target | Layers | Growth |
+| :--- | :--- | :--- | :--- | :--- |
+| `fast` | wall function | ~50 | 5 | 1.2 |
+| `standard` | wall function | ~30 | 8 | 1.2 |
+| `fine` | wall-resolved | ~1 | 20 | 1.1 |
+
+A high y+ needs a *thick* first cell, which snappyHexMesh will not build next to
+a fine surface cell (`maxFaceThicknessRatio`), so wall-function runs want a
+coarser near-wall surface than wall-resolved ones. When the clamp bites, the CLI
+reports the realised y+ and warns instead of silently degrading the mesh.
 
 **Wall treatment.** All presets use the Spalding-bridging wall functions
 (`nutUSpaldingWallFunction`, `omegaWallFunction`, `kqRWallFunction`), valid
-across the whole y+ range. The original wall-function targets were `fast` y+
-100 / `standard` y+ 40; they are now `fast` ~30 / `standard` ~10 to match the
-realised values on an auto-refined surface (still the wall-function-bridged
-regime). `fine` (y+ ~ 1) places the first cell in the viscous sublayer but still
-uses the same wall functions — it is **wall-function-bridged at low y+**, not a
-classical low-Re wall-resolved setup.
+across the whole y+ range. Spalding bridges the entire range, so `fast`/`standard`
+sit cleanly in the log layer and `fine` places the first cell in the viscous
+sublayer; `fine` keeps those wall functions rather than a separate low-Re
+formulation, so treat it as a low-y+ target, not a classical wall-resolved setup.
 
 **Verify, don't assume.** The `u_tau` estimate is a flat-plate correlation and
 is typically 30-40% off the local value on a real car. It also uses the *model
@@ -311,6 +317,37 @@ This reads the `yPlus` function object output and reports per-patch min/max/aver
 against the target, flagging patches that miss it.
 
 ---
+
+## Mesh Quality & Remediation
+
+Meshing is a **fixed preset + measurement** workflow, not a predictive one: the
+generator writes a plain `blockMesh` / `snappyHexMesh` case, and the diagnostics
+(`read_forces.py --mesh`, `read_forces.py --surface`, and the Studio panels)
+report what actually happened. The optional auto-heuristics are **off by default**
+so the mesh stays predictable:
+
+| Setting | Default | Effect when enabled |
+| :--- | :--- | :--- |
+| `mesh_params.auto_size` | `false` | Raise surface/edge refinement so the smallest STL feature is resolved (capped by `max_surface_level`) |
+| `mesh_params.auto_feature_angle` | `false` | Derive `resolveFeatureAngle` from the STL crease (normal-angle) distribution |
+| `mesh_params.grading` | `"off"` | Grade the background grid toward the ground/symmetry planes (fewer cells, slightly higher non-orthogonality/aspect ratio) |
+| `layers.two_pass` | `false` | Two-pass layering: a second `snappyHexMesh` pass adds layers with the quality gate relaxed (`system/snappyHexMeshDict_layering`) — higher boundary-layer coverage at some quality cost; taper the limits back with `checkMesh` |
+
+When `checkMesh` flags a metric, change **one** thing and re-mesh:
+
+| Finding | Likely cause | Adjustment |
+| :--- | :--- | :--- |
+| High max non-orthogonality | large cell-size jump between background and refinement | raise `mesh_params.nCellsBetweenLevels` (e.g. 3), lower `surface_level`/`edge_level`, disable `grading` |
+| High max skewness | layers too thick next to the surface, or aggressive snapping | lower `layers.maxFaceThicknessRatio`, raise `snap.nSolveIter` / `snap.nRelaxIter` |
+| High max aspect ratio | thick first layer vs. the finest cell, or coarse cells beside fine ones | reduce `layers.first_layer_thickness`, disable `grading`, reduce the `surface_level` jump |
+| Boundary-layer dropout (low coverage) | first layer thicker than snappy can extrude | reduce `layers.first_layer_thickness` or raise `surface_level`, raise `layers.maxFaceThicknessRatio` |
+| Concave cells / illegal faces | open or self-intersecting geometry | repair the STL (the `surfaceCheck` gate reports it) |
+| Small cell determinant | sharp/degenerate cells surviving smoothing | raise `mesh_quality.errorReduction` / `mesh_quality.nSmoothScale`, repair geometry |
+
+**"Never bad" rather than "always optimal."** Fixed settings cannot be optimal for
+every geometry without CFD validation; the goal is a predictable mesh with no
+obvious defects (the `surfaceCheck` gate) and no obvious quality failures (the
+`checkMesh` verdict), then iterate on a single knob when needed.
 
 ## Technical Notes & Conventions
 

@@ -513,7 +513,7 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
       { key: 'max_non_ortho', label: 'Max non-orthogonality', value: 45.2, limit_text: '<= 65', pass: true, level: 'good' },
       { key: 'concave_cells', label: 'Concave cells', value: 0, limit_text: '== 0', pass: true, level: 'good', integer: true },
     ],
-    layers: { geometry: { layers: 2, coverage: 1.0 } },
+    layers: { geometry: { layers: 2, coverage: 1.0, thickness_fraction: 0.9 } },
     patches: { geometry: { faces: 124862, closed: true, closure: 'closed singly connected' } },
     cell_types: { hexahedra: { count: 8881583, fraction: 0.9859 } },
     y_plus: { available: true, target: 40, patches: { geometry: { average: 42.0 } }, missed: [], note: 'all patches within 50% of target' },
@@ -531,6 +531,7 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
   assert.ok(rows.includes('geometry'));
   assert.ok(rows.includes('2/2'));
   assert.ok(rows.includes('100%'));
+  assert.ok(rows.includes('90%'), 'thickness coverage column');
   assert.ok(rows.includes('42.0 / 40'), 'realised y+ vs target');
   assert.ok(doc.getElementById('mesh-quality-note-yplus').textContent.includes('all patches'));
   // metrics table

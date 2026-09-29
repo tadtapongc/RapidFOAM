@@ -176,12 +176,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "relativeSizes": True,
         "first_layer_thickness": 0.3,   # fraction of cell (or metres if relativeSizes=false)
         "min_thickness": 0.05,          # same units as first_layer_thickness
-        # When y+-derived (or absolute) layer sizing resolves min_thickness, it
-        # uses this fraction of the first layer. Default 1.0 makes minThickness
-        # equal the first layer (snappy drops whole stacks rather than extrude
-        # degenerate partial ones — a quality gate). Lower it (e.g. 0.5) only to
-        # deliberately keep partial stacks on cases with widespread dropout.
-        "min_thickness_ratio": 1.0,
         "y_plus_target": None,          # absolute near-wall target; overrides first_layer_thickness
         "featureAngle": 170,
         "slipFeatureAngle": 30,
@@ -202,6 +196,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "nRelaxedIter": 20,
         "ground_layers": False,
         "ground_n_layers": 2,
+        # Two-pass meshing: when true, the first snappyHexMesh run only
+        # castellates and snaps, and a second pass adds layers with the quality
+        # gate relaxed (system/snappyHexMeshDict_layering). Reaches much higher
+        # boundary-layer coverage on complex geometry at some quality cost.
+        "two_pass": False,
     },
 
     # Feature extraction (140° captures real aero edges without cosmetic CAD seams)
@@ -487,9 +486,15 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         errors.append("mesh_params.grading_ratio must be a number between 1 and 20")
     if "ground_layers" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["ground_layers"], bool):
         errors.append("layers.ground_layers must be true or false")
-    min_ratio = cfg.get("layers", {}).get("min_thickness_ratio")
-    if min_ratio is not None and (not finite(min_ratio) or not (0.0 < min_ratio <= 1.0)):
-        errors.append("layers.min_thickness_ratio must be a number in (0, 1]")
+    if "two_pass" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["two_pass"], bool):
+        errors.append("layers.two_pass must be true or false")
+    if cfg.get("layers", {}).get("two_pass") is True:
+        warnings.append(
+            "layers.two_pass is experimental: the layering pass disables the "
+            "mesh-quality gate, which can produce highly skewed cells. Taper the "
+            "limits in system/snappyHexMeshDict_layering against checkMesh before "
+            "production use."
+        )
     verdict_bands = cfg.get("mesh_quality", {}).get("verdict_bands")
     if verdict_bands is not None:
         if not isinstance(verdict_bands, dict):

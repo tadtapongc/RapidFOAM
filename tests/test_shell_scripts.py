@@ -86,6 +86,9 @@ case "$name" in
                 ;;
         esac
         ;;
+    snappyHexMesh)
+        echo "$*" >> "$HARNESS_ROOT/snappy.log"
+        ;;
     mpirun)
         shift 2
         exec "$@"
@@ -228,6 +231,14 @@ esac
         self.assertNotEqual(result.returncode, 0, result.stdout+result.stderr)
         self.assertFalse((self.case/"processor0").exists())
         self.assertIn("illegal triangles", result.stderr)
+
+    def test_layering_pass_runs_when_dict_present(self):
+        self.generate()
+        (self.case/"system/snappyHexMeshDict_layering").write_text("", encoding="utf-8")
+        result = self.run_script("Allrun")
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        log = (self.root/"snappy.log").read_text(encoding="utf-8")
+        self.assertIn("layering", log)
 
     def test_sigterm_attempts_recovery_without_losing_failed_results(self):
         self.generate()

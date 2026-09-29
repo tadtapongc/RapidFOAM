@@ -289,6 +289,9 @@ runApplication surfaceFeatureExtract
 runApplication blockMesh
 runApplication decomposePar
 runParallel snappyHexMesh -overwrite -noFunctionObjects
+if [ -f system/snappyHexMeshDict_layering ]; then
+    runParallel -s layering snappyHexMesh -overwrite -noFunctionObjects -dict system/snappyHexMeshDict_layering
+fi
 runParallel checkMesh -allGeometry -allTopology -noFunctionObjects
 runApplication reconstructParMesh -constant
 rm -rf processor*
@@ -340,6 +343,9 @@ fi
 runApplication surfaceFeatureExtract
 runApplication blockMesh
 runApplication snappyHexMesh -overwrite -noFunctionObjects
+if [ -f system/snappyHexMeshDict_layering ]; then
+    runApplication -s layering snappyHexMesh -overwrite -noFunctionObjects -dict system/snappyHexMeshDict_layering
+fi
 runApplication checkMesh -allGeometry -allTopology -noFunctionObjects
 runApplication renumberMesh -overwrite -noFunctionObjects
 # potentialFoam only initialises the flow field; a failure is non-fatal but is
@@ -483,6 +489,11 @@ decomposePar > log.decomposePar 2>&1
 
 echo ">>> Running snappyHexMesh (parallel)"
 mpirun -np $SLURM_NTASKS snappyHexMesh -overwrite -noFunctionObjects -parallel > log.snappyHexMesh 2>&1
+
+if [ -f system/snappyHexMeshDict_layering ]; then
+    echo ">>> Running snappyHexMesh layering pass (quality gate relaxed)"
+    mpirun -np $SLURM_NTASKS snappyHexMesh -overwrite -noFunctionObjects -parallel -dict system/snappyHexMeshDict_layering > log.snappyHexMesh.layering 2>&1
+fi
 
 echo ">>> Checking mesh (parallel)"
 mpirun -np $SLURM_NTASKS checkMesh -allGeometry -allTopology -noFunctionObjects -parallel > log.checkMesh 2>&1

@@ -90,7 +90,7 @@ class TestWebAPI(unittest.TestCase):
         self.assertIn("fast", res["fidelity_presets"])
         self.assertIn("standard", res["fidelity_presets"])
         standard = res["fidelity_presets"]["standard"]
-        self.assertEqual(standard.get("layers", {}).get("y_plus_target"), 10)
+        self.assertEqual(standard.get("layers", {}).get("y_plus_target"), 30)
         self.assertFalse(standard.get("layers", {}).get("ground_layers"))
         self.assertEqual(standard.get("mesh", {}).get("cells_per_length"), 30)
         self.assertIn("mesh", standard)
@@ -303,6 +303,7 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(res["stats"]["cells"], 2000)
         self.assertEqual(res["layers"]["geometry"]["layers"], 2)
         self.assertAlmostEqual(res["layers"]["geometry"]["coverage"], 1.0)
+        self.assertAlmostEqual(res["layers"]["geometry"]["thickness_fraction"], 0.996)
         self.assertEqual(res["target_layers"], 2)
         # Extended report surfaces metrics, cell types and patches.
         self.assertTrue(any(m["key"] == "max_non_ortho" for m in res["metrics"]))
@@ -313,6 +314,37 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(res["y_plus"]["target"], 40.0)
         self.assertAlmostEqual(res["y_plus"]["patches"]["geometry"]["average"], 45.0)
         self.assertEqual(res["y_plus"]["missed"], [])
+
+    def test_telemetry_mesh_reads_layering_log(self):
+        """Two-pass layering coverage must come from log.snappyHexMesh.layering."""
+        case_name = "test_case_mesh_layering"
+        case_dir = Path(f"cases/{case_name}")
+        case_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+        (case_dir / "log.checkMesh").write_text("    cells: 100\nMesh OK.\n", encoding="utf-8")
+        # Pass-1 snappy log carries no layers (addLayers false).
+        (case_dir / "log.snappyHexMesh").write_text(
+            "patch    faces    layers    overall thickness\n"
+            "                  target   mesh     [m]       [%]\n"
+            "-----    -----    -----    ----     ---       ---\n"
+            "geometry 100      5        0        0         0\n",
+            encoding="utf-8",
+        )
+        (case_dir / "log.snappyHexMesh.layering").write_text(
+            "patch    faces    layers    overall thickness\n"
+            "                  target   mesh     [m]       [%]\n"
+            "-----    -----    -----    ----     ---       ---\n"
+            "geometry 100      5        5.0      0.0108    92.6\n",
+            encoding="utf-8",
+        )
+        (case_dir / "case_config.json").write_text(
+            json.dumps({"layers": {"n_layers": 5}}), encoding="utf-8"
+        )
+
+        res = asyncio.run(api_telemetry_mesh(case_name))
+        self.assertTrue(res["has_data"])
+        self.assertIn("geometry", res["layers"])
+        self.assertAlmostEqual(res["layers"]["geometry"]["layers"], 5.0)
 
     def test_telemetry_mesh_yplus_miss(self):
         """A realised y+ far from target is reported as missed."""

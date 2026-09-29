@@ -663,8 +663,12 @@ def forces_main() -> None:
         for patch, info in sorted(summary["layers"].items()):
             achieved = info.get("layers", "?")
             coverage = info.get("coverage")
-            cov_txt = f" ({coverage * 100:.0f}%)" if isinstance(coverage, (int, float)) else ""
-            print(f"    layers {patch:<16} {achieved}{cov_txt}")
+            cov_txt = f" ({coverage * 100:.0f}% layers)" if isinstance(coverage, (int, float)) else ""
+            thickness = info.get("thickness_fraction")
+            th_txt = f", {thickness * 100:.0f}% thickness" if isinstance(thickness, (int, float)) else ""
+            print(f"    layers {patch:<16} {achieved}{cov_txt}{th_txt}")
+        for warning in summary.get("warnings", []):
+            print(f"    ⚠  {warning}")
         print(f"    {summary['note']}")
         sys.exit(0 if summary.get("ok") else 2)
 

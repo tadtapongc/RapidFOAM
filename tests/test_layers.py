@@ -88,8 +88,8 @@ class TestResolveLayers(unittest.TestCase):
         layers = cfg["layers"]
         self.assertFalse(layers["relativeSizes"])
         self.assertAlmostEqual(layers["first_layer_thickness"], res["first_layer_thickness"])
-        # Default min_thickness_ratio 1.0: min_thickness equals the full first
-        # layer (snappy drops whole stacks rather than extrude degenerate ones).
+        # min_thickness equals the full first layer (snappy drops whole stacks
+        # rather than extrude degenerate ones).
         self.assertAlmostEqual(layers.get("min_thickness"), layers["first_layer_thickness"])
         self.assertGreater(res["u_tau"], 0.0)
         self.assertIsNotNone(res["y_plus_effective"])
@@ -156,37 +156,17 @@ class TestResolveLayers(unittest.TestCase):
         res = resolve_layers(cfg, BOUNDS)
         self.assertIsNone(res["first_layer_thickness"])
 
-    def test_min_thickness_ratio_override(self):
+    def test_min_thickness_equals_first_layer(self):
         cfg = base_cfg("standard")
-        cfg["layers"]["min_thickness_ratio"] = 0.25
         resolve_layers(cfg, BOUNDS)
         layers = cfg["layers"]
-        self.assertAlmostEqual(
-            layers["min_thickness"], 0.25 * layers["first_layer_thickness"]
-        )
-
-    def test_invalid_min_thickness_ratio_falls_back_to_one(self):
-        cfg = base_cfg("standard")
-        cfg["layers"]["min_thickness_ratio"] = 0.0
-        resolve_layers(cfg, BOUNDS)
-        layers = cfg["layers"]
-        self.assertAlmostEqual(
-            layers["min_thickness"], layers["first_layer_thickness"]
-        )
+        self.assertAlmostEqual(layers["min_thickness"], layers["first_layer_thickness"])
 
     def test_explicit_min_thickness_still_wins(self):
         cfg = base_cfg("standard")
         cfg["layers"]["min_thickness"] = 9e-5
         resolve_layers(cfg, BOUNDS, explicit_min_thickness=True)
         self.assertEqual(cfg["layers"]["min_thickness"], 9e-5)
-
-    def test_min_thickness_never_exceeds_ratio_of_stack(self):
-        cfg = base_cfg("standard")
-        cfg["layers"]["min_thickness_ratio"] = 0.5
-        resolve_layers(cfg, BOUNDS)
-        layers = cfg["layers"]
-        stack = cfg["layers"]["_resolved"]["stack"]
-        self.assertLessEqual(layers["min_thickness"], 0.5 * stack + 1e-15)
 
     def test_fine_preset_reaches_low_y_plus(self):
         cfg = base_cfg("fine")
@@ -284,6 +264,44 @@ class TestGroundLayerEmission(unittest.TestCase):
 
     def test_ground_layers_absent_when_disabled(self):
         self.assertNotIn('"ground" { nSurfaceLayers', self._dict_text(False))
+
+
+class TestTwoPassLayering(unittest.TestCase):
+    def _write(self, two_pass):
+        cfg = deep_merge(DEFAULT_CONFIG, {
+            "stl_files": ["body.stl"],
+            "flow": {"velocity": U, "direction": "-z", "ground": True},
+        })
+        cfg["stl_names"] = ["body"]
+        cfg["domain_box"] = {"min": [0.0, 0.0, -2.0], "max": [4.0, 3.0, 6.0]}
+        cfg["layers"] = dict(cfg["layers"], two_pass=two_pass, y_plus_target=40, n_layers=3)
+        cfg["mesh_params"] = compute_mesh_params(cfg, ((-0.5, 0.0, -1.5), (0.5, 1.0, 1.5)))
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / "system").mkdir()
+            write_snappy_hex_mesh_dict(cfg, case)
+            normal = (case / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
+            layering = case / "system" / "snappyHexMeshDict_layering"
+            lay_text = layering.read_text(encoding="utf-8") if layering.exists() else None
+            return normal, lay_text
+
+    def test_disabled_is_single_pass(self):
+        normal, lay = self._write(False)
+        self.assertIsNone(lay)
+        self.assertIn("addLayers       true;", normal)
+
+    def test_enabled_writes_layering_dict(self):
+        normal, lay = self._write(True)
+        self.assertIsNotNone(lay)
+        # Pass 1 only castellates + snaps; pass 2 adds the layers.
+        self.assertIn("castellatedMesh true;", normal)
+        self.assertIn("addLayers       false;", normal)
+        self.assertIn("castellatedMesh false;", lay)
+        self.assertIn("snap            false;", lay)
+        self.assertIn("addLayers       true;", lay)
+        # Quality gate disabled in the layering pass.
+        self.assertIn("maxNonOrtho         180;", lay)
+        self.assertIn("minDeterminant      -1e30;", lay)
 
 
 class TestGroundLayerGuard(unittest.TestCase):

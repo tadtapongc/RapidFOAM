@@ -128,8 +128,7 @@ class ProjectTest(unittest.TestCase):
             {"case_name": "../elsewhere"}, {"stl_files": "body.stl"},
             {"stl_files": ["body.stl", "body.stl"]},
             {"mesh_params": {"surface_level": [5, 4]}},
-            {"layers": {"min_thickness_ratio": 0}},
-            {"layers": {"min_thickness_ratio": 1.5}},
+            {"layers": {"two_pass": "yes"}},
         ]
         for example in examples:
             with self.subTest(example=example):

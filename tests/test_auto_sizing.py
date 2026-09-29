@@ -118,7 +118,9 @@ class TestFeatureSizing(unittest.TestCase):
             "outputs": {"downforce_axis": "-y"},
             "fidelity": preset,
         })
-        cfg["mesh_params"] = dict(mesh)
+        base = {"auto_size": True}
+        base.update(mesh)
+        cfg["mesh_params"] = base
         return cfg
 
     def _stats(self, length, count=50):
@@ -147,6 +149,16 @@ class TestFeatureSizing(unittest.TestCase):
         params = compute_mesh_params(
             self._cfg(auto_size=False), BOUNDS, feature_stats=self._stats(0.0005)
         )
+        self.assertNotIn("auto_size", params)
+        self.assertEqual(params["surface_level"], list(FIDELITY_PRESETS["standard"]["surface_level"]))
+
+    def test_auto_size_off_by_default(self):
+        cfg = deep_merge(DEFAULT_CONFIG, {
+            "flow": {"velocity": 16.67, "direction": "-z", "ground": True},
+            "outputs": {"downforce_axis": "-y"},
+            "fidelity": "standard",
+        })
+        params = compute_mesh_params(cfg, BOUNDS, feature_stats=self._stats(0.0005))
         self.assertNotIn("auto_size", params)
         self.assertEqual(params["surface_level"], list(FIDELITY_PRESETS["standard"]["surface_level"]))
 
@@ -239,7 +251,9 @@ class TestFeatureAngleDerivation(unittest.TestCase):
             "outputs": {"downforce_axis": "-y"},
             "fidelity": preset,
         })
-        cfg["mesh_params"] = dict(mesh)
+        base = {"auto_feature_angle": True}
+        base.update(mesh)
+        cfg["mesh_params"] = base
         return cfg
 
     def _angles(self, normal_angle, count=30):
@@ -277,6 +291,16 @@ class TestFeatureAngleDerivation(unittest.TestCase):
         self.assertEqual(params["resolveFeatureAngle"], 35)
         self.assertNotIn("feature_angle", params)
 
+    def test_auto_feature_angle_off_by_default(self):
+        cfg = deep_merge(DEFAULT_CONFIG, {
+            "flow": {"velocity": 16.67, "direction": "-z", "ground": True},
+            "outputs": {"downforce_axis": "-y"},
+            "fidelity": "standard",
+        })
+        params = compute_mesh_params(cfg, BOUNDS, angle_stats=self._angles(20.0))
+        self.assertEqual(params["resolveFeatureAngle"], 35.0)
+        self.assertNotIn("feature_angle", params)
+
     def test_no_angle_stats_keeps_preset(self):
         params = compute_mesh_params(self._cfg(), BOUNDS)
         self.assertEqual(params["resolveFeatureAngle"], 35)
@@ -284,11 +308,13 @@ class TestFeatureAngleDerivation(unittest.TestCase):
 
 class TestFeatureExtractAlignment(unittest.TestCase):
     def _cfg(self, preset="standard"):
-        return deep_merge(DEFAULT_CONFIG, {
+        cfg = deep_merge(DEFAULT_CONFIG, {
             "flow": {"velocity": 16.67, "direction": "-z", "ground": True},
             "outputs": {"downforce_axis": "-y"},
             "fidelity": preset,
         })
+        cfg["mesh_params"] = {"auto_feature_angle": True}
+        return cfg
 
     def _angles(self, normal_angle, count=30):
         stats = FeatureAngleStats()

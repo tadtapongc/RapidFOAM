@@ -419,6 +419,25 @@ class TestVerdict(unittest.TestCase):
         )
         self.assertEqual(result["verdict"], "bad")
 
+    def test_thin_stack_warns_without_failing(self):
+        # All layers present but the realised stack is much thinner than
+        # requested: a warning (verdict usable), not a hard failure.
+        layers = {"geometry": {"faces": 100, "layers": 2, "target_layers": 2,
+                               "coverage": 1.0, "percent": 60.0}}
+        result = check_mesh_quality(parse_checkmesh(GOOD_CHECKMESH), layers, target_layers=2)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["verdict"], "usable")
+        self.assertAlmostEqual(result["layers"]["geometry"]["thickness_fraction"], 0.6)
+        self.assertTrue(any("thin boundary layer" in w for w in result["warnings"]))
+
+    def test_full_thickness_stack_has_no_warning(self):
+        layers = {"geometry": {"faces": 100, "layers": 2, "target_layers": 2,
+                               "coverage": 1.0, "percent": 92.6}}
+        result = check_mesh_quality(parse_checkmesh(GOOD_CHECKMESH), layers, target_layers=2)
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(result["verdict"], "good")
+        self.assertAlmostEqual(result["layers"]["geometry"]["thickness_fraction"], 0.926)
+
     def test_metric_entries_carry_level_and_bands(self):
         result = check_mesh_quality(parse_checkmesh(EXTENDED_CHECKMESH))
         by_key = {m["key"]: m for m in result["metrics"]}

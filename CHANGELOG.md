@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Boundary-layer thickness coverage**: the mesh-quality report (`read_forces.py
+  --mesh`, the Studio Mesh Quality panel) now shows snappy's realised layer
+  *thickness* percentage alongside layer-count coverage, and flags a full-but-thin
+  stack (count ≥ 90% but thickness < 70%) as a warning — realised y+ remains the
+  authoritative near-wall check. The Studio mesh endpoint also now reads the
+  two-pass `log.snappyHexMesh.layering` log (boundary-layer coverage was blank for
+  two-pass cases).
+- **Two-pass layering (opt-in)**: `layers.two_pass` runs `snappyHexMesh` twice —
+  pass 1 castellates + snaps (no layers), pass 2 adds layers only with the quality
+  gate relaxed (`system/snappyHexMeshDict_layering`), which avoids snappy's
+  undo iterations stripping the prisms. Validated on a crude 144-triangle test
+  body: `geometry` patch coverage **65% → 92.6%** (5/5 layers). The disabled gate
+  is aggressive — it produced max non-orthogonality 115 and skewness 30 — so the
+  layering limits must be tapered back toward the normal values with `checkMesh`
+  before use. Described in the README Mesh Quality section.
 - **Graded background mesh (opt-in)**: `mesh_params.grading` (default `"off"`)
   can derive a per-axis `blockMesh` `simpleGrading` toward the ground and
   symmetry planes — coarsening *away* from the body while keeping the near-body
@@ -34,6 +49,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `surface_check` config section (`enabled`, `enforce`, `check_self_intersection`,
   `allow_open`, `max_illegal_triangles`, `max_unconnected_parts`), validated and
   documented.
+
+### Changed
+- **Mesh auto-heuristics default off**: `mesh_params.auto_size` and
+  `mesh_params.auto_feature_angle` now default to **false**, joining background
+  `grading` (off). The generated mesh is the plain fidelity preset by default —
+  predictable and quick to reason about — and the heuristics are opted into only
+  when a geometry needs small-feature refinement or a derived feature angle.
+- README gains a **Mesh Quality & Remediation** section mapping `checkMesh`
+  findings to the single knob to adjust, plus the "never bad rather than always
+  optimal" rationale.
+- **Near-wall y+ presets retuned to best practice**: `fast` y+ ~50 / 5 layers,
+  `standard` y+ ~30 / 8 layers (was y+ ~10, which sits in the buffer layer), and
+  `fine` y+ ~1 / 20 layers at growth 1.1. Each preset now sits in a valid
+  k-ω SST regime (log layer or viscous sublayer) rather than straddling the
+  buffer layer.
+- **`layers.min_thickness_ratio` removed**: `minThickness` is always the full
+  first layer (the quality-gate behaviour the old default already used), dropping
+  a fence-sitting knob.
 
 ## [1.5.0] - 2026-09-28
 

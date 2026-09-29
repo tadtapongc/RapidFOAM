@@ -16,14 +16,11 @@ from rapidfoam.stl_utils import BBox, EdgeStats, FeatureAngleStats
 # sizing and the ground-layer clearance guard so they stay consistent.
 GROUND_EMBED = 0.01
 
-# Fraction of the first layer used as snappyHexMesh's minimum layer thickness.
-# The default is 1.0: minThickness equals the first layer, so snappy drops a
-# whole prism stack rather than extrude a poorly-conditioned thinner one at
-# tight radii. This acts as a quality gate. Lowering it (e.g. 0.5) keeps partial
-# stacks but was measured to produce degenerate prisms on a real case (layer
-# coverage 2->1, aspect ratio 20.8->62.4, determinant -585x), so it is an
-# opt-in per-case experiment via layers.min_thickness_ratio, not a default.
-DEFAULT_MIN_THICKNESS_RATIO = 1.0
+# snappyHexMesh's minimum layer thickness is pinned to the full first layer:
+# minThickness == first layer makes snappy drop a whole prism stack rather than
+# extrude a poorly-conditioned thinner one at tight radii. This acts as a quality
+# gate (a measured regression showed partial stacks produce degenerate prisms:
+# layer coverage 2->1, aspect ratio 20.8->62.4, determinant -585x).
 
 # Far/near cell-size ratio for the auto-graded background mesh. The near-body
 # (fine) cell stays at the base cell size while cells grow toward the domain
@@ -263,9 +260,9 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "cells_per_length": 20,        # base cell = longest STL extent / 20
         "surface_level": [3, 4],       # 18.75mm - 9.38mm surface cells at ~3m model
         "edge_level": 5,               # 4.69mm at edges
-        "n_layers": 2,
-        "expansion_ratio": 1.3,
-        "y_plus_target": 30,
+        "n_layers": 5,
+        "expansion_ratio": 1.2,
+        "y_plus_target": 50,
         "ground_layers": False,
         "end_time": 800,
         "write_interval": 400,
@@ -305,9 +302,9 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "cells_per_length": 30,        # base cell = longest STL extent / 30
         "surface_level": [4, 5],       # 6.25mm bodywork, 3.125mm fine features
         "edge_level": 6,               # 1.56mm at sharp aero edges (wings/gurneys)
-        "n_layers": 3,
+        "n_layers": 8,
         "expansion_ratio": 1.2,
-        "y_plus_target": 10,
+        "y_plus_target": 30,
         "ground_layers": False,
         "end_time": 1500,
         "write_interval": 500,
@@ -339,16 +336,16 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "far_wake_level": 1,           # downstream transport (saves cells)
     },
     "fine": {
-        # Wall-resolved validation (~4-6 hours, ~20-28M cells on 32 cores)
-        "desc": "Edge + near-wall validation tier (wall-function-bridged at low y+; not a uniform upscale of standard)",
+        # Wall-resolved low-Re tier (~4-6 hours, ~20-28M cells on 32 cores)
+        "desc": "Wall-resolved tier (y+ ~ 1 first cell, fine near-wall stack); pair with a low-Re-consistent wall treatment and validate",
         "cell_estimate": "~20-28M cells",
         "n_cells_target": 24000000,
         "runtime_estimate": "~4-6 hrs",
         "cells_per_length": 37.5,      # base cell = longest STL extent / 37.5
         "surface_level": [4, 5],       # keep tangential cells, layers carry the near-wall work
         "edge_level": 7,               # 0.68mm at sharp aero edges (trailing edges, gurneys)
-        "n_layers": 12,
-        "expansion_ratio": 1.2,
+        "n_layers": 20,
+        "expansion_ratio": 1.1,
         "y_plus_target": 1,
         "ground_layers": False,
         "end_time": 2500,
@@ -744,7 +741,7 @@ def compute_mesh_params(
     # geometry features (thin sections, tight radii, small triangles) are
     # resolved. Never coarsens the preset; capped by max_surface_level.
     auto_size_info: dict[str, Any] | None = None
-    if feature_stats is not None and user_mesh.get("auto_size", True):
+    if feature_stats is not None and user_mesh.get("auto_size", False):
         auto_size_info = _resolve_feature_sizing(
             user_mesh, preset, base_cell, surface_level, edge_level,
             feature_stats, extents,
@@ -769,7 +766,7 @@ def compute_mesh_params(
     # not. Never loosens below the preset (that would lose real features).
     feature_angle_info: dict[str, Any] | None = None
     if angle_stats is not None and angle_stats.n_angles > 0 \
-            and user_mesh.get("auto_feature_angle", True) \
+            and user_mesh.get("auto_feature_angle", False) \
             and "resolveFeatureAngle" not in user_mesh:
         feature_angle_info = _resolve_feature_angle(user_mesh, preset, angle_stats)
         resolve_feature_angle = feature_angle_info["resolveFeatureAngle"]
@@ -1067,17 +1064,11 @@ def resolve_layers(
             return t * (ratio ** n_layers - 1) / (ratio - 1)
         return t * max(n_layers, 1)
 
-    try:
-        min_ratio = float(layers.get("min_thickness_ratio", DEFAULT_MIN_THICKNESS_RATIO))
-    except (TypeError, ValueError):
-        min_ratio = DEFAULT_MIN_THICKNESS_RATIO
-    if not (0.0 < min_ratio <= 1.0):
-        min_ratio = DEFAULT_MIN_THICKNESS_RATIO
-
     def _min_thickness(t: float) -> float:
-        """Minimum layer thickness snappy may keep: a fraction of the first
-        layer, never exceeding the same fraction of the total stack."""
-        return min(min_ratio * t, min_ratio * _stack(t))
+        """Minimum layer thickness snappy may keep: the full first layer, never
+        exceeding the total stack (see the module note: minThickness == first
+        layer drops whole stacks rather than degenerating them)."""
+        return min(t, _stack(t))
 
     resolved: dict[str, Any] = {
         "u_tau": u_tau,

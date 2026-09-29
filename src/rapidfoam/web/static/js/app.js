@@ -3455,6 +3455,7 @@ class CFDApp {
           const info = layers[patch] || {};
           const achieved = num(info.layers);
           const coverage = num(info.coverage);
+          const thickness = num(info.thickness_fraction);
           const yp = yPlusPatches[patch] || {};
           const ypAvg = num(yp.average);
           let ypText = '--';
@@ -3464,9 +3465,12 @@ class CFDApp {
             ypText = tgt === null ? ypAvg.toFixed(1) : `${ypAvg.toFixed(1)} / ${tgt}`;
             if (yp.ok === false) ypCls += ' mesh-metric-fail';
           }
+          let thCls = 'monospace';
+          if (thickness !== null && thickness < 0.7) thCls += ' mesh-metric-usable';
           return `<tr><td>${this.escapeHtml(patch)}</td>`
             + `<td class="monospace">${achieved === null ? '--' : achieved}${target}</td>`
             + `<td class="monospace">${coverage === null ? '--' : `${Math.round(coverage * 100)}%`}</td>`
+            + `<td class="${thCls}">${thickness === null ? '--' : `${Math.round(thickness * 100)}%`}</td>`
             + `<td class="${ypCls}">${ypText}</td></tr>`;
         }).join('');
       }
@@ -3531,7 +3535,7 @@ class CFDApp {
     }
     const empties = {
       'mesh-metrics-tbody': [4, 'No metrics'],
-      'mesh-layer-tbody': [4, 'No layer data'],
+      'mesh-layer-tbody': [5, 'No layer data'],
       'mesh-patch-tbody': [3, 'No patch data'],
       'mesh-celltype-tbody': [3, 'No cell-type data'],
     };

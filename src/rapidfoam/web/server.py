@@ -54,6 +54,7 @@ from rapidfoam.postproc.checkmesh import (
     _config_has_symmetry,
     check_mesh_quality,
     checkmesh_targets_from_dict,
+    find_snappy_logs,
     parse_checkmesh,
     parse_layer_coverage,
     verdict_bands_from_dict,
@@ -61,6 +62,7 @@ from rapidfoam.postproc.checkmesh import (
 from rapidfoam.postproc.residuals import find_residual_files, read_residuals
 from rapidfoam.postproc.surfacecheck import (
     check_surface,
+    find_surfacecheck_logs,
     parse_surfacecheck,
     surface_check_policy_from_dict,
 )
@@ -2191,8 +2193,8 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
         checkmesh_text = next(
             (value for path, value in bundle.items() if path.endswith("/log.checkMesh")), ""
         )
-        snappy_text = next(
-            (value for path, value in bundle.items() if path.endswith("/log.snappyHexMesh")), ""
+        snappy_text = "\n".join(
+            value for path, value in bundle.items() if "/log.snappyHexMesh" in path
         )
         yplus_data = _read_yplus_texts(_sorted_segments(bundle, "/yPlus.dat"))
         cfg_text = next(
@@ -2210,8 +2212,10 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
     local_case = PROJECT_ROOT / "cases" / case_name
     if not checkmesh_text and (local_case / "log.checkMesh").is_file():
         checkmesh_text = _read_text_tail_lines(local_case / "log.checkMesh")
-    if not snappy_text and (local_case / "log.snappyHexMesh").is_file():
-        snappy_text = _read_text_tail_lines(local_case / "log.snappyHexMesh")
+    if not snappy_text:
+        snappy_logs = find_snappy_logs(local_case)
+        if snappy_logs:
+            snappy_text = "\n".join(_read_text_tail_lines(p) for p in snappy_logs)
     if not yplus_data:
         yplus_files = find_yplus_files(local_case)
         if yplus_files:
@@ -2276,8 +2280,8 @@ async def api_telemetry_surface(case_name: str) -> dict[str, Any]:
     # 1. Remote cluster first if connected (shared telemetry bundle).
     if ssh_client.is_connected:
         bundle = await _read_remote_telemetry(case_name)
-        surface_text = next(
-            (value for path, value in bundle.items() if path.endswith("/log.surfaceCheck")), ""
+        surface_text = "\n".join(
+            value for path, value in bundle.items() if "/log.surfaceCheck" in path
         )
         cfg_text = next(
             (value for path, value in bundle.items() if path.endswith("/case_config.json")), ""
@@ -2292,8 +2296,10 @@ async def api_telemetry_surface(case_name: str) -> dict[str, Any]:
 
     # 2. Local case directory fallback.
     local_case = PROJECT_ROOT / "cases" / case_name
-    if not surface_text and (local_case / "log.surfaceCheck").is_file():
-        surface_text = _read_text_tail_lines(local_case / "log.surfaceCheck")
+    if not surface_text:
+        surface_logs = find_surfacecheck_logs(local_case)
+        if surface_logs:
+            surface_text = "\n".join(_read_text_tail_lines(p) for p in surface_logs)
     if config_dict is None:
         for candidate in (
             PROJECT_ROOT / "configs" / f"{case_name}.json",

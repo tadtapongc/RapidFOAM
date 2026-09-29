@@ -104,6 +104,13 @@ _VERDICT_LABEL = {
 # fraction is treated as adequately layered; below it the patch is real dropout.
 LAYER_COVERAGE_MIN = 0.9
 
+# A patch whose layers are all present (count coverage >= LAYER_COVERAGE_MIN)
+# but whose realised stack is below this fraction of the requested thickness is
+# flagged as thin — a warning, not a hard failure: snappy thins the stack near
+# features to protect quality, and the authoritative near-wall check is the
+# realised y+ (read_forces.py --yplus).
+LAYER_THICKNESS_MIN = 0.7
+
 
 def resolve_bands(
     bands: dict[str, dict[str, float]] | None = None,
@@ -466,6 +473,7 @@ def check_mesh_quality(
     stats = stats or {}
     layers = layers or {}
     issues: list[str] = []
+    warnings: list[str] = []
     tiers = resolve_bands(bands)
 
     if not stats and not layers:
@@ -480,6 +488,7 @@ def check_mesh_quality(
             "open_patches": [],
             "cell_types": {},
             "issues": [],
+            "warnings": [],
             "ok": False,
             "note": "no checkMesh or snappyHexMesh log found",
         }
@@ -604,6 +613,19 @@ def check_mesh_quality(
                     f"{shown} of {target_text} layers "
                     f"({coverage * 100:.0f}% coverage)"
                 )
+        # Thickness coverage (snappy's [%] column) is reported whenever known.
+        # Flag a much-thinner-than-requested stack only when the layers are all
+        # present (dropout is already an issue); the realised y+ is authoritative.
+        thickness = _finite(info.get("percent"))
+        if thickness is not None:
+            entry["thickness_fraction"] = round(thickness / 100.0, 4)
+            if (coverage is not None and coverage >= LAYER_COVERAGE_MIN
+                    and entry["thickness_fraction"] < LAYER_THICKNESS_MIN):
+                warnings.append(
+                    f"thin boundary layer on '{patch}': "
+                    f"{entry['thickness_fraction'] * 100:.0f}% of the "
+                    f"requested thickness"
+                )
         layer_entries[patch] = entry
 
     ok = not issues and bool(stats or layers)
@@ -625,12 +647,16 @@ def check_mesh_quality(
     )
     if hard_fail:
         verdict = "bad"
+    elif warnings and verdict == "good":
+        verdict = "usable"
     verdict_label = _VERDICT_LABEL[verdict]
 
-    if ok and verdict == "good":
+    if ok and not warnings and verdict == "good":
         note = "mesh quality OK"
     elif ok:
         note = f"mesh quality {verdict_label.lower()} — no hard failures"
+        if warnings:
+            note += "; " + "; ".join(warnings)
     else:
         note = f"{len(issues)} mesh-quality concern(s): " + "; ".join(issues)
     if verdict != "good":
@@ -660,6 +686,7 @@ def check_mesh_quality(
         "cell_types": cell_types if isinstance(cell_types, dict) else {},
         "target_layers": target_layers,
         "issues": issues,
+        "warnings": warnings,
         "ok": ok,
         "note": note,
     }
