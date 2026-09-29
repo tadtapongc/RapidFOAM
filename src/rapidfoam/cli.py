@@ -479,6 +479,7 @@ def forces_main() -> None:
     parser.add_argument("--compare", action="store_true", help="Multi-case comparison")
     parser.add_argument("--check", action="store_true", help="Exit 0 if converged, 1 if not")
     parser.add_argument("--yplus", action="store_true", help="Verify near-wall y+ against the target")
+    parser.add_argument("--surface", action="store_true", help="Verify surface integrity (surfaceCheck log)")
     parser.add_argument("--mesh", action="store_true", help="Verify mesh quality (checkMesh + boundary layers)")
     parser.add_argument("--interval", "-i", type=float, default=3, help="Live update interval (s)")
     args = parser.parse_args()
@@ -562,6 +563,47 @@ def forces_main() -> None:
             print(f"    {patch:<24} min {lo:>7.2f}  max {hi:>8.2f}  avg {avg:>7.2f}  [{stats['status']}]")
         print(f"    {summary['note']}")
         sys.exit(0 if not summary.get("off_target") else 2)
+
+    # Surface-integrity verification (independent of force data)
+    if args.surface:
+        from rapidfoam.postproc.surfacecheck import surface_check_report
+        summary = surface_check_report(case_dir, args.config)
+        if not summary.get("available"):
+            sys.exit(f"No surfaceCheck log found in {case_dir}. Did the case run surfaceCheck?")
+
+        def _sfmt(value: object, spec: str = ".4g") -> str | None:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return format(value, spec)
+            return None
+
+        stats = summary["stats"]
+        print(f"\n  Surface integrity (surfaceCheck) — verdict: {summary.get('verdict_label', '')}")
+        triangles = _sfmt(stats.get("triangles"), ",d")
+        if triangles is not None:
+            print(f"    triangles        {triangles}")
+        vertices = _sfmt(stats.get("vertices"), ",d")
+        if vertices is not None:
+            print(f"    vertices         {vertices}")
+        closed = summary.get("closed")
+        if closed is not None:
+            state = "closed" if closed else "open"
+            if summary.get("has_symmetry") and closed is False:
+                state += " (symmetry half model)"
+            print(f"    surface          {state}")
+        illegal = _sfmt(stats.get("illegal_triangles"), ",d")
+        if illegal is not None:
+            print(f"    illegal tris     {illegal}")
+        if stats.get("self_intersection_checked"):
+            print(f"    self-intersects  {'yes' if stats.get('self_intersecting') else 'no'}")
+        parts = _sfmt(stats.get("unconnected_parts"), ",d")
+        if parts is not None:
+            print(f"    parts            {parts}")
+        for issue in summary.get("issues", []):
+            print(f"    ✗ {issue}")
+        for warning in summary.get("warnings", []):
+            print(f"    ⚠  {warning}")
+        print(f"    {summary['note']}")
+        sys.exit(0 if summary.get("ok") else 2)
 
     # Mesh-quality verification (independent of force data)
     if args.mesh:

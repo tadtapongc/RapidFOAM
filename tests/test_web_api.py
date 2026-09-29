@@ -27,6 +27,7 @@ from rapidfoam.web.server import (
     api_telemetry_export,
     api_telemetry_solver,
     api_telemetry_mesh,
+    api_telemetry_surface,
     parse_solver_diagnostics_from_log,
     parse_residuals_from_log,
     api_list_cases,
@@ -339,6 +340,62 @@ class TestWebAPI(unittest.TestCase):
             asyncio.run(api_telemetry_mesh("../evil"))
         self.assertEqual(ctx.exception.status_code, 400)
         res = asyncio.run(api_telemetry_mesh("test_case_mesh_absent"))
+        self.assertFalse(res["has_data"])
+
+    def test_telemetry_surface_integrity(self):
+        """Surface endpoint parses surfaceCheck and reports a verdict."""
+        case_name = "test_case_surface_quality"
+        case_dir = Path(f"cases/{case_name}")
+        case_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+        (case_dir / "log.surfaceCheck").write_text(
+            "Statistics:\n"
+            "Triangles    : 21000\n"
+            "Vertices     : 10600\n"
+            "Surface has no illegal triangles.\n"
+            "Surface is not closed since not all edges connected to two faces:\n"
+            "    connected to one face : 420\n"
+            "    connected to >2 faces : 0\n"
+            "Number of unconnected parts : 1\n"
+            "Number of zones (connected area with consistent normal) : 1\n"
+            "Checking self-intersection.\n"
+            "Surface is not self-intersecting\n",
+            encoding="utf-8",
+        )
+        (case_dir / "case_config.json").write_text(
+            json.dumps({"symmetry_plane": 0.0}), encoding="utf-8"
+        )
+
+        res = asyncio.run(api_telemetry_surface(case_name))
+        self.assertTrue(res["has_data"])
+        self.assertTrue(res["ok"])  # symmetry half model is exempt from closure
+        self.assertTrue(res["has_symmetry"])
+        self.assertIs(res["closed"], False)
+        self.assertEqual(res["stats"]["triangles"], 21000)
+        self.assertIs(res["stats"]["self_intersecting"], False)
+
+    def test_telemetry_surface_open_full_model_is_bad(self):
+        """An open surface without a symmetry plane is a hard defect."""
+        case_name = "test_case_surface_open"
+        case_dir = Path(f"cases/{case_name}")
+        case_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+        (case_dir / "log.surfaceCheck").write_text(
+            "Surface is not closed since not all edges connected to two faces:\n"
+            "    connected to one face : 12\n"
+            "    connected to >2 faces : 0\n",
+            encoding="utf-8",
+        )
+        res = asyncio.run(api_telemetry_surface(case_name))
+        self.assertTrue(res["has_data"])
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["verdict"], "bad")
+
+    def test_telemetry_surface_invalid_and_missing(self):
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(api_telemetry_surface("../evil"))
+        self.assertEqual(ctx.exception.status_code, 400)
+        res = asyncio.run(api_telemetry_surface("test_case_surface_absent"))
         self.assertFalse(res["has_data"])
 
     def test_telemetry_residuals_alignment(self):

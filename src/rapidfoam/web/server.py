@@ -59,6 +59,11 @@ from rapidfoam.postproc.checkmesh import (
     verdict_bands_from_dict,
 )
 from rapidfoam.postproc.residuals import find_residual_files, read_residuals
+from rapidfoam.postproc.surfacecheck import (
+    check_surface,
+    parse_surfacecheck,
+    surface_check_policy_from_dict,
+)
 from rapidfoam.postproc.yplus import find_yplus_files, read_yplus
 from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats, stl_analyze_full, stl_info
 from rapidfoam.web.ssh_client import ClusterSSHClient
@@ -2251,6 +2256,70 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
     yplus_target = _yplus_target_from_config(config_dict)
     summary["y_plus"] = _summarise_yplus(yplus_data, yplus_target)
 
+    return {"has_data": True, "case_name": case_name, **summary}
+
+
+@app.get("/api/telemetry/surface")
+async def api_telemetry_surface(case_name: str) -> dict[str, Any]:
+    """Report surface integrity from the surfaceCheck log.
+
+    Report-only: the pipeline only aborts on a defect when
+    ``surface_check.enforce`` is set. A symmetry half model is open along the
+    cut and is exempt from the closure requirement.
+    """
+    if not CASE_NAME_REGEX.match(case_name):
+        raise HTTPException(status_code=400, detail="Invalid case_name")
+
+    surface_text = ""
+    config_dict: Optional[dict[str, Any]] = None
+
+    # 1. Remote cluster first if connected (shared telemetry bundle).
+    if ssh_client.is_connected:
+        bundle = await _read_remote_telemetry(case_name)
+        surface_text = next(
+            (value for path, value in bundle.items() if path.endswith("/log.surfaceCheck")), ""
+        )
+        cfg_text = next(
+            (value for path, value in bundle.items() if path.endswith("/case_config.json")), ""
+        )
+        if cfg_text:
+            try:
+                parsed_cfg = json.loads(cfg_text)
+                if isinstance(parsed_cfg, dict):
+                    config_dict = parsed_cfg
+            except ValueError:
+                config_dict = None
+
+    # 2. Local case directory fallback.
+    local_case = PROJECT_ROOT / "cases" / case_name
+    if not surface_text and (local_case / "log.surfaceCheck").is_file():
+        surface_text = _read_text_tail_lines(local_case / "log.surfaceCheck")
+    if config_dict is None:
+        for candidate in (
+            PROJECT_ROOT / "configs" / f"{case_name}.json",
+            local_case / "case_config.json",
+        ):
+            if candidate.is_file():
+                try:
+                    loaded = json.loads(candidate.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if isinstance(loaded, dict):
+                    config_dict = loaded
+                    break
+
+    if not surface_text:
+        return {
+            "has_data": False,
+            "case_name": case_name,
+            "message": f"No surfaceCheck log found for case '{case_name}'.",
+        }
+
+    summary = check_surface(
+        parse_surfacecheck(surface_text),
+        has_symmetry=_config_has_symmetry(config_dict),
+        **surface_check_policy_from_dict(config_dict),
+    )
     return {"has_data": True, "case_name": case_name, **summary}
 
 

@@ -649,6 +649,140 @@ test('pollTelemetry fetches and renders the mesh-quality endpoint', async () => 
   );
 });
 
+// ------------------------------------------------- Studio surface-integrity panel
+
+const SURFACE_BODY = `
+  <span id="surface-quality-badge"></span>
+  <span id="surface-triangles"></span>
+  <span id="surface-closed"></span>
+  <span id="surface-illegal"></span>
+  <span id="surface-self"></span>
+  <span id="surface-parts"></span>
+  <table><tbody id="surface-region-tbody"></tbody></table>
+  <p id="surface-quality-note"></p>
+`;
+
+test('renderSurfaceQuality shows a Good badge for a clean surface', async () => {
+  const app = await makeApp(SURFACE_BODY);
+  app.renderSurfaceQuality({
+    ok: true,
+    verdict: 'good',
+    verdict_label: 'Good',
+    has_symmetry: false,
+    closed: true,
+    stats: {
+      triangles: 21000,
+      illegal_triangles: 0,
+      self_intersection_checked: true,
+      self_intersecting: false,
+      unconnected_parts: 1,
+      regions: { body: 21000 },
+    },
+    issues: [],
+    warnings: [],
+    note: 'surface integrity OK',
+  });
+  const doc = app._window.document;
+  assert.equal(doc.getElementById('surface-triangles').textContent, (21000).toLocaleString());
+  assert.equal(doc.getElementById('surface-closed').textContent, 'closed');
+  assert.equal(doc.getElementById('surface-illegal').textContent, '0');
+  assert.equal(doc.getElementById('surface-self').textContent, 'no');
+  assert.equal(doc.getElementById('surface-parts').textContent, '1');
+  const badge = doc.getElementById('surface-quality-badge');
+  assert.ok(badge.className.includes('mesh-quality-badge-ok'));
+  assert.equal(badge.textContent, 'Good');
+  assert.ok(doc.getElementById('surface-region-tbody').innerHTML.includes('body'));
+  assert.ok(doc.getElementById('surface-quality-note').textContent.includes('OK'));
+});
+
+test('renderSurfaceQuality flags a bad surface and escapes the region name', async () => {
+  const app = await makeApp(SURFACE_BODY);
+  app.renderSurfaceQuality({
+    ok: false,
+    verdict: 'bad',
+    verdict_label: 'Bad',
+    has_symmetry: false,
+    closed: false,
+    stats: {
+      triangles: 10,
+      illegal_triangles: 2,
+      self_intersection_checked: false,
+      unconnected_parts: 1,
+      regions: { '<img src=x onerror=alert(1)>': 10 },
+    },
+    issues: ['3 illegal (degenerate/duplicate) triangle(s)'],
+    warnings: [],
+    note: '[Bad] 1 surface defect(s): x',
+  });
+  const doc = app._window.document;
+  const badge = doc.getElementById('surface-quality-badge');
+  assert.ok(badge.className.includes('mesh-quality-badge-bad'));
+  assert.ok(badge.textContent.includes('Bad'));
+  assert.ok(badge.textContent.includes('1 concern'));
+  assert.equal(doc.getElementById('surface-closed').textContent, 'open');
+  assert.equal(doc.getElementById('surface-self').textContent, '--');
+  assert.ok(!doc.getElementById('surface-region-tbody').innerHTML.includes('<img'));
+});
+
+test('renderSurfaceQuality labels a symmetry half model open surface', async () => {
+  const app = await makeApp(SURFACE_BODY);
+  app.renderSurfaceQuality({
+    ok: true, verdict: 'good', verdict_label: 'Good', has_symmetry: true, closed: false,
+    stats: {}, issues: [], warnings: [], note: 'surface integrity OK',
+  });
+  assert.equal(
+    app._window.document.getElementById('surface-closed').textContent,
+    'open (symmetry)',
+  );
+});
+
+test('resetSurfaceQuality clears the panel and shows a message', async () => {
+  const app = await makeApp(SURFACE_BODY);
+  app.renderSurfaceQuality({
+    ok: true, verdict: 'good', stats: { triangles: 5 }, regions: {},
+    issues: [], warnings: [], note: 'x',
+  });
+  app.resetSurfaceQuality('no logs');
+  const doc = app._window.document;
+  assert.equal(doc.getElementById('surface-triangles').textContent, '--');
+  assert.equal(doc.getElementById('surface-quality-note').textContent, 'no logs');
+  assert.ok(!doc.getElementById('surface-quality-badge').className.includes('mesh-quality-badge-ok'));
+});
+
+test('pollTelemetry fetches and renders the surface-integrity endpoint', async () => {
+  const app = await makeApp(`
+    <select id="telemetry-case-select"><option value="case_a" selected>case_a</option></select>
+    <span id="telemetry-error-banner"></span>
+    <div id="telemetry-convergence-pill"><span class="pill-text"></span></div>
+    ${SURFACE_BODY}
+  `);
+  const calls = [];
+  app._window.console.error = () => {};
+  app._window.fetch = async (url) => {
+    calls.push(String(url));
+    if (String(url).includes('/api/telemetry/surface')) {
+      return {
+        ok: true,
+        json: async () => ({
+          has_data: true, ok: true, verdict: 'good', verdict_label: 'Good', closed: true,
+          stats: {
+            triangles: 7, illegal_triangles: 0, self_intersection_checked: true,
+            self_intersecting: false, unconnected_parts: 1,
+          },
+          issues: [], warnings: [], note: 'ok',
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ has_data: false }) };
+  };
+  await app.pollTelemetry();
+  assert.ok(calls.some((u) => u.includes('/api/telemetry/surface')));
+  assert.equal(
+    app._window.document.getElementById('surface-triangles').textContent,
+    (7).toLocaleString(),
+  );
+});
+
 test('updateDomainBoxVisualization refreshes the auto-size preview from the payload', async () => {
   const app = await makeApp('<span id="cfg-layer-preview"></span><span id="cfg-auto-size-preview"></span>');
   let updated = false;

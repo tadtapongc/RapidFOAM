@@ -258,6 +258,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
     },
 
+    # Pre-mesh surface integrity gate (surfaceCheck). Runs before meshing and
+    # aborts on leaking/self-intersecting/illegal geometry so a dirty CAD export
+    # fails fast instead of after a long snappyHexMesh run. A symmetry half model
+    # is open along the cut and is exempt from the closure requirement.
+    "surface_check": {
+        "enabled": True,
+        "enforce": False,                  # abort the run on defects; false = run + report only
+        "check_self_intersection": True,   # -checkSelfIntersection (slower on big meshes)
+        "allow_open": False,               # permit an open surface without a symmetry plane
+        "max_illegal_triangles": 0,
+        "max_unconnected_parts": 1,
+    },
+
     # potentialFoam
     "potential_flow": {
         "nNonOrthogonalCorrectors": 10,
@@ -478,6 +491,15 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
                     errors.append(
                         f"mesh_quality.verdict_bands.{metric}.good/caution must be finite numbers"
                     )
+    surface_check = cfg.get("surface_check", {})
+    for key in ("enabled", "enforce", "check_self_intersection", "allow_open"):
+        if key in surface_check and not isinstance(surface_check[key], bool):
+            errors.append(f"surface_check.{key} must be true or false")
+    for key in ("max_illegal_triangles", "max_unconnected_parts"):
+        value = surface_check.get(key)
+        if value is not None and (not isinstance(value, int)
+                                  or isinstance(value, bool) or value < 0):
+            errors.append(f"surface_check.{key} must be an integer ≥ 0")
     for section, keys in {
         "parallel": ("n_procs",), "slurm": ("nodes", "cpus_per_task"),
         "mesh_params": ("maxGlobalCells", "maxLocalCells", "nCellsBetweenLevels"),

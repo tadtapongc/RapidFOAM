@@ -22,6 +22,7 @@ RapidFOAM streamlines the OpenFOAM workflow for external vehicle aerodynamics: C
 - **Symmetry Plane Support**: Half-car simulations (e.g. `x = 0`) cut mesh cell count roughly in half, with automatic 2x force scaling in summaries and comparison tables.
 - **Web Studio Interface**: Browser-based UI with Three.js 3D domain visualization, interactive parameter editor, real-time convergence charts, and remote SLURM cluster job submission over SSH.
 - **Full Aerodynamic Telemetry**: Force/moment component breakdown, coefficients (`Cd`, `Cl`, `Cs`, `CmPitch`, `CmRoll`, `CmYaw`), 2D/3D aero-load views, aero balance / center of pressure, and a post-run reference editor for recomputing coefficients without re-running the solver.
+- **Surface Integrity Report**: Runs `surfaceCheck` on every STL before meshing and reports closure/open edges, self-intersections, illegal triangles and part count in the Studio and via `read_forces.py --surface`. Report-only by default (`surface_check.enforce` aborts the run on a defect); symmetry half models are exempt from the closure requirement.
 - **Mesh-Quality Verification**: Parses the `checkMesh` log and snappyHexMesh's per-patch layer table to report non-orthogonality, skewness, aspect ratio, concave cells, boundary closure and boundary-layer coverage, then rolls them into a tiered Good/Usable/Marginal/Bad verdict. Cross-references the realised `yPlus` output against the layer sizing target.
 - **Geometry-Adaptive Meshing**: Streaming STL analysis drives feature-based surface/edge auto-sizing (so small features are resolved without coarsening the preset) and derives `resolveFeatureAngle` from the crease distribution so real aero edges snap while smooth tessellation does not.
 - **Remote Case Management**: Submit, monitor and gracefully cancel SLURM jobs; download finished cases from the cluster with live progress (streamed and published atomically, so an interrupted transfer never leaves a partial case).
@@ -178,7 +179,7 @@ cd cases/front_wing_v1
 sbatch run.sh
 ```
 
-The script executes the standard OpenFOAM external aerodynamics pipeline:
+`Allrun` and `Allrun.parallel` (and `run.sh`) first run a `surfaceCheck` integrity check on every STL — report-only by default, aborting on a defect when `surface_check.enforce` is set (see `surface_check` below). They then execute the standard OpenFOAM external aerodynamics pipeline:
 1. `surfaceFeatureExtract` (extracts feature edges to `.eMesh`)
 2. `blockMesh` (creates background hexahedral mesh)
 3. `decomposePar` (splits domain across MPI ranks)
@@ -218,6 +219,9 @@ python read_forces.py --yplus
 
 # Verify mesh quality from the checkMesh + snappyHexMesh logs (exit 0 if ok, 2 if concerns):
 python read_forces.py --mesh
+
+# Verify surface integrity from the surfaceCheck log (exit 0 if ok, 2 if concerns):
+python read_forces.py --surface
 ```
 
 The force summary also prints a one-line near-wall y+ note (patch averages vs. the
@@ -245,6 +249,10 @@ Key settings available in `configs/config.json`:
 | `ground_clearance` | `float` | Relative road gap in meters below lowest STL point | Lowest vertex |
 | `ground_plane` | `float` | Fixed CAD elevation coordinate of ground (takes precedence over clearance) | `null` |
 | `parallel.n_procs` | `int` | Number of CPU cores for MPI decomposition | `10` |
+| `surface_check.enabled` | `bool` | Run `surfaceCheck` before meshing and report it | `true` |
+| `surface_check.enforce` | `bool` | Abort the run on a surface defect (report-only when false) | `false` |
+| `surface_check.check_self_intersection` | `bool` | Also check self-intersection (slower on large meshes) | `true` |
+| `surface_check.allow_open` | `bool` | Permit an open surface without a symmetry plane | `false` |
 
 ### Mesh Fidelity Presets
 
@@ -363,6 +371,7 @@ RapidFOAM/
 │   │   ├── residuals.py# Residual parser
 │   │   ├── yplus.py    # yPlus.dat reader and target verification
 │   │   ├── checkmesh.py# checkMesh + layer-coverage parser & tiered verdict
+│   │   ├── surfacecheck.py# surfaceCheck integrity parser & pipeline gate
 │   │   └── convergence_monitor.py # Standalone convergence auto-stop monitor
 │   └── web/            # RapidFOAM Web Studio
 │       ├── server.py   # FastAPI backend & static file server

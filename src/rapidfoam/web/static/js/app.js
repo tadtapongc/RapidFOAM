@@ -3219,7 +3219,23 @@ class CFDApp {
         if (!isStale()) this.showTelemetryError(err.message);
       }
 
-      // 5. Tail log (guarded against case switches)
+      // 5. Fetch Surface Integrity (surfaceCheck)
+      try {
+        const res = await fetch(`/api/telemetry/surface?case_name=${encodeURIComponent(caseName)}`);
+        if (!res.ok) throw new Error(`Surface integrity request failed (HTTP ${res.status})`);
+        const surfaceData = await res.json();
+        if (isStale()) return;
+        if (surfaceData.has_data) {
+          this.renderSurfaceQuality(surfaceData);
+        } else {
+          this.resetSurfaceQuality(surfaceData && surfaceData.message);
+        }
+      } catch (err) {
+        console.error('Surface integrity telemetry poll failed:', err);
+        if (!isStale()) this.showTelemetryError(err.message);
+      }
+
+      // 6. Tail log (guarded against case switches)
       await this.fetchLogTail(caseName, reqId);
     } finally {
       if (reqId === this.telemetryRequestId) this.telemetryInFlight = false;
@@ -3276,6 +3292,81 @@ class CFDApp {
       this.charts.solverHealthChart.data.datasets.forEach((ds) => { ds.data = []; });
       this.charts.solverHealthChart.update('none');
     }
+  }
+
+  renderSurfaceQuality(data) {
+    const stats = data.stats || {};
+    const num = (value) => (
+      value === null || value === undefined || !isFinite(Number(value)) ? null : Number(value)
+    );
+
+    const triangles = num(stats.triangles);
+    this.setValText('surface-triangles', triangles === null ? '--' : triangles.toLocaleString());
+
+    const closed = data.closed;
+    let surfaceState = '--';
+    if (closed === true) surfaceState = 'closed';
+    else if (closed === false) surfaceState = data.has_symmetry ? 'open (symmetry)' : 'open';
+    this.setValText('surface-closed', surfaceState);
+
+    const illegal = num(stats.illegal_triangles);
+    this.setValText('surface-illegal', illegal === null ? '--' : illegal.toLocaleString());
+    this.setValText(
+      'surface-self',
+      stats.self_intersection_checked ? (stats.self_intersecting ? 'yes' : 'no') : '--',
+    );
+
+    const parts = num(stats.unconnected_parts);
+    this.setValText('surface-parts', parts === null ? '--' : parts.toLocaleString());
+
+    const issues = Array.isArray(data.issues) ? data.issues : [];
+    const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+    const verdict = data.verdict || (data.ok ? 'good' : 'bad');
+    const verdictLabel = data.verdict_label || '--';
+    const badge = document.getElementById('surface-quality-badge');
+    if (badge) {
+      const badgeClass = {
+        good: 'mesh-quality-badge-ok',
+        concern: 'mesh-quality-badge-warn',
+        bad: 'mesh-quality-badge-bad',
+        unknown: '',
+      }[verdict] || '';
+      badge.className = `badge badge-subtle ${badgeClass}`.trim();
+      const count = issues.length + warnings.length;
+      const suffix = count ? ` · ${count} concern${count === 1 ? '' : 's'}` : '';
+      badge.textContent = verdictLabel === '--' ? '--' : `${verdictLabel}${suffix}`;
+    }
+
+    const regionTbody = document.getElementById('surface-region-tbody');
+    if (regionTbody) {
+      const regions = stats.regions || {};
+      const names = Object.keys(regions).sort();
+      if (!names.length) {
+        regionTbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted">No region data</td></tr>';
+      } else {
+        regionTbody.innerHTML = names.map((name) => (
+          `<tr><td>${this.escapeHtml(name)}</td>`
+          + `<td class="monospace">${Number(regions[name]).toLocaleString()}</td></tr>`
+        )).join('');
+      }
+    }
+
+    this.setValText('surface-quality-note', data.note || '');
+  }
+
+  resetSurfaceQuality(message) {
+    ['surface-triangles', 'surface-closed', 'surface-illegal', 'surface-self', 'surface-parts']
+      .forEach((id) => { this.setValText(id, '--'); });
+    const badge = document.getElementById('surface-quality-badge');
+    if (badge) {
+      badge.className = 'badge badge-subtle';
+      badge.textContent = '--';
+    }
+    const regionTbody = document.getElementById('surface-region-tbody');
+    if (regionTbody) {
+      regionTbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted">No region data</td></tr>';
+    }
+    this.setValText('surface-quality-note', message || 'No surface report yet.');
   }
 
   renderMeshQuality(data) {

@@ -5,6 +5,26 @@ All notable changes to RapidFOAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Surface-integrity reporting**: the generated `Allrun`, `Allrun.parallel` and
+  `run.sh` run `surfaceCheck` on every STL *before* meshing and write
+  `log.surfaceCheck`. `rapidfoam.postproc.surfacecheck` parses it (closure/open
+  edges, self-intersection count, illegal triangles, unconnected parts,
+  normal-orientation zones, triangle quality/edge lengths) into a
+  Good/Concern/Bad verdict, shown in a new **Surface Integrity** Studio panel and
+  via `read_forces.py --surface` (exit 0 ok, 2 concerns) and
+  `GET /api/telemetry/surface`. A symmetry half model is open along the cut by
+  construction and is exempt from the closure requirement.
+- **Optional enforcement**: `surface_check.enforce` (default **false**) makes the
+  pipeline *abort* on leaking/self-intersecting/illegal geometry. Off, the check is
+  report-only and never stops the run; when enforcing, symmetry and
+  `surface_check.allow_open` are exempt from the closure check.
+- New `surface_check` config section (`enabled`, `enforce`, `check_self_intersection`,
+  `allow_open`, `max_illegal_triangles`, `max_unconnected_parts`), validated and
+  documented.
+
 ## [1.5.0] - 2026-09-28
 
 ### Added

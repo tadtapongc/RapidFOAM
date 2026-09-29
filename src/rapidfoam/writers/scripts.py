@@ -203,6 +203,56 @@ def write_scripts(cfg: dict[str, Any], case_dir: Path) -> None:
         "$HOME/OpenFOAM/OpenFOAM-v2606/etc/bashrc"
     )
 
+    # ---- Surface integrity check (surfaceCheck) ----
+    # Runs before meshing so the report exists for the Studio. surfaceCheck
+    # always exits 0, so enforcement gates on its log; when
+    # surface_check.enforce is off the run is report-only and never aborts.
+    # A symmetry half model is open along the cut, so closure is only required
+    # when neither a symmetry plane nor allow_open applies.
+    surface_check = cfg.get("surface_check", {})
+    if not isinstance(surface_check, dict):
+        surface_check = {}
+    surface_enabled = bool(surface_check.get("enabled", True))
+    surface_enforce = bool(surface_check.get("enforce", False))
+    surface_self_flag = " -checkSelfIntersection" if surface_check.get("check_self_intersection", True) else ""
+    symmetry_plane = cfg.get("symmetry_plane")
+    if symmetry_plane is None:
+        symmetry_plane = cfg.get("centerline")
+    allow_open = bool(surface_check.get("allow_open", False)) or symmetry_plane is not None
+
+    if surface_enforce:
+        open_gate = "" if allow_open else """
+if grep -q "Surface is not closed" log.surfaceCheck; then
+    echo "ERROR: surface is not closed (leaking geometry). Supply a watertight STL or set surface_check.allow_open (see log.surfaceCheck)." >&2
+    exit 1
+fi"""
+        open_note = "# Open surface allowed (symmetry half model / allow_open)." if allow_open else ""
+        surface_tail = f"""
+if grep -q "Surface is self-intersecting at" log.surfaceCheck; then
+    echo "ERROR: surface is self-intersecting - repair the CAD (see log.surfaceCheck)." >&2
+    exit 1
+fi
+if grep -Eq "Surface has [1-9][0-9]* illegal triangles" log.surfaceCheck; then
+    echo "ERROR: surface has illegal triangles - repair the CAD (see log.surfaceCheck)." >&2
+    exit 1
+fi{open_gate}
+{open_note}
+"""
+    else:
+        surface_tail = (
+            '\necho "Surface check: report-only (surface_check.enforce is off) - '
+            'see log.surfaceCheck."\n'
+        )
+
+    surface_block = "" if not surface_enabled else f"""
+# --- Surface integrity check (surfaceCheck) ---
+: > log.surfaceCheck
+for stl in constant/triSurface/*.stl; do
+    echo "surfaceCheck: $stl" >> log.surfaceCheck
+    surfaceCheck{surface_self_flag} "$stl" >> log.surfaceCheck 2>&1
+done{surface_tail}
+"""
+
     # ---- convergence_monitor.py (self-contained) ----
     _write_script(
         case_dir / "convergence_monitor.py",
@@ -233,7 +283,7 @@ elif [ -d "/tmp" ] && [ -w "/tmp" ]; then
     export OMPI_MCA_pmix_server_tmpdir="/tmp"
 fi
 export OMPI_MCA_shmem_mmap_enable_nfs_warning=0
-
+{surface_block}
 # Mesh
 runApplication surfaceFeatureExtract
 runApplication blockMesh
@@ -286,7 +336,7 @@ cd "${{0%/*}}" || exit
 if [ -f system/controlDict ]; then
     sed -i 's/stopAt.*writeNow/stopAt          endTime/' system/controlDict
 fi
-
+{surface_block}
 runApplication surfaceFeatureExtract
 runApplication blockMesh
 runApplication snappyHexMesh -overwrite -noFunctionObjects
@@ -420,7 +470,7 @@ set -e
 if [ -f system/controlDict ]; then
     sed -i 's/stopAt.*writeNow/stopAt          endTime/' system/controlDict
 fi
-
+{surface_block}
 # ======================== MESH ========================
 echo ">>> Running surfaceFeatureExtract"
 surfaceFeatureExtract > log.surfaceFeatureExtract 2>&1

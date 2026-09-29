@@ -28,6 +28,10 @@ class ShellScriptsTest(unittest.TestCase):
         self.case = self.root / "case with spaces"
         (self.case / "system").mkdir(parents=True)
         (self.case / "system/controlDict").write_text("stopAt endTime;\n")
+        (self.case / "constant/triSurface").mkdir(parents=True)
+        (self.case / "constant/triSurface/sample.stl").write_text(
+            "solid sample\nendsolid sample\n"
+        )
         self.scratch = self.root / "scratch"
         self.scratch.mkdir()
         runfunctions = self.root / "foam/bin/tools/RunFunctions"
@@ -61,6 +65,27 @@ case "$name" in
         if [ "${RECONSTRUCT_STATUS:-0}" -ne 0 ]; then exit "$RECONSTRUCT_STATUS"; fi
         cp processor0/state reconstructed
         ;;
+    surfaceCheck)
+        case "${SURFACE_MODE:-}" in
+            open)
+                echo "Surface is not closed since not all edges connected to two faces:"
+                echo "    connected to one face : 420"
+                echo "    connected to >2 faces : 0"
+                ;;
+            self)
+                echo "Surface is closed. All edges connected to two faces."
+                echo "Surface is self-intersecting at 3 locations."
+                ;;
+            illegal)
+                echo "Surface has 3 illegal triangles."
+                ;;
+            *)
+                echo "Surface has no illegal triangles."
+                echo "Surface is closed. All edges connected to two faces."
+                echo "Number of unconnected parts : 1"
+                ;;
+        esac
+        ;;
     mpirun)
         shift 2
         exec "$@"
@@ -81,7 +106,7 @@ case "$name" in
 esac
 ''')
         tool.chmod(0o755)
-        for name in ("surfaceFeatureExtract", "blockMesh", "decomposePar", "snappyHexMesh",
+        for name in ("surfaceFeatureExtract", "surfaceCheck", "blockMesh", "decomposePar", "snappyHexMesh",
                      "reconstructParMesh", "checkMesh", "renumberMesh", "potentialFoam",
                      "simpleFoam", "reconstructPar", "mpirun", "python3", "rsync", "module"):
             (self.bin / name).symlink_to(tool)
@@ -90,12 +115,15 @@ esac
                     "SLURM_NTASKS": "2", "TMPDIR": str(self.scratch),
                     "HARNESS_ROOT": str(self.root), "ORIG_CASE": str(self.case),
                     "FOAM_INST_DIR": "", "FAIL_STAGE": "", "COPYBACK_FAIL": "0",
+                    "SURFACE_MODE": "",
                     "WAIT_SOLVER": "0", "SOLVER_STATUS": "0", "RECONSTRUCT_STATUS": "0"}
 
-    def generate(self):
+    def generate(self, surface=None):
         cfg = copy.deepcopy(DEFAULT_CONFIG)
         cfg["parallel"]["n_procs"] = 2
         cfg["slurm"].update(openfoam_source=None, openfoam_module=None)
+        if surface:
+            cfg["surface_check"].update(surface)
         write_scripts(cfg, self.case)
 
     def run_script(self, name, **env):
@@ -163,6 +191,43 @@ esac
         self.assertEqual(result.returncode, 31, result.stdout+result.stderr)
         self.assertTrue((self.case/"processor0/state").exists())
         self.assertFalse((self.case/"reconstructed").exists())
+
+    def test_surface_check_gate_passes_on_clean_geometry(self):
+        self.generate()
+        result = self.run_script("run.sh")
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertTrue((self.case/"log.surfaceCheck").exists())
+        self.assertTrue((self.case/"reconstructed").exists())
+
+    def test_surface_check_report_only_does_not_stop_on_open_geometry(self):
+        # Default surface_check.enforce is off: the run reports but continues.
+        self.generate()
+        result = self.run_script("run.sh", SURFACE_MODE="open")
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertTrue((self.case/"log.surfaceCheck").exists())
+        self.assertTrue((self.case/"reconstructed").exists())
+        self.assertIn("report-only", result.stdout)
+
+    def test_surface_check_enforce_aborts_on_open_geometry(self):
+        self.generate(surface={"enforce": True})
+        result = self.run_script("run.sh", SURFACE_MODE="open")
+        self.assertNotEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertFalse((self.case/"processor0").exists())
+        self.assertIn("not closed", result.stderr)
+
+    def test_surface_check_enforce_aborts_on_self_intersection(self):
+        self.generate(surface={"enforce": True})
+        result = self.run_script("Allrun", SURFACE_MODE="self")
+        self.assertNotEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertFalse((self.case/"processor0").exists())
+        self.assertIn("self-intersecting", result.stderr)
+
+    def test_surface_check_enforce_aborts_on_illegal_triangles(self):
+        self.generate(surface={"enforce": True})
+        result = self.run_script("Allrun.parallel", SURFACE_MODE="illegal")
+        self.assertNotEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertFalse((self.case/"processor0").exists())
+        self.assertIn("illegal triangles", result.stderr)
 
     def test_sigterm_attempts_recovery_without_losing_failed_results(self):
         self.generate()
