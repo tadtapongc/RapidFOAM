@@ -121,10 +121,16 @@ esac
                     "SURFACE_MODE": "",
                     "WAIT_SOLVER": "0", "SOLVER_STATUS": "0", "RECONSTRUCT_STATUS": "0"}
 
-    def generate(self, surface=None):
+    def generate(self, surface=None, full_model=False):
         cfg = copy.deepcopy(DEFAULT_CONFIG)
         cfg["parallel"]["n_procs"] = 2
         cfg["slurm"].update(openfoam_source=None, openfoam_module=None)
+        if full_model:
+            # No symmetry face -> a full model, so an open surface is a leak.
+            cfg["domain_faces"] = {
+                "-x": "farField", "+x": "farField", "-y": "ground",
+                "+y": "farField", "+z": "inlet", "-z": "outlet",
+            }
         if surface:
             cfg["surface_check"].update(surface)
         write_scripts(cfg, self.case)
@@ -212,11 +218,18 @@ esac
         self.assertIn("report-only", result.stdout)
 
     def test_surface_check_enforce_aborts_on_open_geometry(self):
-        self.generate(surface={"enforce": True})
+        self.generate(surface={"enforce": True}, full_model=True)
         result = self.run_script("run.sh", SURFACE_MODE="open")
         self.assertNotEqual(result.returncode, 0, result.stdout+result.stderr)
         self.assertFalse((self.case/"processor0").exists())
         self.assertIn("not closed", result.stderr)
+
+    def test_surface_check_enforce_exempts_default_half_model(self):
+        # Default config assigns a symmetry face, so an open cut is legitimate.
+        self.generate(surface={"enforce": True})
+        result = self.run_script("run.sh", SURFACE_MODE="open")
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertIn("Open surface allowed", result.stdout)
 
     def test_surface_check_enforce_aborts_on_self_intersection(self):
         self.generate(surface={"enforce": True})
