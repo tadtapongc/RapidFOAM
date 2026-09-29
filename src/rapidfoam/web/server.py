@@ -9,7 +9,6 @@ import json
 import logging
 import math
 import os
-import re
 import shlex
 import shutil
 import sys
@@ -25,14 +24,12 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 from rapidfoam import __version__
 from rapidfoam.config import DEFAULT_CONFIG, effective_config, find_stl, user_set, validate
 from rapidfoam.core import caseconfig
 from rapidfoam.meshing.presets import apply_fidelity_preset
 from rapidfoam.geometry import (
-    FIDELITY_PRESETS,
     compute_domain_box,
     flow_axis_index_sign,
     up_axis_index,
@@ -67,7 +64,6 @@ from rapidfoam.postproc.surfacecheck import (
 )
 from rapidfoam.postproc.yplus import find_yplus_files, read_yplus
 from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats, stl_analyze_full, stl_info
-from rapidfoam.web.ssh_client import ClusterSSHClient
 from rapidfoam.web.services.telemetry import (
     _read_yplus_texts,
     _summarise_yplus,
@@ -89,105 +85,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ssh_client = ClusterSSHClient()
-CREDENTIALS_FILE = Path.home() / ".rapidfoam_cluster.json"
-# Backwards compatibility: migrate from old file if exists
-_OLD_CREDENTIALS_FILE = Path.home() / ".cfd_gen_cluster.json"
-if not CREDENTIALS_FILE.exists() and _OLD_CREDENTIALS_FILE.exists():
-    try:
-        shutil.copy2(_OLD_CREDENTIALS_FILE, CREDENTIALS_FILE)
-    except Exception:
-        pass
-PROJECT_ROOT = Path.cwd()
+from rapidfoam.web.routers import cluster as _cluster_router
+from rapidfoam.web.routers import config as _config_router
+from rapidfoam.web.routers.cluster import (  # noqa: F401
+    api_cluster_connect,
+    api_cluster_disconnect,
+    api_cluster_status,
+    api_get_saved_config,
+)
+from rapidfoam.web.routers.config import (  # noqa: F401
+    api_config_defaults,
+    api_config_load_file,
+    api_config_templates,
+)
+from rapidfoam.web.state import (  # noqa: F401
+    ALLOWED_LOG_TYPES,
+    CASE_NAME_REGEX,
+    JOB_ID_REGEX,
+    PROJECT_ROOT,
+    _download_progress,
+    _download_progress_lock,
+    _get_download_progress,
+    _list_download_progress,
+    _set_download_progress,
+    get_saved_cluster_config,
+    save_cluster_config,
+    ssh_client,
+)
 
-CASE_NAME_REGEX = re.compile(r"^[A-Za-z0-9_-]+$")
-JOB_ID_REGEX = re.compile(r"^[0-9]+$")
-ALLOWED_LOG_TYPES = {
-    "simpleFoam",
-    "convergenceMonitor",
-    "snappyHexMesh",
-    "surfaceFeatureExtract",
-    "blockMesh",
-    "checkMesh",
-    "renumberMesh",
-    "potentialFoam",
-}
-
-# In-memory progress for case downloads (case_name -> snapshot)
-_download_progress: dict[str, dict[str, Any]] = {}
-_download_progress_lock = threading.Lock()
-
-
-def _set_download_progress(case_name: str, **fields: Any) -> None:
-    with _download_progress_lock:
-        _download_progress.setdefault(case_name, {}).update(fields)
-
-
-def _get_download_progress(case_name: str) -> dict[str, Any]:
-    with _download_progress_lock:
-        return dict(_download_progress.get(case_name, {"active": False}))
-
-
-def _list_download_progress(active_only: bool = False) -> list[dict[str, Any]]:
-    with _download_progress_lock:
-        items: list[dict[str, Any]] = []
-        for name, state in _download_progress.items():
-            entry = {"case_name": name, **state}
-            if active_only and not entry.get("active"):
-                continue
-            items.append(entry)
-        return items
-
-
-def get_saved_cluster_config() -> dict[str, Any]:
-    """Load cached cluster credentials if available."""
-    if CREDENTIALS_FILE.exists():
-        try:
-            return json.loads(CREDENTIALS_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {
-        "host": "",
-        "port": 22,
-        "username": "",
-        "remote_repo_path": "",
-        "save_password": True,
-    }
-
-
-def _restrict_file_access(path: Path) -> None:
-    """Best-effort restriction of a credential file to the current user."""
-    try:
-        path.chmod(0o600)
-    except Exception:
-        pass
-    if os.name == "nt":
-        try:
-            import getpass
-            import subprocess
-
-            user = getpass.getuser()
-            subprocess.run(
-                ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
-                capture_output=True,
-                check=False,
-            )
-        except Exception:
-            pass
-
-
-def save_cluster_config(cfg: dict[str, Any]) -> None:
-    """Save cluster credentials safely on user machine."""
-    try:
-        CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        to_save = dict(cfg)
-        if not to_save.get("save_password"):
-            to_save.pop("password", None)
-        CREDENTIALS_FILE.write_text(json.dumps(to_save, indent=2), encoding="utf-8")
-        _restrict_file_access(CREDENTIALS_FILE)
-    except Exception as exc:
-        log.warning("Could not persist cluster credentials: %s", exc)
-
+app.include_router(_cluster_router.router)
+app.include_router(_config_router.router)
 
 def merge_config_with_defaults(raw_cfg: dict[str, Any]) -> dict[str, Any]:
     """Merge user configuration and selective overrides on top of DEFAULT_CONFIG."""
@@ -234,47 +161,15 @@ def layer_preview(
 # Pydantic Request Models
 # -------------------------------------------------------------
 
-class SSHConnectRequest(BaseModel):
-    host: str = ""
-    port: int = 22
-    username: str = ""
-    password: Optional[str] = None
-    key_path: Optional[str] = None
-    remote_repo_path: str = ""
-    save_password: bool = True
+from rapidfoam.web.schemas import (  # noqa: F401
+    CaseDownloadRequest,
+    DomainBoxRequest,
+    GenerateCaseRequest,
+    JobCancelRequest,
+    JobSubmitRequest,
+    SSHConnectRequest,
+)
 
-
-class JobSubmitRequest(BaseModel):
-    case_name: str
-
-
-class JobCancelRequest(BaseModel):
-    job_id: str
-
-
-class CaseDownloadRequest(BaseModel):
-    case_name: str
-    overwrite: bool = False
-
-
-class DomainBoxRequest(BaseModel):
-    config: dict[str, Any]
-    bounds: Optional[dict[str, list[float]]] = None
-
-
-class GenerateCaseRequest(BaseModel):
-    config: dict[str, Any]
-    upload_to_cluster: bool = False
-    generate_remotely: bool = False
-    submit_slurm: bool = False
-    # Default to a pure validation request so a caller that forgets to set an
-    # explicit action can never be surprised by filesystem mutation.
-    generate_locally: bool = False
-
-
-# -------------------------------------------------------------
-# REST API Endpoints
-# -------------------------------------------------------------
 
 @app.post("/api/geometry/domain-box")
 async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
@@ -339,159 +234,6 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-
-
-@app.get("/api/cluster/saved-config")
-async def api_get_saved_config() -> dict[str, Any]:
-    """Get cached connection settings without exposing password in plaintext."""
-    cfg = get_saved_cluster_config()
-    return {
-        "host": cfg.get("host", ""),
-        "port": cfg.get("port", 22),
-        "username": cfg.get("username", ""),
-        "remote_repo_path": cfg.get("remote_repo_path", ""),
-        "has_saved_password": bool(cfg.get("password")),
-        "key_path": cfg.get("key_path", ""),
-    }
-
-
-@app.post("/api/cluster/connect")
-async def api_cluster_connect(req: SSHConnectRequest) -> dict[str, Any]:
-    """Connect to the remote HPC cluster and test the environment."""
-    saved_cfg = get_saved_cluster_config()
-    password_to_use = req.password
-    # If no password was provided but one is stored locally for this host/user, use it
-    if not password_to_use and saved_cfg.get("password"):
-        if (not req.host or req.host == saved_cfg.get("host")) and (not req.username or req.username == saved_cfg.get("username")):
-            password_to_use = saved_cfg.get("password")
-
-    try:
-        res = await asyncio.to_thread(
-            ssh_client.connect,
-            host=req.host,
-            username=req.username,
-            password=password_to_use,
-            key_path=req.key_path,
-            port=req.port,
-            remote_repo_path=req.remote_repo_path,
-        )
-        save_cluster_config({
-            "host": req.host,
-            "port": req.port,
-            "username": req.username,
-            "password": password_to_use if req.save_password else None,
-            "key_path": req.key_path,
-            "remote_repo_path": req.remote_repo_path,
-            "save_password": req.save_password,
-        })
-        return res
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@app.get("/api/cluster/status")
-async def api_cluster_status() -> dict[str, Any]:
-    """Get active SSH session and SLURM queue status."""
-    connected = ssh_client.is_connected
-    jobs = []
-    if connected:
-        try:
-            jobs = await asyncio.to_thread(ssh_client.get_slurm_queue)
-        except Exception:
-            pass
-
-    return {
-        "connected": connected,
-        "host": ssh_client.host,
-        "username": ssh_client.username,
-        "remote_repo_path": ssh_client.remote_repo_path,
-        "active_jobs": jobs,
-    }
-
-
-@app.post("/api/cluster/disconnect")
-async def api_cluster_disconnect() -> dict[str, Any]:
-    """Disconnect SSH session."""
-    await asyncio.to_thread(ssh_client.disconnect)
-    return {"connected": False}
-
-
-@app.get("/api/config/schema-defaults")
-async def api_config_defaults() -> dict[str, Any]:
-    """Return default config template and presets for the UI."""
-    return {
-        "default_config": DEFAULT_CONFIG,
-        "fidelity_presets": {
-            name: {
-                "desc": p.get("desc", ""),
-                "cell_estimate": p.get("cell_estimate", ""),
-                "n_cells_target": p.get("n_cells_target", 0),
-                "runtime_estimate": p.get("runtime_estimate", ""),
-                "layers": {
-                    "y_plus_target": p.get("y_plus_target"),
-                    "n_layers": p.get("n_layers"),
-                    "expansion_ratio": p.get("expansion_ratio"),
-                    "ground_layers": p.get("ground_layers", False),
-                },
-                "mesh": {
-                    "cells_per_length": p.get("cells_per_length"),
-                    "base_cell_size": p.get("base_cell_size"),
-                    "surface_level": p.get("surface_level"),
-                    "edge_level": p.get("edge_level"),
-                    "near_wake_level": p.get("near_wake_level"),
-                    "far_wake_level": p.get("far_wake_level"),
-                    "feature_cells": p.get("feature_cells"),
-                    "max_surface_level": p.get("max_surface_level"),
-                    "feature_percentile": p.get("feature_percentile"),
-                },
-                "solver": {
-                    "end_time": p.get("end_time"),
-                    "write_interval": p.get("write_interval"),
-                },
-            }
-            for name, p in FIDELITY_PRESETS.items()
-        },
-    }
-
-
-@app.get("/api/config/templates")
-async def api_config_templates() -> list[dict[str, Any]]:
-    """List available config files in configs/ folder."""
-    cfg_dir = PROJECT_ROOT / "configs"
-    templates = []
-    if cfg_dir.is_dir():
-        for p in sorted(cfg_dir.glob("*.json")):
-            try:
-                content = json.loads(p.read_text(encoding="utf-8"))
-                templates.append({
-                    "filename": p.name,
-                    "case_name": content.get("case_name", p.stem),
-                    "stl_files": content.get("stl_files", []),
-                    "fidelity": content.get("fidelity", "standard"),
-                })
-            except Exception:
-                templates.append({"filename": p.name, "case_name": p.stem, "stl_files": []})
-    return templates
-
-
-@app.get("/api/config/load-file")
-async def api_config_load_file(filename: str = "config.json") -> dict[str, Any]:
-    """Load and return JSON content of a specific config file."""
-    safe_filename = Path(filename).name
-    cfg_dir = (PROJECT_ROOT / "configs").resolve()
-    path = (cfg_dir / safe_filename).resolve()
-    if not path.is_relative_to(cfg_dir) or not path.is_file():
-        raise HTTPException(status_code=404, detail=f"Config file {safe_filename} not found")
-    try:
-        content = json.loads(path.read_text(encoding="utf-8"))
-        merged = merge_config_with_defaults(content)
-        return {
-            "filename": safe_filename,
-            "raw_config": content,
-            "merged_config": merged,
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Error reading config: {exc}")
 
 
 @app.get("/api/stl/list")
