@@ -1,0 +1,155 @@
+#!/bin/bash
+#SBATCH --job-name=golden_test
+#SBATCH --qos=cu_hpc
+#SBATCH --partition=cpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=10
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=3G
+#SBATCH --time=08:00:00
+#SBATCH --output=golden_test_%j.log
+
+echo "=============================================="
+echo "Job ID   : $SLURM_JOB_ID"
+echo "Node     : $(hostname)"
+echo "Cores    : $SLURM_NTASKS"
+echo "QoS      : cu_hpc"
+echo "Started  : $(date)"
+echo "=============================================="
+
+# Load environment
+module purge
+source $HOME/OpenFOAM/OpenFOAM-v2606/etc/bashrc
+
+# Extra safety (if a module defines FOAM_INST_DIR but doesn't source bashrc)
+if [ -n "${FOAM_INST_DIR:-}" ]; then
+    source ${FOAM_INST_DIR}/etc/bashrc 2>/dev/null || true
+fi
+
+# Configure Open MPI to use node-local storage (/dev/shm or /tmp) for shared memory
+# backing files, preventing extreme lock contention and latency on network scratch (NFS/Lustre)
+if [ -d "/dev/shm" ] && [ -w "/dev/shm" ]; then
+    export OMPI_MCA_orte_tmpdir_base="/dev/shm"
+    export OMPI_MCA_pmix_server_tmpdir="/dev/shm"
+elif [ -d "/tmp" ] && [ -w "/tmp" ]; then
+    export OMPI_MCA_orte_tmpdir_base="/tmp"
+    export OMPI_MCA_pmix_server_tmpdir="/tmp"
+fi
+export OMPI_MCA_shmem_mmap_enable_nfs_warning=0
+
+set -e
+stop_monitor() {
+    if [ -n "${MONITOR_PID:-}" ]; then
+        kill "$MONITOR_PID" 2>/dev/null || true
+        wait "$MONITOR_PID" 2>/dev/null || true
+        MONITOR_PID=
+    fi
+}
+trap stop_monitor EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+
+ORIG_DIR=$PWD
+SOLVER_PHASE=0
+RECONSTRUCTION_ATTEMPTED=0
+PRESERVE_PROCESSORS=0
+cd "$ORIG_DIR"
+
+# Ensure interrupted parallel runs attempt reconstruction
+cleanup() {
+    STATUS=$?
+    trap - EXIT
+    stop_monitor
+    echo ">>> Job exiting..."
+    if [ "$SOLVER_PHASE" -eq 1 ] && [ "$RECONSTRUCTION_ATTEMPTED" -eq 0 ] && ls -d processor* > /dev/null 2>&1; then
+        echo ">>> Interrupted! Attempting to reconstruct latest time..."
+        if reconstructPar -latestTime > log.reconstructPar_cleanup 2>&1; then
+            rm -rf processor*
+        else
+            echo ">>> Reconstruction failed; preserving processor results." >&2
+            [ "$STATUS" -ne 0 ] || STATUS=1
+        fi
+    fi
+    echo "=============================================="
+    echo "Job finished at $(date)"
+    echo "=============================================="
+    exit "$STATUS"
+}
+trap cleanup EXIT
+
+# Restore stopAt (in case previous run was stopped by monitor)
+if [ -f system/controlDict ]; then
+    sed -i 's/stopAt.*writeNow/stopAt          endTime/' system/controlDict
+fi
+
+# --- Surface integrity check (surfaceCheck) ---
+: > log.surfaceCheck
+for stl in constant/triSurface/*.stl; do
+    echo "surfaceCheck: $stl" >> log.surfaceCheck
+    surfaceCheck -checkSelfIntersection "$stl" >> log.surfaceCheck 2>&1
+done
+echo "Surface check: report-only (surface_check.enforce is off) - see log.surfaceCheck."
+
+
+# ======================== MESH ========================
+echo ">>> Running surfaceFeatureExtract"
+surfaceFeatureExtract > log.surfaceFeatureExtract 2>&1
+
+echo ">>> Running blockMesh"
+blockMesh > log.blockMesh 2>&1
+
+echo ">>> Decomposing for meshing"
+decomposePar > log.decomposePar 2>&1
+
+echo ">>> Running snappyHexMesh (parallel)"
+mpirun -np $SLURM_NTASKS snappyHexMesh -overwrite -noFunctionObjects -parallel > log.snappyHexMesh 2>&1
+
+if [ -f system/snappyHexMeshDict_layering ]; then
+    echo ">>> Running snappyHexMesh layering pass (quality gate relaxed)"
+    mpirun -np $SLURM_NTASKS snappyHexMesh -overwrite -noFunctionObjects -parallel -dict system/snappyHexMeshDict_layering > log.snappyHexMesh.layering 2>&1
+fi
+
+echo ">>> Checking mesh (parallel)"
+mpirun -np $SLURM_NTASKS checkMesh -allGeometry -allTopology -noFunctionObjects -parallel > log.checkMesh 2>&1
+
+echo ">>> Reconstructing mesh"
+reconstructParMesh -constant > log.reconstructParMesh 2>&1
+rm -rf processor*
+
+echo ">>> Renumbering mesh"
+renumberMesh -overwrite -noFunctionObjects > log.renumberMesh 2>&1
+
+# ======================== SOLVE ========================
+SOLVER_PHASE=1
+echo ">>> Decomposing for solver"
+decomposePar > log.decomposePar.solver 2>&1
+
+echo ">>> Running potentialFoam"
+# potentialFoam only initialises the flow field; a failure is non-fatal but is
+# surfaced so a poor start field is not later mistaken for a solver problem.
+if ! mpirun -np $SLURM_NTASKS potentialFoam -noFunctionObjects -parallel > log.potentialFoam 2>&1; then
+    echo ">>> WARNING: potentialFoam failed (see log.potentialFoam) — continuing with the default initial field." >&2
+fi
+
+echo ">>> Starting convergence monitor"
+python3 ./convergence_monitor.py > log.convergenceMonitor 2>&1 &
+MONITOR_PID=$!
+
+echo ">>> Running simpleFoam"
+SOLVER_STATUS=0
+mpirun -np $SLURM_NTASKS simpleFoam -parallel > log.simpleFoam 2>&1 || SOLVER_STATUS=$?
+
+# Stop monitor
+stop_monitor
+
+echo ">>> Reconstructing results"
+RECONSTRUCTION_ATTEMPTED=1
+if reconstructPar > log.reconstructPar 2>&1; then
+    rm -rf processor*
+else
+    echo ">>> Reconstruction failed; preserving processor results." >&2
+    PRESERVE_PROCESSORS=1
+    [ "$SOLVER_STATUS" -ne 0 ] || SOLVER_STATUS=1
+fi
+exit "$SOLVER_STATUS"

@@ -7,6 +7,7 @@ import math
 import re
 import statistics
 from pathlib import Path
+from typing import Optional
 
 from rapidfoam.geometry import AXIS_MAP as AXIS_MAP, axis_index_sign
 

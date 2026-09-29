@@ -74,3 +74,9 @@ packages = ["src/rapidfoam"]
 line-length = 120
 target-version = "py39"
 
+# High-signal baseline for CI. The broader rule families (UP/BLE/S/SIM/PLR/…)
+# are deliberately not enabled yet; they flag pre-existing style debt that would
+# make the gate red before the refactor lands.
+[tool.ruff.lint]
+select = ["F"]
+
