@@ -122,6 +122,25 @@ def build_mesh_plan(
     )
 
 
+def plan_from_config(cfg: dict[str, Any]) -> MeshPlan:
+    """Build a plan from an already-derived ``cfg`` (no re-derivation).
+
+    Used by the ``writers.mesh`` compatibility shim so callers that hand-build a
+    config keep working while the writers consume a plan.
+    """
+    layers = cfg.get("layers", {})
+    if not isinstance(layers, dict):
+        layers = {}
+    resolved = layers.get("_resolved", {})
+    return MeshPlan(
+        domain_box=cfg.get("domain_box") if isinstance(cfg.get("domain_box"), dict) else {},
+        mesh_params=cfg.get("mesh_params", {}),
+        layers=layers,
+        feature_extract=cfg.get("feature_extract", {}),
+        layer_spec=LayerSpec.from_config(layers, resolved if isinstance(resolved, dict) else {}),
+    )
+
+
 def apply_plan_to_cfg(cfg: dict[str, Any], plan: MeshPlan) -> None:
     """Write a plan's derived values back into ``cfg`` (compatibility shim).
 
@@ -134,4 +153,4 @@ def apply_plan_to_cfg(cfg: dict[str, Any], plan: MeshPlan) -> None:
     cfg["feature_extract"] = copy.deepcopy(dict(plan.feature_extract))
 
 
-__all__ = ["LayerSpec", "MeshPlan", "build_mesh_plan", "apply_plan_to_cfg"]
+__all__ = ["LayerSpec", "MeshPlan", "build_mesh_plan", "plan_from_config", "apply_plan_to_cfg"]

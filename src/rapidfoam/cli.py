@@ -368,13 +368,10 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
             sys.exit(1)
 
     # Write all OpenFOAM files
+    from rapidfoam.meshing.context import build_mesh_context
+    from rapidfoam.meshing.pipeline import emit_mesh_files
     from rapidfoam.writers.constants import write_constant
     from rapidfoam.writers.fields import write_fields
-    from rapidfoam.writers.mesh import (
-        write_block_mesh_dict,
-        write_snappy_hex_mesh_dict,
-        write_surface_feature_extract_dict,
-    )
     from rapidfoam.writers.scripts import write_scripts
     from rapidfoam.writers.solver import (
         write_control_dict,
@@ -383,9 +380,7 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         write_fv_solution,
     )
 
-    write_block_mesh_dict(cfg, case_dir)
-    write_surface_feature_extract_dict(cfg, case_dir)
-    write_snappy_hex_mesh_dict(cfg, case_dir)
+    emit_mesh_files(plan, build_mesh_context(cfg), case_dir)
     write_control_dict(cfg, case_dir)
     write_fv_schemes(cfg, case_dir)
     write_fv_solution(cfg, case_dir)

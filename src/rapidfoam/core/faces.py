@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from rapidfoam.core.axes import flow_axis_index_sign, up_axis_index
 
 
-def face_role(cfg: dict[str, Any], patch_name: str) -> str:
+def patch_role(patches: Mapping[str, str], patch_name: str) -> str:
     """Resolve a patch name to its configured boundary role."""
-    for role, name in cfg["patches"].items():
+    for role, name in patches.items():
         if patch_name == name:
             return role
     return {"farField": "walls"}.get(patch_name, patch_name)
+
+
+def face_role(cfg: dict[str, Any], patch_name: str) -> str:
+    """Resolve a patch name to its configured boundary role."""
+    return patch_role(cfg["patches"], patch_name)
 
 
 def face_assignments(cfg: dict[str, Any]) -> dict[str, str]:
@@ -32,4 +37,4 @@ def face_assignments(cfg: dict[str, Any]) -> dict[str, str]:
     return faces
 
 
-__all__ = ["face_role", "face_assignments"]
+__all__ = ["face_role", "face_assignments", "patch_role"]
