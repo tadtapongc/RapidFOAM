@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from rapidfoam import __version__
 from rapidfoam.config import DEFAULT_CONFIG, effective_config, find_stl, user_set, validate
 from rapidfoam.core import caseconfig
+from rapidfoam.meshing.presets import apply_fidelity_preset
 from rapidfoam.geometry import (
     FIDELITY_PRESETS,
     compute_domain_box,
@@ -202,16 +203,10 @@ def layer_preview(
 ) -> dict[str, Any]:
     """Resolve the near-wall layer spec for the Studio preview without mutating it."""
     preview_cfg = copy.deepcopy(merged)
-    preset = FIDELITY_PRESETS.get(preview_cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"])
-    layers = preview_cfg.setdefault("layers", {})
-    if not user_set(raw_cfg, "layers", "n_layers"):
-        layers["n_layers"] = preset.get("n_layers", layers.get("n_layers"))
-    if not user_set(raw_cfg, "layers", "expansion_ratio"):
-        layers["expansion_ratio"] = preset.get("expansion_ratio", layers.get("expansion_ratio"))
+    # Apply the same preset resolution the generator uses, so the preview can no
+    # longer disagree with the generated case (PAIN_POINTS #1).
+    apply_fidelity_preset(preview_cfg, lambda section, key: user_set(raw_cfg, section, key))
     explicit_first = user_set(raw_cfg, "layers", "first_layer_thickness")
-    if not explicit_first and not user_set(raw_cfg, "layers", "y_plus_target"):
-        if preset.get("y_plus_target") is not None:
-            layers["y_plus_target"] = preset["y_plus_target"]
     mesh_params = compute_mesh_params(
         preview_cfg, bounds, feature_stats=feature_stats, angle_stats=angle_stats,
         explicit_feature_angle=user_set(raw_cfg, "feature_extract", "includedAngle"),

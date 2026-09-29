@@ -222,42 +222,9 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
         cfg, combined_bounds, feature_stats=edge_stats, angle_stats=angle_stats,
         explicit_feature_angle=_is_set("feature_extract", "includedAngle"),
     )
-    # Apply fidelity presets conditionally
-    from rapidfoam.geometry import FIDELITY_PRESETS
-    fidelity = cfg.get("fidelity", "standard")
-    preset = FIDELITY_PRESETS.get(fidelity, FIDELITY_PRESETS["standard"])
-    
-    if not _is_set("solver", "end_time"):
-        cfg["solver"]["end_time"] = preset["end_time"]
-    if not _is_set("layers", "n_layers"):
-        cfg["layers"]["n_layers"] = preset["n_layers"]
-    if not _is_set("layers", "expansion_ratio"):
-        cfg["layers"]["expansion_ratio"] = preset["expansion_ratio"]
-    if "y_plus_target" in preset:
-        if not _is_set("layers", "y_plus_target") and not _is_set("layers", "first_layer_thickness"):
-            cfg["layers"]["y_plus_target"] = preset["y_plus_target"]
-    elif not _is_set("layers", "first_layer_thickness"):
-        cfg["layers"]["first_layer_thickness"] = preset["first_layer_thickness"]
-    if not _is_set("layers", "nLayerIter"):
-        cfg["layers"]["nLayerIter"] = preset.get("nLayerIter", 50)
-    if not _is_set("layers", "nRelaxIter"):
-        cfg["layers"]["nRelaxIter"] = preset.get("nRelaxIter_layers", 10)
-    if not _is_set("layers", "ground_layers"):
-        cfg["layers"]["ground_layers"] = preset.get("ground_layers", False)
-    if not _is_set("solver", "write_interval"):
-        cfg["solver"]["write_interval"] = preset["write_interval"]
-    if not _is_set("snap", "nSolveIter"):
-        cfg["snap"]["nSolveIter"] = preset.get("nSolveIter", 200)
-    if not _is_set("snap", "nFeatureSnapIter"):
-        cfg["snap"]["nFeatureSnapIter"] = preset.get("nFeatureSnapIter", 15)
-        
-    # Preset SLURM time/memory apply unless the user pinned them. Both guards
-    # use user_set so an omitted field follows the fidelity preset (the shipped
-    # config and Studio no longer write concrete values).
-    if not _is_set("slurm", "time"):
-        cfg["slurm"]["time"] = preset.get("slurm_time", "04:00:00")
-    if not _is_set("slurm", "mem_per_cpu"):
-        cfg["slurm"]["mem_per_cpu"] = preset.get("slurm_mem_per_cpu", cfg["slurm"]["mem_per_cpu"])
+    # Apply fidelity presets conditionally (shared with the Studio preview)
+    from rapidfoam.meshing.presets import apply_fidelity_preset
+    apply_fidelity_preset(cfg, _is_set)
 
     layer_resolution = resolve_layers(
         cfg,
