@@ -67,6 +67,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`layers.min_thickness_ratio` removed**: `minThickness` is always the full
   first layer (the quality-gate behaviour the old default already used), dropping
   a fence-sitting knob.
+- **Architecture refactor**: the package is now split into bounded contexts —
+  `core/` (axes, faces, fields, FoamFile primitives, config, caseconfig),
+  `geometry/` (STL I/O + stats), `meshing/` (presets, domain, sizing, grading,
+  layers, `MeshPlan`, writers, pipeline), `casegen/` (builder + case writers),
+  `runtime/` (scripts copied to cases/clusters), `postproc/` (measurement) and
+  `web/` (app, routers, services). Config reads go through one override-aware
+  `core.caseconfig`; mesh derivation goes through the immutable `MeshPlan`; the
+  web server is split into routers/services. The old compatibility shims
+  (`geometry.py`, `writers/*`, `web/server.py`) are removed and the
+  `rapidfoam-studio`/`rapidfoam-web` entry points target `rapidfoam.web.app`.
+- **SLURM walltime/memory follow the fidelity preset**: `time`/`mem_per_cpu` are
+  applied from the preset unless set explicitly — in the CLI, the shipped
+  config, and the Studio (which no longer emits defaults that overrode the
+  preset). `standard` memory is now `2G`.
+- **Full-car symmetry**: a config with an explicit non-symmetry face list is no
+  longer treated as a half model just because `symmetry_plane` is present; the
+  Studio omits `symmetry_plane` when the field is left blank.
+- **New Studio controls**: boundary patch names, surface-integrity check,
+  vehicle geometry (persisted to the case config), background grading and
+  two-pass layering.
+
+### Fixed
+- The `surfaceCheck` enforce gate now recognises an explicit symmetry face (not
+  only `symmetry_plane`), so a default half model is exempt from the closure
+  check instead of aborting on its legitimate cut.
+- Remote telemetry now fetches `log.surfaceCheck`, so the Surface Integrity
+  panel populates for cluster cases.
+- Telemetry reference values honour the `overrides` block, and the CSV export
+  emits the full history instead of the downsampled UI series.
 
 ## [1.5.0] - 2026-09-28
 

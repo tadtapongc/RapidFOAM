@@ -393,33 +393,21 @@ RapidFOAM/
 ├── stl/                # CAD geometry files (ASCII STL in meters)
 ├── cases/              # Generated OpenFOAM case directories
 ├── src/rapidfoam/      # Core RapidFOAM package
-│   ├── config.py       # Config loading, defaults, and input validation
-│   ├── geometry.py     # Domain sizing, fidelity presets, mesh parameters
-│   ├── stl_utils.py    # Streaming ASCII STL inspection and validation
 │   ├── cli.py          # Command-line entry points (setup, forces)
-│   ├── writers/        # OpenFOAM dictionary and execution script generators
-│   │   ├── base.py     # FoamFile headers and formatting helpers
-│   │   ├── constants.py# transportProperties, turbulenceProperties
-│   │   ├── fields.py   # 0/ initial & boundary fields (U, p, k, omega, nut)
-│   │   ├── mesh.py     # blockMeshDict, snappyHexMeshDict, surfaceFeatureExtractDict
-│   │   ├── solver.py   # fvSchemes, fvSolution, controlDict, decomposeParDict
-│   │   └── scripts.py  # Allrun, Allrun.parallel, Allclean, run.sh, convergence_monitor.py
-│   ├── postproc/       # Aerodynamic force analysis & plotting
-│   │   ├── forces.py   # force.dat parser, symmetry scaling, convergence checks
-│   │   ├── plotting.py # Matplotlib static & live convergence plots
-│   │   ├── compare.py  # Multi-case comparison table
-│   │   ├── residuals.py# Residual parser
-│   │   ├── yplus.py    # yPlus.dat reader and target verification
-│   │   ├── checkmesh.py# checkMesh + layer-coverage parser & tiered verdict
-│   │   ├── surfacecheck.py# surfaceCheck integrity parser & pipeline gate
-│   │   └── convergence_monitor.py # Standalone convergence auto-stop monitor
-│   └── web/            # RapidFOAM Web Studio
-│       ├── server.py   # FastAPI backend & static file server
-│       ├── ssh_client.py # Paramiko SSH/SFTP client for remote SLURM clusters
-│       └── static/     # Web Studio UI (Three.js 3D viewport, telemetry graphs)
+│   ├── config.py       # Config loading, defaults, and validation
+│   ├── core/           # Leaf primitives: axes, faces, fields, FoamFile format,
+│   │                   #   config loader, override-aware case-config reader
+│   ├── geometry/       # Streaming ASCII STL I/O, edges/angle statistics (stl.py)
+│   ├── meshing/        # Presets, domain sizing, feature sizing, grading, layers,
+│   │                   #   MeshPlan, mesh writers, emission pipeline
+│   ├── casegen/        # Case assembly: builder + constants/fields/solver/scripts
+│   ├── runtime/        # Standalone scripts copied into cases / uploaded to clusters
+│   ├── postproc/       # Force/residual/y+/checkMesh/surfaceCheck parsers & plots
+│   └── web/            # Web Studio: app.py, state, schemas, routers/, services/,
+│                       #   ssh_client.py, static/ (Three.js viewport, telemetry)
 ├── tests/              # Python unit & regression tests
 │   └── js/             # JSDOM front-end tests (npm test)
-├── docs/               # Historical bug-hunt reports
+├── docs/               # Architecture notes + historical bug-hunt reports
 ├── package.json        # Front-end test tooling (jsdom)
 ├── CHANGELOG.md        # Release history
 ├── run_app.bat         # 1-click launcher for Windows

@@ -60,6 +60,12 @@ build/
 *.egg
 .eggs/
 
+# Lint / test caches
+.ruff_cache/
+.coverage
+htmlcov/
+.pytest_cache/
+
 # Virtual environments
 .venv/
 venv/
