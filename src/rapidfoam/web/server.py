@@ -34,9 +34,7 @@ from rapidfoam.meshing.presets import apply_fidelity_preset
 from rapidfoam.geometry import (
     FIDELITY_PRESETS,
     compute_domain_box,
-    compute_mesh_params,
     flow_axis_index_sign,
-    resolve_layers,
     up_axis_index,
 )
 from rapidfoam.postproc.forces import (
@@ -202,27 +200,26 @@ def layer_preview(
     angle_stats: FeatureAngleStats | None = None,
 ) -> dict[str, Any]:
     """Resolve the near-wall layer spec for the Studio preview without mutating it."""
+    from rapidfoam.meshing.plan import build_mesh_plan
+
     preview_cfg = copy.deepcopy(merged)
-    # Apply the same preset resolution the generator uses, so the preview can no
-    # longer disagree with the generated case (PAIN_POINTS #1).
+    # Apply the same preset resolution and derivation the generator uses, so the
+    # preview can no longer disagree with the generated case (PAIN_POINTS #1).
     apply_fidelity_preset(preview_cfg, lambda section, key: user_set(raw_cfg, section, key))
-    explicit_first = user_set(raw_cfg, "layers", "first_layer_thickness")
-    mesh_params = compute_mesh_params(
-        preview_cfg, bounds, feature_stats=feature_stats, angle_stats=angle_stats,
-        explicit_feature_angle=user_set(raw_cfg, "feature_extract", "includedAngle"),
-    )
-    preview_cfg["mesh_params"] = mesh_params
-    resolved = resolve_layers(
+    plan = build_mesh_plan(
         preview_cfg,
         bounds,
-        explicit_first_layer=explicit_first,
+        feature_stats=feature_stats,
+        angle_stats=angle_stats,
+        explicit_feature_angle=user_set(raw_cfg, "feature_extract", "includedAngle"),
+        explicit_first_layer=user_set(raw_cfg, "layers", "first_layer_thickness"),
         explicit_min_thickness=user_set(raw_cfg, "layers", "min_thickness"),
     )
-    if isinstance(resolved, dict):
-        resolved["auto_size"] = mesh_params.get("auto_size")
-        resolved["feature_angle"] = mesh_params.get("feature_angle")
-        resolved["surface_level"] = mesh_params.get("surface_level")
-        resolved["edge_level"] = mesh_params.get("edge_level")
+    resolved = dict(plan.layer_spec.resolved)
+    resolved["auto_size"] = plan.mesh_params.get("auto_size")
+    resolved["feature_angle"] = plan.mesh_params.get("feature_angle")
+    resolved["surface_level"] = plan.mesh_params.get("surface_level")
+    resolved["edge_level"] = plan.mesh_params.get("edge_level")
     return resolved
 
 

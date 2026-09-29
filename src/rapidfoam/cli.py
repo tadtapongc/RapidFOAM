@@ -102,10 +102,8 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
     from rapidfoam.config import CASE_DIR, STL_DIR, find_stl, load_config, user_set, validate
     from rapidfoam.geometry import (
         compute_domain_box,
-        compute_mesh_params,
         face_assignments,
         face_role,
-        resolve_layers,
         turbulence_values,
         vec_str,
         velocity_vector,
@@ -217,21 +215,22 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
             print(f"  ⚠  STL very close to domain boundary: "
                   f"{axis_labels[i]}_max (clearance: {clearance_max:.3f} m)")
 
-    # Derive mesh parameters from geometry (bounds + feature statistics)
-    cfg["mesh_params"] = compute_mesh_params(
-        cfg, combined_bounds, feature_stats=edge_stats, angle_stats=angle_stats,
-        explicit_feature_angle=_is_set("feature_extract", "includedAngle"),
-    )
-    # Apply fidelity presets conditionally (shared with the Studio preview)
+    # Derive all mesh parameters through the shared plan seam, then apply the
+    # result back to cfg (keeps case_config.json and writers unchanged).
+    from rapidfoam.meshing.plan import apply_plan_to_cfg, build_mesh_plan
     from rapidfoam.meshing.presets import apply_fidelity_preset
     apply_fidelity_preset(cfg, _is_set)
-
-    layer_resolution = resolve_layers(
+    plan = build_mesh_plan(
         cfg,
         combined_bounds,
+        feature_stats=edge_stats,
+        angle_stats=angle_stats,
+        explicit_feature_angle=_is_set("feature_extract", "includedAngle"),
         explicit_first_layer=_is_set("layers", "first_layer_thickness"),
         explicit_min_thickness=_is_set("layers", "min_thickness"),
     )
+    apply_plan_to_cfg(cfg, plan)
+    layer_resolution = dict(plan.layer_spec.resolved)
     if layer_resolution.get("y_plus_target") is not None and _is_set("layers", "first_layer_thickness"):
         print("  ⚠  layers.first_layer_thickness overrides layers.y_plus_target")
 
