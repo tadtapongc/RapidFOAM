@@ -89,7 +89,7 @@ The Web Studio provides a 3D viewport to inspect domain sizing, edit flow condit
   ```bash
   rapidfoam-studio
   # or:
-  python -m rapidfoam.web.server
+  python -m rapidfoam.web.app
   ```
 
 Open `http://127.0.0.1:8000` in your browser.

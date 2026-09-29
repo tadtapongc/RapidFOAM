@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.cli import _do_generate, _do_init
 from rapidfoam.config import load_config, validate
-from rapidfoam.geometry import compute_domain_box, face_assignments
+from rapidfoam.core.faces import face_assignments
+from rapidfoam.meshing.domain import compute_domain_box
 from rapidfoam.postproc.forces import check_convergence, find_force_files, read_forces, is_symmetry_case
 from rapidfoam.postproc.plotting import _force_stats, _rolling_average
 from rapidfoam.postproc.residuals import read_residuals
@@ -287,7 +288,7 @@ class ProjectTest(unittest.TestCase):
             axis_index_sign as forces_axis_index_sign,
         )
         from rapidfoam.postproc.residuals import _dir_time as residuals_dir_time
-        from rapidfoam.geometry import (
+        from rapidfoam.core.axes import (
             AXIS_MAP as G_AXIS_MAP,
             axis_index_sign as geom_axis_index_sign,
         )
@@ -443,7 +444,7 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual([ln for ln in lines if ln.startswith("endsolid")], ["endsolid merged", "endsolid merged"])
 
     def test_symmetry_projection_ignores_non_axis_columns(self):
-        from rapidfoam.web.server import (
+        from rapidfoam.web.services.telemetry import (
             _project_force_columns_for_symmetry,
             _project_moment_columns_for_symmetry,
         )

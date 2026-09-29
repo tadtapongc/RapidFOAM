@@ -9,13 +9,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from rapidfoam.geometry import (
-    face_assignments,
-    turbulence_values,
-    vec_str,
-    velocity_vector,
-)
-from rapidfoam.writers.base import FOOTER, foam_header
+from rapidfoam.core.axes import vec_str
+from rapidfoam.core.faces import face_assignments
+from rapidfoam.core.fields import turbulence_values, velocity_vector
+from rapidfoam.core.foam import FOOTER, foam_header
 
 
 def _wing_regex(stl_names: list[str]) -> str:

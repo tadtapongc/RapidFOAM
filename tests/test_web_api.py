@@ -8,36 +8,42 @@ import unittest
 from unittest.mock import patch, PropertyMock
 from fastapi import HTTPException
 
-from rapidfoam.web.server import (
-    DomainBoxRequest,
-    GenerateCaseRequest,
-    JobCancelRequest,
-    api_get_saved_config,
+from rapidfoam.config import effective_config as merge_config_with_defaults
+from rapidfoam.web.routers.case import (
+    api_case_cancel,
+    api_case_check_exists,
+    api_case_download,
+    api_case_download_active,
+    api_case_download_progress,
+    api_case_generate_and_submit,
+    api_geometry_domain_box,
+)
+from rapidfoam.web.routers.cases import api_case_delete, api_list_cases
+from rapidfoam.web.routers.cluster import api_get_saved_config
+from rapidfoam.web.routers.config import (
     api_config_defaults,
     api_config_load_file,
     api_config_templates,
-    api_stl_list,
-    api_get_stl_file,
-    api_case_generate_and_submit,
-    api_case_cancel,
-    api_geometry_domain_box,
-    api_telemetry_forces,
-    api_telemetry_residuals,
-    api_telemetry_logs,
-    api_telemetry_export,
-    api_telemetry_solver,
-    api_telemetry_mesh,
-    api_telemetry_surface,
-    parse_solver_diagnostics_from_log,
-    parse_residuals_from_log,
-    api_list_cases,
-    api_case_delete,
-    api_stl_check_exists,
-    api_case_check_exists,
-    merge_config_with_defaults,
-    ssh_client,
 )
-from rapidfoam.web import server as web_server
+from rapidfoam.web.routers.stl import api_get_stl_file, api_stl_check_exists, api_stl_list
+from rapidfoam.web.routers.telemetry import (
+    api_telemetry_export,
+    api_telemetry_forces,
+    api_telemetry_logs,
+    api_telemetry_mesh,
+    api_telemetry_residuals,
+    api_telemetry_solver,
+    api_telemetry_surface,
+)
+from rapidfoam.web.schemas import (
+    CaseDownloadRequest,
+    DomainBoxRequest,
+    GenerateCaseRequest,
+    JobCancelRequest,
+)
+from rapidfoam.web.services import telemetry as _telemetry_service
+from rapidfoam.web.services.telemetry import parse_residuals_from_log, parse_solver_diagnostics_from_log
+from rapidfoam.web.state import _download_progress, ssh_client
 from rapidfoam.web.ssh_client import ClusterSSHClient
 from rapidfoam.web.ssh_client import FILE_BEGIN, FILE_END, _parse_marked_bundle
 from rapidfoam.postproc.forces import is_symmetry_case
@@ -71,7 +77,7 @@ class TestWebAPI(unittest.TestCase):
 
     def setUp(self):
         # Remote telemetry is cached briefly; never leak state across tests.
-        web_server._remote_telemetry_cache.clear()
+        _telemetry_service._remote_telemetry_cache.clear()
 
     def test_saved_cluster_config(self):
         """Test retrieving cached cluster config with password redacted."""
@@ -356,7 +362,7 @@ class TestWebAPI(unittest.TestCase):
 
     def test_telemetry_mesh_yplus_miss(self):
         """A realised y+ far from target is reported as missed."""
-        from rapidfoam.web.server import _read_yplus_texts, _summarise_yplus
+        from rapidfoam.web.services.telemetry import _read_yplus_texts, _summarise_yplus
         data = _read_yplus_texts(["0\tgeometry\t1.0\t20.0\t9.0\n"])
         summary = _summarise_yplus(data, 100.0)
         self.assertTrue(summary["available"])
@@ -367,7 +373,7 @@ class TestWebAPI(unittest.TestCase):
         self.assertIn("missed", summary["note"])
 
     def test_telemetry_mesh_yplus_no_target(self):
-        from rapidfoam.web.server import _read_yplus_texts, _summarise_yplus
+        from rapidfoam.web.services.telemetry import _read_yplus_texts, _summarise_yplus
         summary = _summarise_yplus(_read_yplus_texts(["0\tbody\t1.0\t20.0\t9.0\n"]), None)
         self.assertTrue(summary["available"])
         self.assertIsNone(summary["target"])
@@ -1722,7 +1728,7 @@ class TestWebAPI(unittest.TestCase):
         case_dir = Path("cases") / case_name
         shutil.rmtree(case_dir, ignore_errors=True)
         self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
-        self.addCleanup(lambda: web_server._download_progress.pop(case_name, None))
+        self.addCleanup(lambda: _download_progress.pop(case_name, None))
 
         # Keep the background worker parked so the reservation persists while the
         # second request is processed.
@@ -1732,15 +1738,15 @@ class TestWebAPI(unittest.TestCase):
             release.wait(timeout=5.0)
             return {"files": 0, "dirs": 0, "bytes": 0, "total_bytes": 0}
 
-        req = web_server.CaseDownloadRequest(case_name=case_name, overwrite=True)
+        req = CaseDownloadRequest(case_name=case_name, overwrite=True)
 
         async def run_two():
             with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
                 with patch.object(ssh_client, "remote_file_exists", return_value=True):
                     with patch.object(ssh_client, "download_directory", side_effect=fake_run):
                         responses = await asyncio.gather(
-                            web_server.api_case_download(req),
-                            web_server.api_case_download(req),
+                            api_case_download(req),
+                            api_case_download(req),
                         )
             # Release the parked worker *before* the loop shuts down so the
             # executor does not wait for the timeout.
@@ -1913,11 +1919,7 @@ class TestWebAPI(unittest.TestCase):
 
     def test_download_case_endpoint(self):
         """Starting a download returns immediately and progress is tracked."""
-        from rapidfoam.web.server import (
-            CaseDownloadRequest,
-            api_case_download,
-            api_case_download_progress,
-        )
+        from rapidfoam.web.routers.case import api_case_download
 
         with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
             with patch.object(ssh_client, "remote_file_exists", return_value=True):
@@ -1933,7 +1935,7 @@ class TestWebAPI(unittest.TestCase):
 
     def test_download_case_requires_connection(self):
         """Downloading without an SSH session is rejected."""
-        from rapidfoam.web.server import CaseDownloadRequest, api_case_download
+        from rapidfoam.web.routers.case import api_case_download
 
         with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=False):
             with self.assertRaises(HTTPException) as ctx:
@@ -1942,7 +1944,7 @@ class TestWebAPI(unittest.TestCase):
 
     def test_download_case_rejects_existing_local(self):
         """Re-downloading a case that already exists locally is rejected (409)."""
-        from rapidfoam.web.server import CaseDownloadRequest, api_case_download
+        from rapidfoam.web.routers.case import api_case_download
 
         case_name = "already_local_probe"
         case_dir = Path("cases") / case_name
@@ -1958,7 +1960,7 @@ class TestWebAPI(unittest.TestCase):
 
     def test_download_case_overwrite_allows_redownload(self):
         """overwrite=true permits re-downloading an existing local case."""
-        from rapidfoam.web.server import CaseDownloadRequest, api_case_download
+        from rapidfoam.web.routers.case import api_case_download
 
         case_name = "already_local_overwrite_probe"
         case_dir = Path("cases") / case_name
@@ -1977,7 +1979,7 @@ class TestWebAPI(unittest.TestCase):
 
     def test_download_progress_endpoint(self):
         """The progress endpoint reports live stats and defaults to inactive."""
-        from rapidfoam.web.server import _set_download_progress, api_case_download_progress
+        from rapidfoam.web.state import _set_download_progress
 
         _set_download_progress("progress_probe", active=True, files=5, dirs=2, bytes=1000, total_bytes=2000)
         res = asyncio.run(api_case_download_progress("progress_probe"))
@@ -1990,7 +1992,7 @@ class TestWebAPI(unittest.TestCase):
 
     def test_download_active_endpoint(self):
         """The active endpoint lists in-progress downloads for UI restore."""
-        from rapidfoam.web.server import _set_download_progress, api_case_download_active
+        from rapidfoam.web.state import _set_download_progress
 
         _set_download_progress("active_probe", active=True, files=1, bytes=2, total_bytes=4)
         res = asyncio.run(api_case_download_active())

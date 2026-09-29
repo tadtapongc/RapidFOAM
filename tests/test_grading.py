@@ -11,15 +11,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.config import DEFAULT_CONFIG, deep_merge, load_config, validate
-from rapidfoam.geometry import (
+from rapidfoam.meshing.domain import compute_domain_box
+from rapidfoam.meshing.grading import (
     DEFAULT_GRADING_RATIO,
     _graded_axis,
     compute_block_grading,
-    compute_domain_box,
-    compute_mesh_params,
 )
+from rapidfoam.meshing.params import compute_mesh_params
 from rapidfoam.stl_utils import write_stl
-from rapidfoam.writers.mesh import write_block_mesh_dict
+from rapidfoam.meshing.context import build_mesh_context
+from rapidfoam.meshing.plan import plan_from_config
+from rapidfoam.meshing.writers.block_mesh import write_block_mesh_dict
 
 BOUNDS = ((-0.745, 0.0, -1.5), (0.745, 1.145, 1.5))
 
@@ -158,7 +160,7 @@ class TestWriteBlockMeshDict(unittest.TestCase):
             (case / "system").mkdir(parents=True)
             cfg["domain_box"] = compute_domain_box(cfg, BOUNDS)
             cfg["mesh_params"] = compute_mesh_params(cfg, BOUNDS)
-            write_block_mesh_dict(cfg, case)
+            write_block_mesh_dict(plan_from_config(cfg), build_mesh_context(cfg), case)
             return (case / "system" / "blockMeshDict").read_text(encoding="utf-8")
 
     def test_emits_graded_block(self):
@@ -176,7 +178,7 @@ class TestWriteBlockMeshDict(unittest.TestCase):
             (case / "system").mkdir(parents=True)
             cfg["domain_box"] = compute_domain_box(cfg, BOUNDS)
             cfg["mesh_params"] = {"base_cell_size": 0.1}  # no block_cells/grading
-            write_block_mesh_dict(cfg, case)
+            write_block_mesh_dict(plan_from_config(cfg), build_mesh_context(cfg), case)
             text = (case / "system" / "blockMeshDict").read_text(encoding="utf-8")
         self.assertIn("simpleGrading (1 1 1)", text)
 

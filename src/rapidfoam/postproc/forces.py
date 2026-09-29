@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from rapidfoam.core import caseconfig
-from rapidfoam.geometry import AXIS_MAP as AXIS_MAP, axis_index_sign
+from rapidfoam.core.axes import AXIS_MAP as AXIS_MAP, axis_index_sign
 
 
 def load_axis_config(

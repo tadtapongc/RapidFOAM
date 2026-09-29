@@ -340,7 +340,9 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
     errors: list[str] = []
     warnings: list[str] = []
 
-    from rapidfoam.geometry import FIDELITY_PRESETS, face_assignments, face_role, parse_axis
+    from rapidfoam.core.axes import parse_axis
+    from rapidfoam.core.faces import face_assignments, face_role
+    from rapidfoam.meshing.presets import FIDELITY_PRESETS
 
     # Check containers before dereferencing nested values.
     sections = [key for key, value in DEFAULT_CONFIG.items() if isinstance(value, dict)]

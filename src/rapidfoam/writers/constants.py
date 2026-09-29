@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from rapidfoam.writers.base import FOOTER, foam_header
+from rapidfoam.core.foam import FOOTER, foam_header
 
 
 def write_constant(cfg: dict[str, Any], case_dir: Path) -> None:

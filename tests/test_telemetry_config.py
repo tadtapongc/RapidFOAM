@@ -18,7 +18,7 @@ import shutil
 from pathlib import Path
 import unittest
 
-from rapidfoam.web.server import (
+from rapidfoam.web.routers.telemetry import (
     api_telemetry_export,
     api_telemetry_forces,
     api_telemetry_mesh,

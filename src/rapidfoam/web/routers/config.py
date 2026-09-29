@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from rapidfoam.config import DEFAULT_CONFIG, effective_config
-from rapidfoam.geometry import FIDELITY_PRESETS
+from rapidfoam.meshing.presets import FIDELITY_PRESETS
 from rapidfoam.web.state import PROJECT_ROOT
 
 router = APIRouter()

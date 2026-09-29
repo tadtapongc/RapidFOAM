@@ -11,8 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from rapidfoam.geometry import parse_axis
-from rapidfoam.writers.base import FOOTER, bool_str, foam_header
+from rapidfoam.core.axes import parse_axis
+from rapidfoam.core.foam import FOOTER, bool_str, foam_header
 
 
 # ============================================================

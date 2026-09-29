@@ -32,11 +32,7 @@ FORBIDDEN = {
 KNOWN_DEBT: set[tuple[str, str]] = set()
 
 # (source context, imported context) pairs allowed during migration.
-CONTEXT_DEBT = {
-    # geometry.py is now a re-export facade over rapidfoam.meshing.*; the
-    # facade is deleted once no internal caller imports rapidfoam.geometry.
-    ("geometry", "meshing"),
-}
+CONTEXT_DEBT: set[tuple[str, str]] = set()
 
 CONTEXTS = set(FORBIDDEN) | {"cli"}
 

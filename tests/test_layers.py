@@ -6,14 +6,14 @@ import unittest
 from pathlib import Path
 
 from rapidfoam.config import DEFAULT_CONFIG, deep_merge
-from rapidfoam.geometry import (
-    FIDELITY_PRESETS,
-    compute_mesh_params,
+from rapidfoam.meshing.layers import (
     estimate_friction_velocity,
     first_layer_height,
     resolve_layers,
 )
-from rapidfoam.writers.mesh import write_snappy_hex_mesh_dict
+from rapidfoam.meshing.params import compute_mesh_params
+from rapidfoam.meshing.presets import FIDELITY_PRESETS
+from rapidfoam.meshing.pipeline import emit_mesh_files_from_config
 
 BOUNDS = ((-0.745, 0.0, -2.961), (0.745, 1.145, 0.296))
 NU = 1.516e-5
@@ -251,7 +251,7 @@ class TestGroundLayerEmission(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             case = Path(tmp)
             (case / "system").mkdir()
-            write_snappy_hex_mesh_dict(cfg, case)
+            emit_mesh_files_from_config(cfg, case)
             return (case / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
 
     def test_ground_layers_capped_by_default(self):
@@ -279,7 +279,7 @@ class TestTwoPassLayering(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             case = Path(tmp)
             (case / "system").mkdir()
-            write_snappy_hex_mesh_dict(cfg, case)
+            emit_mesh_files_from_config(cfg, case)
             normal = (case / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
             layering = case / "system" / "snappyHexMeshDict_layering"
             lay_text = layering.read_text(encoding="utf-8") if layering.exists() else None
@@ -349,7 +349,7 @@ class TestGroundLayerGuard(unittest.TestCase):
     def test_ground_plane_clearance_matches_embedded_surface(self):
         # Road sits at ground_plane - GROUND_EMBED, so clearance must account
         # for the embed: smin_up - (ground_plane - 0.01).
-        from rapidfoam.geometry import GROUND_EMBED
+        from rapidfoam.meshing.domain import GROUND_EMBED
         cfg = self._cfg()
         cfg.pop("ground_clearance", None)
         cfg["ground_plane"] = -0.02

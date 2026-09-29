@@ -19,7 +19,8 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.config import effective_config
-from rapidfoam.geometry import compute_mesh_params, resolve_layers
+from rapidfoam.meshing.layers import resolve_layers
+from rapidfoam.meshing.params import compute_mesh_params
 from rapidfoam.meshing.plan import apply_plan_to_cfg, build_mesh_plan
 from rapidfoam.meshing.presets import apply_fidelity_preset
 from rapidfoam.stl_utils import stl_bounds, write_stl

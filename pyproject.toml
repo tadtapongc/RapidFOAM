@@ -59,13 +59,13 @@ rapidfoam = "rapidfoam.cli:setup_main"
 rapidfoam-setup = "rapidfoam.cli:setup_main"
 rapidfoam-forces = "rapidfoam.cli:forces_main"
 rapidfoam-monitor = "rapidfoam.postproc.convergence_monitor:main"
-rapidfoam-studio = "rapidfoam.web.server:main"
-rapidfoam-web = "rapidfoam.web.server:main"
+rapidfoam-studio = "rapidfoam.web.app:main"
+rapidfoam-web = "rapidfoam.web.app:main"
 # Backward-compatible aliases
 cfd-setup = "rapidfoam.cli:setup_main"
 cfd-forces = "rapidfoam.cli:forces_main"
 cfd-monitor = "rapidfoam.postproc.convergence_monitor:main"
-cfd-web = "rapidfoam.web.server:main"
+cfd-web = "rapidfoam.web.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rapidfoam"]

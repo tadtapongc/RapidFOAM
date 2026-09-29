@@ -57,7 +57,7 @@ echo [*] Starting RapidFOAM Studio Web Server...
 echo [*] Browser will open automatically at http://127.0.0.1:8000
 echo.
 
-python -m rapidfoam.web.server %*
+python -m rapidfoam.web.app %*
 
 if %ERRORLEVEL% neq 0 (
     echo.
