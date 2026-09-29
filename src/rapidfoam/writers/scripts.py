@@ -23,6 +23,14 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 """
 
+# Restore stopAt in case the convergence monitor changed it on a previous run.
+# Shared by the local Allrun/Allrun.parallel templates.
+STOPAT_RESTORE = """\
+# Restore stopAt in case convergence monitor changed it on a previous run
+if [ -f system/controlDict ]; then
+    sed -i 's/stopAt.*writeNow/stopAt          endTime/' system/controlDict
+fi"""
+
 
 def _write_script(path: Path, content: str) -> None:
     """Write script file with executable permission."""
@@ -141,10 +149,7 @@ cd "${{0%/*}}" || exit
 
 echo "Case: $(basename "$PWD") | Cores: {n} | Iters: {end_time}"
 
-# Restore stopAt in case convergence monitor changed it on a previous run
-if [ -f system/controlDict ]; then
-    sed -i 's/stopAt.*writeNow/stopAt          endTime/' system/controlDict
-fi
+{STOPAT_RESTORE}
 
 # Configure Open MPI to use node-local storage for shared memory backing files
 if [ -d "/dev/shm" ] && [ -w "/dev/shm" ]; then
@@ -207,10 +212,7 @@ cd "${{0%/*}}" || exit
 . ${{WM_PROJECT_DIR:?}}/bin/tools/RunFunctions
 {MONITOR_CLEANUP}
 
-# Restore stopAt in case convergence monitor changed it on a previous run
-if [ -f system/controlDict ]; then
-    sed -i 's/stopAt.*writeNow/stopAt          endTime/' system/controlDict
-fi
+{STOPAT_RESTORE}
 {surface_block}
 runApplication surfaceFeatureExtract
 runApplication blockMesh
