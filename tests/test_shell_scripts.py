@@ -225,11 +225,13 @@ esac
         self.assertIn("not closed", result.stderr)
 
     def test_surface_check_enforce_exempts_default_half_model(self):
-        # Default config assigns a symmetry face, so an open cut is legitimate.
+        # Default config assigns a symmetry face, so an open cut is legitimate:
+        # enforce must not abort and the run should carry on to meshing.
         self.generate(surface={"enforce": True})
         result = self.run_script("run.sh", SURFACE_MODE="open")
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
-        self.assertIn("Open surface allowed", result.stdout)
+        self.assertNotIn("not closed", result.stderr)
+        self.assertIn(">>> Running blockMesh", result.stdout)
 
     def test_surface_check_enforce_aborts_on_self_intersection(self):
         self.generate(surface={"enforce": True})
