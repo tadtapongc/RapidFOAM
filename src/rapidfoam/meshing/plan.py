@@ -17,7 +17,8 @@ import copy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from rapidfoam.geometry import compute_mesh_params, resolve_layers
+from rapidfoam.meshing.layers import resolve_layers
+from rapidfoam.meshing.params import compute_mesh_params
 
 
 @dataclass(frozen=True)

@@ -33,6 +33,13 @@ KNOWN_DEBT = {
     ("rapidfoam.writers.scripts", "rapidfoam.postproc"),  # removed in Phase 5
 }
 
+# (source context, imported context) pairs allowed during migration.
+CONTEXT_DEBT = {
+    # geometry.py is now a re-export facade over rapidfoam.meshing.*; the
+    # facade is deleted once no internal caller imports rapidfoam.geometry.
+    ("geometry", "meshing"),
+}
+
 CONTEXTS = set(FORBIDDEN) | {"cli"}
 
 
@@ -78,6 +85,8 @@ class ArchitectureBoundaryTest(unittest.TestCase):
                 if imported_context is None:
                     continue
                 if imported_context not in FORBIDDEN[source_context]:
+                    continue
+                if (source_context, imported_context) in CONTEXT_DEBT:
                     continue
                 if (source_module, imported) in KNOWN_DEBT:
                     continue

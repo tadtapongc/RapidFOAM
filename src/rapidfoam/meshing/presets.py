@@ -1,15 +1,142 @@
-"""Fidelity-preset resolution — the one place preset fields are applied.
+"""Fidelity presets and their application.
 
-Previously the CLI applied ten preset fields by hand (``cli._do_generate``)
-while the Studio preview applied a three-field subset, so the preview could
-disagree with the generated case. Both now call :func:`apply_fidelity_preset`.
+The preset table and the (single) application logic live here. ``geometry.py``
+re-exports ``FIDELITY_PRESETS`` for existing callers.
 """
 
 from __future__ import annotations
 
 from typing import Any, Callable
 
-from rapidfoam.geometry import FIDELITY_PRESETS
+FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
+    "fast": {
+        # Quick turnaround for iterative design (~10-20 min on 32 cores, ~3-5M cells)
+        "desc": "Quick iterative design turnaround",
+        "cell_estimate": "~3-5M cells",
+        "n_cells_target": 4000000,
+        "runtime_estimate": "~10-20 min",
+        "cells_per_length": 20,        # base cell = longest STL extent / 20
+        "surface_level": [3, 4],       # 18.75mm - 9.38mm surface cells at ~3m model
+        "edge_level": 5,               # 4.69mm at edges
+        "n_layers": 5,
+        "expansion_ratio": 1.2,
+        "y_plus_target": 50,
+        "ground_layers": False,
+        "end_time": 800,
+        "write_interval": 400,
+        "maxGlobalCells": 10_000_000,
+        "nCellsBetweenLevels": 2,
+        "resolveFeatureAngle": 35,
+        "nSolveIter": 100,             # snap iterations
+        "nFeatureSnapIter": 10,
+        "nLayerIter": 50,
+        "nRelaxIter_layers": 10,
+        "slurm_time": "04:00:00",
+        "slurm_mem_per_cpu": "2G",
+        # Feature-based auto-sizing: refine until the smallest feature spans
+        # feature_cells, capped at max_surface_level.
+        "feature_percentile": 10.0,
+        "feature_cells": 3.0,
+        "max_surface_level": 6,
+        # Feature-angle derivation: resolve creases in the high tail of the
+        # normal-angle histogram, keeping the threshold a ratio below them.
+        "crease_percentile": 99.0,
+        "feature_angle_ratio": 0.75,
+        "crease_angle_floor": 15.0,
+        # Distance-based refinement shells, as multiples of the base cell
+        "distance_shells": [
+            (0.25, 3),    # quarter cell -> level 3
+            (0.80, 2),    # ~cell -> level 2
+        ],
+        "near_wake_level": 2,
+        "far_wake_level": 1,
+    },
+    "standard": {
+        # Balanced — optimal for FSAE aero (~1-2 hrs on 32 cores, sweet spot: ~9-13M cells)
+        "desc": "Balanced accuracy and speed for FSAE aero",
+        "cell_estimate": "~9-13M cells",
+        "n_cells_target": 11000000,
+        "runtime_estimate": "~1-2 hrs",
+        "cells_per_length": 30,        # base cell = longest STL extent / 30
+        "surface_level": [4, 5],       # 6.25mm bodywork, 3.125mm fine features
+        "edge_level": 6,               # 1.56mm at sharp aero edges (wings/gurneys)
+        "n_layers": 8,
+        "expansion_ratio": 1.2,
+        "y_plus_target": 30,
+        "ground_layers": False,
+        "end_time": 1500,
+        "write_interval": 500,
+        "maxGlobalCells": 20_000_000,
+        "nCellsBetweenLevels": 2,      # 2 buffer cells (avoids massive 3D transition bloat)
+        "resolveFeatureAngle": 35,     # Prevents general body curvature from ballooning to max level
+        "nSolveIter": 200,
+        "nFeatureSnapIter": 15,
+        "nLayerIter": 50,
+        "nRelaxIter_layers": 10,
+        "slurm_time": "08:00:00",
+        "slurm_mem_per_cpu": "3G",
+        # Feature-based auto-sizing: refine until the smallest feature spans
+        # feature_cells, capped at max_surface_level.
+        "feature_percentile": 10.0,
+        "feature_cells": 4.0,
+        "max_surface_level": 7,
+        # Feature-angle derivation: resolve creases in the high tail of the
+        # normal-angle histogram, keeping the threshold a ratio below them.
+        "crease_percentile": 99.0,
+        "feature_angle_ratio": 0.75,
+        "crease_angle_floor": 15.0,
+        # Conforming distance shells, as multiples of the base cell
+        "distance_shells": [
+            (0.25, 4),    # quarter cell -> level 4 (6.25mm at ~3m model)
+            (0.80, 3),    # ~cell -> level 3 (12.5mm)
+        ],
+        "near_wake_level": 3,          # rear wing vortex / diffuser
+        "far_wake_level": 1,           # downstream transport (saves cells)
+    },
+    "fine": {
+        # Wall-resolved low-Re tier (~4-6 hours, ~20-28M cells on 32 cores)
+        "desc": "Wall-resolved tier (y+ ~ 1 first cell, fine near-wall stack); pair with a low-Re-consistent wall treatment and validate",
+        "cell_estimate": "~20-28M cells",
+        "n_cells_target": 24000000,
+        "runtime_estimate": "~4-6 hrs",
+        "cells_per_length": 37.5,      # base cell = longest STL extent / 37.5
+        "surface_level": [4, 5],       # keep tangential cells, layers carry the near-wall work
+        "edge_level": 7,               # 0.68mm at sharp aero edges (trailing edges, gurneys)
+        "n_layers": 20,
+        "expansion_ratio": 1.1,
+        "y_plus_target": 1,
+        "ground_layers": False,
+        "end_time": 2500,
+        "write_interval": 500,
+        "maxGlobalCells": 32_000_000,
+        "nCellsBetweenLevels": 2,
+        "resolveFeatureAngle": 30,
+        "nSolveIter": 300,
+        "nFeatureSnapIter": 20,
+        "nLayerIter": 50,
+        "nRelaxIter_layers": 10,
+        "slurm_time": "14:00:00",
+        "slurm_mem_per_cpu": "4G",
+        # Feature-based auto-sizing: refine until the smallest feature spans
+        # feature_cells, capped at max_surface_level.
+        "feature_percentile": 10.0,
+        "feature_cells": 5.0,
+        "max_surface_level": 8,
+        # Feature-angle derivation: resolve creases in the high tail of the
+        # normal-angle histogram, keeping the threshold a ratio below them.
+        "crease_percentile": 99.0,
+        "feature_angle_ratio": 0.75,
+        "crease_angle_floor": 15.0,
+        # Conforming distance shells, as multiples of the base cell
+        "distance_shells": [
+            (0.25, 5),    # 2.5mm at ~3m model
+            (0.75, 4),    # 6.25mm
+            (1.90, 3),    # 12.5mm
+        ],
+        "near_wake_level": 4,
+        "far_wake_level": 2,
+    },
+}
 
 IsSetFn = Callable[[str, str], bool]
 
@@ -71,4 +198,4 @@ def apply_fidelity_preset(
     return cfg
 
 
-__all__ = ["apply_fidelity_preset", "FIDELITY_PRESETS"]
+__all__ = ["FIDELITY_PRESETS", "apply_fidelity_preset"]
