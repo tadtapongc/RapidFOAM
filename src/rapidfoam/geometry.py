@@ -571,9 +571,13 @@ def compute_block_grading(
     centre-refine, and the wake boxes already resolve the downstream region.
 
     ``mesh_params.grading`` selects the mode:
-        - ``"auto"`` (default): derive as above using ``grading_ratio``
-        - ``"off"`` / ``null`` / ``false``: uniform (1 1 1)
+        - ``"off"`` (default) / ``null`` / ``false``: uniform (1 1 1)
+        - ``"auto"``: derive as above using ``grading_ratio``
         - ``[gx, gy, gz]``: explicit expansion ratios, uniform cell counts
+
+    Grading is opt-in: measured on a real case it trims ~10–30% of the final
+    cells but raises non-orthogonality/aspect ratio, so the quality-first default
+    keeps the background uniform.
     """
     user_mesh = cfg.get("mesh_params", {})
     if not isinstance(user_mesh, dict):
@@ -606,7 +610,7 @@ def compute_block_grading(
             return _result("explicit", [float(v) for v in prior["grading"]], uniform, None, {})
         mode = "off" if mode == "off" else "auto"
     else:
-        mode = user_mesh.get("grading", "auto")
+        mode = user_mesh.get("grading", "off")
 
     if isinstance(mode, (list, tuple)):
         return _result("explicit", [float(v) for v in mode], uniform, None, {})

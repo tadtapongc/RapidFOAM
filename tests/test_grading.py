@@ -73,7 +73,7 @@ class TestGradedAxis(unittest.TestCase):
 
 class TestComputeBlockGrading(unittest.TestCase):
     def test_auto_grades_ground_and_symmetry_axes(self):
-        cfg = full_cfg()
+        cfg = full_cfg(mesh_params={"base_cell_size": 0.1, "grading": "auto"})
         box = compute_domain_box(cfg, BOUNDS)
         info = compute_block_grading(cfg, box, BOUNDS, 0.1)
         self.assertEqual(info["mode"], "auto")
@@ -103,10 +103,13 @@ class TestComputeBlockGrading(unittest.TestCase):
         self.assertEqual(info["block_cells"], info["uniform_cells"])
 
     def test_positive_faces_fine_at_max(self):
-        cfg = full_cfg(domain_faces={
-            "+x": "symmetry", "-x": "farField", "+y": "ground", "-y": "farField",
-            "+z": "inlet", "-z": "outlet",
-        })
+        cfg = full_cfg(
+            mesh_params={"base_cell_size": 0.1, "grading": "auto"},
+            domain_faces={
+                "+x": "symmetry", "-x": "farField", "+y": "ground", "-y": "farField",
+                "+z": "inlet", "-z": "outlet",
+            },
+        )
         info = compute_block_grading(
             cfg, {"min": [-4, -4, -4], "max": [1, 1, 4]}, BOUNDS, 0.1
         )
@@ -115,20 +118,32 @@ class TestComputeBlockGrading(unittest.TestCase):
         self.assertEqual(info["axes"]["y"]["fine_side"], "max")
 
     def test_invalid_ratio_falls_back_to_off(self):
-        cfg = full_cfg(mesh_params={"base_cell_size": 0.1, "grading_ratio": 0.5})
+        cfg = full_cfg(mesh_params={"base_cell_size": 0.1, "grading": "auto", "grading_ratio": 0.5})
         info = compute_block_grading(cfg, {"min": [-4, -4, -4], "max": [1, 1, 4]}, BOUNDS, 0.1)
         self.assertEqual(info["mode"], "off")
         self.assertEqual(info["grading"], [1.0, 1.0, 1.0])
 
+    def test_default_is_off(self):
+        # Quality-first default: grading must be opted in.
+        info = compute_block_grading(
+            full_cfg(), {"min": [-4, -4, -4], "max": [1, 1, 4]}, BOUNDS, 0.1
+        )
+        self.assertEqual(info["mode"], "off")
+        self.assertEqual(info["grading"], [1.0, 1.0, 1.0])
+        self.assertEqual(info["block_cells"], info["uniform_cells"])
+
 
 class TestComputeMeshParamsGrading(unittest.TestCase):
     def test_result_carries_grading_and_cells(self):
-        params = compute_mesh_params(full_cfg(), BOUNDS)
+        params = compute_mesh_params(
+            full_cfg(mesh_params={"base_cell_size": 0.1, "grading": "auto"}), BOUNDS
+        )
         self.assertIn("grading", params)
         self.assertIn("block_cells", params)
         self.assertIn("grading_info", params)
         self.assertEqual(len(params["grading"]), 3)
         self.assertEqual(len(params["block_cells"]), 3)
+        self.assertGreater(params["grading"][1], 1.0)
 
     def test_grading_off_leaves_uniform(self):
         cfg = full_cfg(mesh_params={"base_cell_size": 0.1, "grading": "off"})
@@ -147,7 +162,7 @@ class TestWriteBlockMeshDict(unittest.TestCase):
             return (case / "system" / "blockMeshDict").read_text(encoding="utf-8")
 
     def test_emits_graded_block(self):
-        cfg = full_cfg()
+        cfg = full_cfg(mesh_params={"base_cell_size": 0.1, "grading": "auto"})
         text = self._write(cfg)
         cells = cfg["mesh_params"]["block_cells"]
         self.assertIn(f"({cells[0]} {cells[1]} {cells[2]})", text)
