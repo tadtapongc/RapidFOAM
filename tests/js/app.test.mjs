@@ -305,7 +305,7 @@ const CONFIG_STUB_IDS = [
   'cfg-face-pos-z', 'cfg-face-neg-z', 'cfg-parallel-procs', 'cfg-parallel-method',
   'cfg-slurm-qos', 'cfg-slurm-partition', 'cfg-slurm-time', 'cfg-slurm-mem',
   'cfg-slurm-source', 'cfg-slurm-modules', 'cfg-override-feature-angle',
-  'cfg-slurm-cpus',
+  'cfg-slurm-cpus', 'cfg-override-layer-twopass',
 ];
 
 function buildStubBody() {
@@ -448,6 +448,27 @@ test('buildConfigFromVisualForm drops a section whose active inputs are blank', 
     JSON.parse(JSON.stringify(app.activeConfig.overrides.solver)),
     { end_time: 1500 },
   );
+});
+
+// ------------------------------------------- Two-pass layering
+test('buildConfigFromVisualForm emits two_pass on/off/auto', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  const sel = app._window.document.getElementById('cfg-override-layer-twopass');
+
+  sel.value = 'on';
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.overrides.layers.two_pass, true);
+
+  sel.value = 'off';
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.overrides.layers.two_pass, false);
+
+  sel.value = 'auto';
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.overrides?.layers?.two_pass, undefined);
 });
 
 // ------------------------------------------- Symmetry (full car)

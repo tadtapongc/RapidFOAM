@@ -63,6 +63,19 @@ class BuildCaseTest(unittest.TestCase):
         with self.assertRaises(CaseGenerationError):
             build_case(bad, self.root, reporter=lambda _: None)
 
+    def test_two_pass_layering_generates_second_dict(self):
+        self.cfg.write_text(json.dumps({
+            "case_name": "twopass",
+            "stl_files": ["body.stl"],
+            "fidelity": "fast",
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+            "overrides": {"layers": {"two_pass": True}},
+        }), encoding="utf-8")
+        case = build_case(self.cfg, self.root, reporter=lambda _: None)
+        self.assertTrue((case / "system" / "snappyHexMeshDict_layering").is_file())
+        self.assertIn("snappyHexMeshDict_layering", (case / "Allrun.parallel").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

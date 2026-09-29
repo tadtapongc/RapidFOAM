@@ -637,6 +637,8 @@ class CFDApp {
     this.setSelectValue('cfg-override-layer-mode', layerMode);
     const groundMode = layers?.ground_layers === true ? 'on' : (layers?.ground_layers === false ? 'off' : 'auto');
     this.setSelectValue('cfg-override-layer-ground', groundMode);
+    const twoPassMode = layers?.two_pass === true ? 'on' : (layers?.two_pass === false ? 'off' : 'auto');
+    this.setSelectValue('cfg-override-layer-twopass', twoPassMode);
     this.setVal('cfg-override-layer-yplus', layers?.y_plus_target ?? '');
     this.setVal('cfg-override-layer-nlayers', layers?.n_layers ?? '');
     this.setVal('cfg-override-layer-expansion', layers?.expansion_ratio ?? '');
@@ -911,6 +913,10 @@ class CFDApp {
     if (groundMode === 'on') layersOverrides.ground_layers = true;
     else if (groundMode === 'off') layersOverrides.ground_layers = false;
     else delete layersOverrides.ground_layers;
+    const twoPassMode = this.getVal('cfg-override-layer-twopass') || 'auto';
+    if (twoPassMode === 'on') layersOverrides.two_pass = true;
+    else if (twoPassMode === 'off') layersOverrides.two_pass = false;
+    else delete layersOverrides.two_pass;
     if (Object.keys(layersOverrides).length > 0) overrides.layers = layersOverrides;
     else delete overrides.layers;
 
@@ -1321,6 +1327,7 @@ class CFDApp {
     overrideIds.forEach((id) => this.setVal(id, ''));
     this.setSelectValue('cfg-override-layer-mode', 'auto');
     this.setSelectValue('cfg-override-layer-ground', 'auto');
+    this.setSelectValue('cfg-override-layer-twopass', 'auto');
     this.setSelectValue('cfg-override-autosize', 'auto');
     this.updateLayerModeUI();
     const preview = document.getElementById('cfg-layer-preview');
