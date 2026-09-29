@@ -76,6 +76,39 @@ class BuildCaseTest(unittest.TestCase):
         self.assertTrue((case / "system" / "snappyHexMeshDict_layering").is_file())
         self.assertIn("snappyHexMeshDict_layering", (case / "Allrun.parallel").read_text())
 
+    def test_surface_enforce_exempts_default_half_model(self):
+        # Default config gets a symmetry face from the generator; no symmetry_plane.
+        self.cfg.write_text(json.dumps({
+            "case_name": "half_enforce",
+            "stl_files": ["body.stl"],
+            "fidelity": "fast",
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+            "surface_check": {"enabled": True, "enforce": True},
+        }), encoding="utf-8")
+        case = build_case(self.cfg, self.root, reporter=lambda _: None)
+        allrun = (case / "Allrun").read_text()
+        self.assertNotIn("Surface is not closed", allrun)
+        self.assertIn("Open surface allowed", allrun)
+
+    def test_surface_enforce_checks_closure_on_full_car(self):
+        self.cfg.write_text(json.dumps({
+            "case_name": "full_enforce",
+            "stl_files": ["body.stl"],
+            "fidelity": "fast",
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+            "domain_faces": {
+                "-x": "farField", "+x": "farField", "-y": "ground",
+                "+y": "farField", "+z": "inlet", "-z": "outlet",
+            },
+            "surface_check": {"enabled": True, "enforce": True},
+        }), encoding="utf-8")
+        case = build_case(self.cfg, self.root, reporter=lambda _: None)
+        allrun = (case / "Allrun").read_text()
+        self.assertIn("Surface is not closed", allrun)
+        self.assertNotIn("Open surface allowed", allrun)
+
 
 if __name__ == "__main__":
     unittest.main()

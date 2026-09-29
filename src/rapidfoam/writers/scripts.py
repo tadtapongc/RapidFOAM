@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from rapidfoam.core.axes import parse_axis
+from rapidfoam.core.faces import face_assignments, patch_role
 
 MONITOR_CLEANUP = """\
 stop_monitor() {
@@ -88,17 +89,19 @@ def write_scripts(cfg: dict[str, Any], case_dir: Path) -> None:
     # always exits 0, so enforcement gates on its log; when
     # surface_check.enforce is off the run is report-only and never aborts.
     # A symmetry half model is open along the cut, so closure is only required
-    # when neither a symmetry plane nor allow_open applies.
+    # when no symmetry boundary is assigned. Use the resolved face assignment
+    # (not just symmetry_plane) so an explicit symmetry face without a plane
+    # coordinate is still recognised.
     surface_check = cfg.get("surface_check", {})
     if not isinstance(surface_check, dict):
         surface_check = {}
     surface_enabled = bool(surface_check.get("enabled", True))
     surface_enforce = bool(surface_check.get("enforce", False))
     surface_self_flag = " -checkSelfIntersection" if surface_check.get("check_self_intersection", True) else ""
-    symmetry_plane = cfg.get("symmetry_plane")
-    if symmetry_plane is None:
-        symmetry_plane = cfg.get("centerline")
-    allow_open = bool(surface_check.get("allow_open", False)) or symmetry_plane is not None
+    faces = face_assignments(cfg)
+    patches = cfg.get("patches", {})
+    is_symmetry = any(patch_role(patches, name) == "symmetry" for name in faces.values())
+    allow_open = bool(surface_check.get("allow_open", False)) or is_symmetry
 
     if surface_enforce:
         open_gate = "" if allow_open else """
