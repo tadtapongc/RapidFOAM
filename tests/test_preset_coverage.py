@@ -1,10 +1,9 @@
-"""Fidelity-preset coverage pinning tests (Phase 0 safety net).
+"""Fidelity-preset coverage regression tests.
 
-Pins PAIN_POINTS.md #9c: the shipped ``configs/config.json`` (and the Studio)
-write concrete ``slurm.time`` / ``slurm.mem_per_cpu`` values, so the
-fidelity-preset SLURM time/memory never reach ``run.sh``. The expectedFailure
-test documents the current behaviour; Phase 1 removes the decorator once the
-shipped config and preset guard are unified.
+Pins PAIN_POINTS.md #9c: the shipped ``configs/config.json`` used to write
+concrete ``slurm.time`` / ``slurm.mem_per_cpu`` values, silently defeating the
+fidelity-preset SLURM time/memory in ``run.sh``. The shipped config now omits
+them and the generator resolves both with the same ``user_set`` guard.
 """
 
 from __future__ import annotations
@@ -52,7 +51,6 @@ class PresetCoverageTest(unittest.TestCase):
         run_sh = (case / "run.sh").read_text(encoding="utf-8")
         self.assertIn("--time=04:00:00", run_sh)
 
-    @unittest.expectedFailure  # PAIN_POINTS #9c: shipped config pins slurm time/mem
     def test_shipped_config_still_uses_preset_slurm(self):
         shipped = json.loads((REPO_ROOT / "configs" / "config.json").read_text(encoding="utf-8"))
         shipped.update({

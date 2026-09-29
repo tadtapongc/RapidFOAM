@@ -251,8 +251,10 @@ def _do_generate(cfg_path: Path, project_dir: Path, dry_run: bool = False) -> No
     if not _is_set("snap", "nFeatureSnapIter"):
         cfg["snap"]["nFeatureSnapIter"] = preset.get("nFeatureSnapIter", 15)
         
-    # Only apply preset SLURM time if user left it as default 'auto'
-    if cfg["slurm"]["time"] == "auto":
+    # Preset SLURM time/memory apply unless the user pinned them. Both guards
+    # use user_set so an omitted field follows the fidelity preset (the shipped
+    # config and Studio no longer write concrete values).
+    if not _is_set("slurm", "time"):
         cfg["slurm"]["time"] = preset.get("slurm_time", "04:00:00")
     if not _is_set("slurm", "mem_per_cpu"):
         cfg["slurm"]["mem_per_cpu"] = preset.get("slurm_mem_per_cpu", cfg["slurm"]["mem_per_cpu"])
