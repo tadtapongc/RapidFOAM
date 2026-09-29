@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-29
+
 ### Added
 - **Boundary-layer thickness coverage**: the mesh-quality report (`read_forces.py
   --mesh`, the Studio Mesh Quality panel) now shows snappy's realised layer
@@ -77,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   web server is split into routers/services. The old compatibility shims
   (`geometry.py`, `writers/*`, `web/server.py`) are removed and the
   `rapidfoam-studio`/`rapidfoam-web` entry points target `rapidfoam.web.app`.
+- **Studio launcher module moved**: use `python -m rapidfoam.web.app`;
+  `rapidfoam.web.server` no longer exists. The `rapidfoam-studio` /
+  `rapidfoam-web` console scripts are unchanged.
 - **SLURM walltime/memory follow the fidelity preset**: `time`/`mem_per_cpu` are
   applied from the preset unless set explicitly — in the CLI, the shipped
   config, and the Studio (which no longer emits defaults that overrode the
