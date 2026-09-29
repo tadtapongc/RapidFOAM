@@ -2066,43 +2066,43 @@ def _summarise_yplus(
 ) -> dict[str, Any]:
     """Attach realised y+ to a target and flag patches that miss it.
 
-    Mirrors the CLI's ``--yplus`` verdict in a compact JSON-friendly shape. A
-    patch is "missed" when no target is configured and its average is outside
-    the wall-function band, or when a target exists and the average is further
-    than 50% from it.
+    Delegates the regime-aware verdict to ``postproc.yplus.check_yplus_target``
+    so the Studio and ``read_forces.py --yplus`` agree, then adapts it to the
+    compact JSON shape the panel consumes.
     """
     if not data:
         return {"available": False}
+    from rapidfoam.postproc.yplus import check_yplus_target
+
+    summary = check_yplus_target(data, target)
+    if not summary.get("available"):
+        return {"available": False}
 
     per_patch: dict[str, dict[str, Any]] = {}
-    missed: list[str] = []
-    for patch, stats in data.items():
+    for patch, stats in summary["patches"].items():
         avg = stats.get("average")
         entry: dict[str, Any] = {
             "min": stats.get("min"),
             "max": stats.get("max"),
             "average": avg,
+            "status": stats.get("status"),
         }
-        if target and target > 0 and avg is not None and math.isfinite(avg):
+        if target and target > 0 and isinstance(avg, (int, float)) and math.isfinite(avg):
             ratio = avg / target
-            ok = abs(ratio - 1.0) <= 0.5
             entry["ratio"] = round(ratio, 3)
-            entry["ok"] = ok
-            if not ok:
-                missed.append(patch)
+            entry["ok"] = stats.get("status") in ("on_target", "acceptable")
         per_patch[patch] = entry
 
+    # Without a configured target the panel reports realised values only, so no
+    # patch is listed as "missed" (matching the previous contract).
+    missed = list(summary.get("off_target", [])) if target else []
     return {
         "available": True,
         "target": target,
+        "band": summary.get("band"),
         "patches": per_patch,
         "missed": missed,
-        "note": (
-            "no y+ target configured"
-            if not target
-            else ("all patches within 50% of target" if not missed
-                  else f"y+ target missed on {', '.join(missed)}")
-        ),
+        "note": summary.get("note", ""),
     }
 
 

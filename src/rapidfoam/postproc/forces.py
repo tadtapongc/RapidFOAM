@@ -9,6 +9,7 @@ import statistics
 from pathlib import Path
 from typing import Optional
 
+from rapidfoam.core import caseconfig
 from rapidfoam.geometry import AXIS_MAP as AXIS_MAP, axis_index_sign
 
 
@@ -76,10 +77,11 @@ def _load_case_configs(config_path: str | None, base: Path) -> list[dict]:
 def is_symmetry_case(config_path: str | None = None, case_dir: str | Path | None = None) -> bool:
     """Check if case is configured with a symmetry boundary.
 
-    A config that omits ``domain_faces`` still generates a half-model because
-    the face assignment defaults the lateral-min face to the symmetry patch.
-    Such cases must be detected as symmetric even without an explicit face list.
-    The mesh boundary is used as a final authoritative fallback.
+    Delegates the config verdict to :func:`rapidfoam.core.caseconfig.has_symmetry`
+    (``domain_faces`` is authoritative; ``symmetry_plane`` only counts when no
+    face list exists). A config with no explicit face list still generates a
+    half model because the face assignment defaults the lateral-min face to the
+    symmetry patch. The mesh boundary is the final authoritative fallback.
     """
     base = Path(case_dir) if case_dir else Path(".")
     configs = _load_case_configs(config_path, base)
@@ -87,11 +89,9 @@ def is_symmetry_case(config_path: str | None = None, case_dir: str | Path | None
     explicit_faces_seen = False
     for cfg in configs:
         faces = cfg.get("domain_faces")
-        if not faces:
-            continue
-        explicit_faces_seen = True
-        symmetry_name = cfg.get("patches", {}).get("symmetry", "symmetry")
-        if any(v == symmetry_name or "symmetry" in str(v).lower() for v in faces.values()):
+        if isinstance(faces, dict) and faces:
+            explicit_faces_seen = True
+        if caseconfig.has_symmetry(cfg):
             return True
 
     # No explicit domain_faces anywhere: the generator derives a symmetry face,
