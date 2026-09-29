@@ -29,9 +29,7 @@ FORBIDDEN = {
 }
 
 # (source module, imported module) pairs that are known debt.
-KNOWN_DEBT = {
-    ("rapidfoam.writers.scripts", "rapidfoam.postproc"),  # removed in Phase 5
-}
+KNOWN_DEBT: set[tuple[str, str]] = set()
 
 # (source context, imported context) pairs allowed during migration.
 CONTEXT_DEBT = {

@@ -5,12 +5,10 @@ Generates: Allrun.parallel, Allrun, Allclean, run.sh (SLURM), convergence_monito
 
 from __future__ import annotations
 
-import ast
-import inspect
 from pathlib import Path
 from typing import Any
 
-from rapidfoam.geometry import parse_axis
+from rapidfoam.core.axes import parse_axis
 
 MONITOR_CLEANUP = """\
 stop_monitor() {
@@ -26,45 +24,6 @@ trap 'exit 143' TERM
 """
 
 
-class _AnnotationStripper(ast.NodeTransformer):
-    """Remove type annotations so embedded functions run on older Python (e.g. 3.6)."""
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
-        node.returns = None
-        for arg in getattr(node.args, "posonlyargs", []) + node.args.args + node.args.kwonlyargs:
-            arg.annotation = None
-        if node.args.vararg:
-            node.args.vararg.annotation = None
-        if node.args.kwarg:
-            node.args.kwarg.annotation = None
-        return self.generic_visit(node)
-
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AST:
-        if node.value is not None:
-            return ast.Assign(targets=[node.target], value=node.value)
-        return None
-
-
-def _clean_force_helpers() -> str:
-    """Extract force readers and strip type annotations for cluster Python 3.6 compatibility."""
-    from rapidfoam.postproc import forces
-
-    raw_source = "\n\n".join(
-        inspect.getsource(func)
-        for func in (
-            forces._dir_time,
-            forces.force_layout_from_header,
-            forces.find_force_files,
-            forces.read_forces,
-            forces.check_convergence,
-        )
-    )
-    tree = ast.parse(raw_source)
-    cleaned = _AnnotationStripper().visit(tree)
-    ast.fix_missing_locations(cleaned)
-    return ast.unparse(cleaned)
-
-
 def _write_script(path: Path, content: str) -> None:
     """Write script file with executable permission."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,113 +33,26 @@ def _write_script(path: Path, content: str) -> None:
 
 
 def _convergence_monitor_script(cfg: dict[str, Any]) -> str:
-    """Generate a self-contained convergence monitor Python script.
+    """Return the standalone monitor with this case's axis constants.
 
-    This script has zero external dependencies — it reads force.dat directly
-    and modifies controlDict to trigger a clean solver stop.
+    The canonical source is ``rapidfoam/runtime/convergence_monitor.py``; the
+    generated file is that source prefixed with the case's DRAG/DF axis
+    constants. No AST rewriting is involved.
     """
     drag_vec = parse_axis(cfg["outputs"]["drag_axis"])
     df_vec = parse_axis(cfg["outputs"]["downforce_axis"])
-
-    # Determine axis indices and signs
     drag_idx = next(i for i, v in enumerate(drag_vec) if v != 0)
     drag_sign = int(drag_vec[drag_idx])
     df_idx = next(i for i, v in enumerate(df_vec) if v != 0)
     df_sign = int(df_vec[df_idx])
 
-    # Embed the same maintained readers used by the CLI, stripped of type annotations
-    # so the script runs cleanly on Python 3.6+ without external package dependencies.
-    force_helpers = _clean_force_helpers()
-
-    return f'''\
-#!/usr/bin/env python3
-"""Auto-stop monitor: stops simpleFoam when forces converge.
-
-Checks force.dat every INTERVAL seconds. When both drag and downforce
-variation drop below THRESHOLD over the last WINDOW iterations,
-modifies controlDict to set stopAt=writeNow for a clean exit.
-"""
-
-import math
-import statistics
-import sys
-import time
-from pathlib import Path
-
-# === Configuration (from case_config) ===
-DRAG_IDX = {drag_idx}
-DRAG_SIGN = {drag_sign}
-DF_IDX = {df_idx}
-DF_SIGN = {df_sign}
-THRESHOLD = 0.5     # percent
-WINDOW = 200        # iterations to average
-MIN_ITERS = 300     # minimum before checking
-INTERVAL = 10       # seconds between checks
-
-
-{force_helpers}
-
-
-def trigger_stop():
-    """Modify controlDict to stop solver cleanly."""
-    cd = Path("system/controlDict")
-    if not cd.exists():
-        return
-    text = cd.read_text(encoding="utf-8")
-    lines = text.split("\\n")
-    new_lines = []
-    for line in lines:
-        if line.strip().startswith("stopAt"):
-            new_lines.append("stopAt          writeNow;")
-        else:
-            new_lines.append(line)
-    cd.write_text("\\n".join(new_lines), encoding="utf-8")
-
-
-def main():
-    print(f"  Convergence monitor started (threshold: ±{{THRESHOLD}}%, window: {{WINDOW}}, min: {{MIN_ITERS}})")
-    sys.stdout.flush()
-
-    while True:
-        time.sleep(INTERVAL)
-
-        files = find_force_files()
-        if not files:
-            continue
-
-        times, drags, downforces = read_forces(files, DRAG_IDX, DRAG_SIGN, DF_IDX, DF_SIGN)
-        if len(times) < MIN_ITERS:
-            continue
-
-        converged, d_pct, f_pct, d_avg, f_avg = check_convergence(
-            drags, downforces, window=WINDOW, threshold=THRESHOLD
-        )
-
-        n = len(times)
-        status = "OK" if converged else ".."
-        print(f"  [{{status}}] iter {{n:>5}} | drag: {{d_avg:>8.3f}} N (±{{d_pct:.3f}}%) | df: {{f_avg:>8.3f}} N (±{{f_pct:.3f}}%)")
-        sys.stdout.flush()
-
-        if converged:
-            ld = abs(f_avg / d_avg) if d_avg != 0 else 0
-            print(f"\\n  CONVERGED at iteration {{n}}")
-            print(f"    Drag:      {{d_avg:.3f}} N (±{{d_pct:.3f}}%)")
-            print(f"    Downforce: {{f_avg:.3f}} N (±{{f_pct:.3f}}%)")
-            print(f"    L/D:       {{ld:.3f}}")
-            print(f"  -> Triggering solver stop (writeNow)...")
-            sys.stdout.flush()
-            trigger_stop()
-            print(f"  -> Done. Solver will write and exit.")
-            sys.stdout.flush()
-            break
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        pass
-'''
+    source_path = Path(__file__).resolve().parents[1] / "runtime" / "convergence_monitor.py"
+    source = source_path.read_text(encoding="utf-8")
+    header = (
+        "# Generated from rapidfoam.runtime.convergence_monitor - do not edit in place.\n"
+        "DRAG_IDX = %d\n" % drag_idx
+    ) + "DRAG_SIGN = %d\n" % drag_sign + "DF_IDX = %d\n" % df_idx + "DF_SIGN = %d\n\n" % df_sign
+    return header + source
 
 
 def write_scripts(cfg: dict[str, Any], case_dir: Path) -> None:
