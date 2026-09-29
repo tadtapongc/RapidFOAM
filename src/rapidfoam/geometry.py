@@ -29,107 +29,21 @@ GROUND_EMBED = 0.01
 DEFAULT_GRADING_RATIO = 3.0
 
 # ============================================================
-# AXIS UTILITIES
+# AXIS / FACE / FIELD UTILITIES (Phase 1c: moved to rapidfoam.core)
 # ============================================================
+# Re-exported here so existing imports from rapidfoam.geometry keep working;
+# new code should import from rapidfoam.core.{axes,faces,fields}.
 
-AXIS_MAP: dict[str, tuple[int, int, int]] = {
-    "+x": (1, 0, 0), "x": (1, 0, 0), "-x": (-1, 0, 0),
-    "+y": (0, 1, 0), "y": (0, 1, 0), "-y": (0, -1, 0),
-    "+z": (0, 0, 1), "z": (0, 0, 1), "-z": (0, 0, -1),
-}
-
-
-def parse_axis(s: str) -> tuple[int, int, int]:
-    """Parse axis string to unit vector tuple."""
-    if not isinstance(s, str):
-        raise ValueError("Axis must be a string: +x, -x, +y, -y, +z, -z")
-    s = s.strip().lower()
-    if s not in AXIS_MAP:
-        raise ValueError(f"Invalid axis '{s}'. Use: +x, -x, +y, -y, +z, -z")
-    return AXIS_MAP[s]
-
-
-def axis_index_sign(axis_str: str) -> tuple[int, int]:
-    """Return (column_index, sign_multiplier) for axis string."""
-    vec = parse_axis(axis_str)
-    for i, v in enumerate(vec):
-        if v != 0:
-            return i, int(v)
-    return 0, 1
-
-
-def up_axis_index(cfg: dict[str, Any]) -> int:
-    """Determine the 'up' axis index from downforce direction.
-
-    Convention: downforce_axis='-y' means downforce points -y, so up is +y, index=1.
-    """
-    df_vec = parse_axis(cfg["outputs"]["downforce_axis"])
-    for i, v in enumerate(df_vec):
-        if v != 0:
-            return i
-    return 1
-
-
-def flow_axis_index_sign(cfg: dict[str, Any]) -> tuple[int, int]:
-    """Return (index, sign) of the flow direction."""
-    vec = parse_axis(cfg["flow"]["direction"])
-    for i, v in enumerate(vec):
-        if v != 0:
-            return i, int(v)
-    return 2, -1
-
-
-def vec_str(v: tuple[float, ...]) -> str:
-    """Format 3-tuple as OpenFOAM vector: (x y z)."""
-    return f"({v[0]:.6g} {v[1]:.6g} {v[2]:.6g})"
-
-
-def velocity_vector(cfg: dict[str, Any]) -> tuple[float, float, float]:
-    """Compute velocity vector from flow direction and speed."""
-    d = parse_axis(cfg["flow"]["direction"])
-    U = cfg["flow"]["velocity"]
-    return (d[0] * U, d[1] * U, d[2] * U)
-
-
-def turbulence_values(cfg: dict[str, Any]) -> tuple[float, float, float]:
-    """Compute k, omega, nut from config.
-
-    Returns:
-        (k, omega, nut)
-    """
-    U = cfg["flow"]["velocity"]
-    I = cfg["turbulence"]["intensity"]
-    nu = cfg["fluid"]["nu"]
-    nut_ratio = cfg["turbulence"]["nut_ratio"]
-    k = 1.5 * (U * I) ** 2
-    omega = k / (nut_ratio * nu)
-    nut = nut_ratio * nu
-    return k, omega, nut
-
-
-def face_role(cfg: dict[str, Any], patch_name: str) -> str:
-    """Resolve a patch name to its configured boundary role."""
-    for role, name in cfg["patches"].items():
-        if patch_name == name:
-            return role
-    return {"farField": "walls"}.get(patch_name, patch_name)
-
-
-def face_assignments(cfg: dict[str, Any]) -> dict[str, str]:
-    """Resolve the six faces once for domain sizing and every writer."""
-    patches = cfg["patches"]
-    if "domain_faces" in cfg:
-        return {direction: patches.get(face_role(cfg, name), name)
-                for direction, name in cfg["domain_faces"].items()}
-    flow_idx, flow_sign = flow_axis_index_sign(cfg)
-    up_idx = up_axis_index(cfg)
-    lateral_idx = next(i for i in range(3) if i not in (flow_idx, up_idx))
-    faces = {sign + axis: patches["walls"] for axis in "xyz" for sign in "-+"}
-    faces[("-" if flow_sign > 0 else "+") + "xyz"[flow_idx]] = patches["inlet"]
-    faces[("+" if flow_sign > 0 else "-") + "xyz"[flow_idx]] = patches["outlet"]
-    faces["-" + "xyz"[up_idx]] = patches["ground"]
-    faces["-" + "xyz"[lateral_idx]] = patches["symmetry"]
-    return faces
+from rapidfoam.core.axes import (  # noqa: F401
+    AXIS_MAP,
+    axis_index_sign,
+    flow_axis_index_sign,
+    parse_axis,
+    up_axis_index,
+    vec_str,
+)
+from rapidfoam.core.faces import face_assignments, face_role  # noqa: F401
+from rapidfoam.core.fields import turbulence_values, velocity_vector  # noqa: F401
 
 
 # ============================================================
