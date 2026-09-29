@@ -306,6 +306,11 @@ const CONFIG_STUB_IDS = [
   'cfg-slurm-qos', 'cfg-slurm-partition', 'cfg-slurm-time', 'cfg-slurm-mem',
   'cfg-slurm-source', 'cfg-slurm-modules', 'cfg-override-feature-angle',
   'cfg-slurm-cpus', 'cfg-override-layer-twopass',
+  'cfg-patch-inlet', 'cfg-patch-outlet', 'cfg-patch-ground', 'cfg-patch-walls', 'cfg-patch-symmetry',
+  'cfg-surface-enabled', 'cfg-surface-enforce', 'cfg-surface-selfintersection', 'cfg-surface-allowopen',
+  'cfg-surface-maxillegal', 'cfg-surface-maxparts',
+  'cfg-vehicle-wheelbase', 'cfg-vehicle-frontpct',
+  'cfg-override-grading', 'cfg-override-grading-ratio',
 ];
 
 function buildStubBody() {
@@ -340,8 +345,6 @@ test('buildConfigFromVisualForm preserves unknown and comment keys', async () =>
     case_name: 'old',
     _README: 'keep me',
     _section_domain: '--- domain ---',
-    patches: { inlet: 'inlet', walls: 'farField' },
-    vehicle: { wheelbase: 1.6, front_weight_pct: 45 },
     feature_extract: { extractionMethod: 'extractFromSurface', includedAngle: 140 },
     something_future: { nested: true },
   };
@@ -349,8 +352,6 @@ test('buildConfigFromVisualForm preserves unknown and comment keys', async () =>
   const cfg = JSON.parse(JSON.stringify(app.activeConfig));
   assert.equal(cfg._README, 'keep me');
   assert.equal(cfg._section_domain, '--- domain ---');
-  assert.deepEqual(cfg.patches, { inlet: 'inlet', walls: 'farField' });
-  assert.equal(cfg.vehicle.wheelbase, 1.6);
   assert.equal(cfg.something_future.nested, true);
   assert.equal(cfg.case_name, 'my_case');
   // feature_extract is form-owned: a blank input resets includedAngle, while
@@ -448,6 +449,41 @@ test('buildConfigFromVisualForm drops a section whose active inputs are blank', 
     JSON.parse(JSON.stringify(app.activeConfig.overrides.solver)),
     { end_time: 1500 },
   );
+});
+
+// ------------------------------------------- Patches / surface / vehicle / grading
+test('buildConfigFromVisualForm writes patches, surface_check, vehicle and grading', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  const doc = app._window.document;
+  doc.getElementById('cfg-patch-walls').value = 'carShell';
+  doc.getElementById('cfg-surface-enforce').checked = true;
+  doc.getElementById('cfg-vehicle-wheelbase').value = '1.6';
+  doc.getElementById('cfg-vehicle-frontpct').value = '45';
+  doc.getElementById('cfg-override-grading').value = 'on';
+  doc.getElementById('cfg-override-grading-ratio').value = '4';
+
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+
+  assert.equal(app.activeConfig.patches.walls, 'carShell');
+  assert.equal(app.activeConfig.patches.inlet, 'inlet');
+  assert.equal(app.activeConfig.surface_check.enforce, true);
+  assert.equal(app.activeConfig.surface_check.enabled, false); // stub checkbox unchecked
+  assert.equal(app.activeConfig.vehicle.wheelbase, 1.6);
+  assert.equal(app.activeConfig.vehicle.front_weight_pct, 45);
+  assert.equal(app.activeConfig.overrides.mesh_params.grading, 'auto');
+  assert.equal(app.activeConfig.overrides.mesh_params.grading_ratio, 4);
+});
+
+test('buildConfigFromVisualForm omits vehicle when both fields are blank', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.vehicle, undefined);
 });
 
 // ------------------------------------------- Two-pass layering

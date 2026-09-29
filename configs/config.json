@@ -54,8 +54,8 @@
         "-z": "outlet"
     },
 
-    "_patches_comment": "Optional: rename the generated boundary patches. Values are the patch names written to blockMeshDict/0-fields; roles map to domain_faces types. Leave commented to use the defaults.",
-    "_patches": {
+    "_patches_comment": "Optional: rename the generated boundary patches. Values are the patch names written to blockMeshDict/0-fields; roles map to domain_faces types. The defaults are shown.",
+    "patches": {
         "inlet": "inlet",
         "outlet": "outlet",
         "ground": "ground",
@@ -64,9 +64,19 @@
     },
 
     "_vehicle_comment": "Optional: only needed for aero-balance / centre-of-pressure handoff in telemetry. wheelbase in metres; front_weight_pct = static front axle load percentage (0-100).",
-    "_vehicle": {
+    "vehicle": {
         "wheelbase": null,
         "front_weight_pct": null
+    },
+
+    "_surface_check_comment": "Pre-mesh surfaceCheck gate. enabled runs it and reports; enforce aborts the run on a defect. A symmetry half model is exempt from the closure requirement.",
+    "surface_check": {
+        "enabled": true,
+        "enforce": false,
+        "check_self_intersection": true,
+        "allow_open": false,
+        "max_illegal_triangles": 0,
+        "max_unconnected_parts": 1
     },
 
     "_feature_extract_comment": "Feature edges for snappyHexMesh. includedAngle (degrees) is the threshold BELOW which an edge is kept as a feature; 140 captures real aero edges without cosmetic CAD seams. The generator derives resolveFeatureAngle from the STL crease histogram and only sharpens this, never loosens it.",
@@ -123,6 +133,7 @@
             "_feature_percentile": "Expert: edge-length percentile used as the small-feature estimate (default 10.0). Lower = more aggressive (chases CAD slivers); raise to ignore tessellation noise.",
             "_auto_feature_angle": "false (default) = use the preset value. true = derive resolveFeatureAngle from the STL crease (normal-angle) histogram so subtle creases are snapped. Only ever sharpens detection (never looser than the preset).",
             "_grading": "Background blockMesh grading: 'off' (default), 'auto' (grade toward the ground/symmetry planes using grading_ratio), or [gx, gy, gz]. 'auto' trims cells but raises non-orthogonality/aspect ratio.",
+            "_grading_ratio": "Far/near cell-size ratio for auto grading (default 3.0, range 1-20).",
             "_crease_angle_floor": "Expert: normal angles (deg) below this are treated as smooth tessellation, not creases (default 15).",
             "_feature_angle_ratio": "Expert: fraction of the sharpest crease's normal angle kept as the resolve threshold (default 0.75). Lower = sharper/more aggressive feature detection.",
             "_surface_level": [4, 5],

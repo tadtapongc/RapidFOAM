@@ -412,6 +412,37 @@
                   </div>
                 </div>
 
+                <!-- 6b Boundary patch names -->
+                <div class="form-group col-span-2">
+                  <label>Boundary Patch Names</label>
+                  <div class="triple-input-row">
+                    <input type="text" id="cfg-patch-inlet" class="input input-sm" placeholder="inlet">
+                    <input type="text" id="cfg-patch-outlet" class="input input-sm" placeholder="outlet">
+                    <input type="text" id="cfg-patch-ground" class="input input-sm" placeholder="ground">
+                    <input type="text" id="cfg-patch-walls" class="input input-sm" placeholder="farField">
+                    <input type="text" id="cfg-patch-symmetry" class="input input-sm" placeholder="symmetry">
+                  </div>
+                  <span class="field-hint">Optional: rename the generated patches (inlet / outlet / ground / far-field walls / symmetry). Leave blank for defaults.</span>
+                </div>
+
+                <!-- 6c Surface integrity check -->
+                <div class="form-group col-span-2 overrides-section-header">
+                  <h4 class="section-subtitle">Surface Integrity Check</h4>
+                  <span class="field-hint">Runs surfaceCheck before meshing. Report-only unless "Enforce" aborts the run on a defect.</span>
+                </div>
+                <div class="form-group"><label><input type="checkbox" id="cfg-surface-enabled" checked> Enabled</label></div>
+                <div class="form-group"><label><input type="checkbox" id="cfg-surface-enforce"> Enforce (abort on defect)</label></div>
+                <div class="form-group"><label><input type="checkbox" id="cfg-surface-selfintersection" checked> Check self-intersection</label></div>
+                <div class="form-group"><label><input type="checkbox" id="cfg-surface-allowopen"> Allow open surface</label></div>
+                <div class="form-group">
+                  <label for="cfg-surface-maxillegal">Max illegal triangles</label>
+                  <input type="number" id="cfg-surface-maxillegal" class="input" min="0" step="1" placeholder="0">
+                </div>
+                <div class="form-group">
+                  <label for="cfg-surface-maxparts">Max unconnected parts</label>
+                  <input type="number" id="cfg-surface-maxparts" class="input" min="0" step="1" placeholder="1">
+                </div>
+
               </div>
             </div>
 
@@ -562,6 +593,22 @@
                     <span class="field-hint">Moment origin for pitching, yawing, and rolling moment coefficients</span>
                   </div>
 
+                  <!-- 2b Vehicle geometry (persisted to case config) -->
+                  <div class="form-group col-span-2 overrides-section-header">
+                    <h4 class="section-subtitle">Vehicle Geometry (aero balance)</h4>
+                    <span class="field-hint">Persisted to the case config; used for center-of-pressure / front-rear aero load split.</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cfg-vehicle-wheelbase">Wheelbase (m)</label>
+                    <input type="number" id="cfg-vehicle-wheelbase" class="input" step="any" min="0" placeholder="unset">
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cfg-vehicle-frontpct">Static Front Weight (%)</label>
+                    <input type="number" id="cfg-vehicle-frontpct" class="input" step="any" min="0" max="100" placeholder="unset">
+                  </div>
+
                   <!-- 3. Mesh Parameter Overrides -->
                   <div class="form-group col-span-2 overrides-section-header">
                     <h4 class="section-subtitle">3. Mesh Parameter Overrides</h4>
@@ -621,6 +668,22 @@
                     <label for="cfg-override-maxsurflevel">Max Surface Level Cap</label>
                     <input type="number" id="cfg-override-maxsurflevel" class="input" min="1" max="14" placeholder="Auto / Preset (7)">
                     <span class="field-hint">Hard refinement cap protecting the cell budget; warns when auto-sizing clamps here</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cfg-override-grading">Background Grading</label>
+                    <select id="cfg-override-grading" class="input">
+                      <option value="auto" selected>Auto (preset: off)</option>
+                      <option value="on">On (grade to ground/symmetry)</option>
+                      <option value="off">Off (uniform)</option>
+                    </select>
+                    <span class="field-hint">Coarsen the background away from the ground/symmetry planes (~10-30% fewer cells; raises non-orthogonality/aspect ratio).</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cfg-override-grading-ratio">Grading Ratio</label>
+                    <input type="number" id="cfg-override-grading-ratio" class="input" step="0.1" min="1" max="20" placeholder="Auto (3.0)">
+                    <span class="field-hint">Far/near cell-size ratio used by auto grading</span>
                   </div>
 
                   <div class="form-group">

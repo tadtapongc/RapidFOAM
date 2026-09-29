@@ -553,6 +553,28 @@ class CFDApp {
     this.setSelectValue('cfg-face-pos-z', faces['+z'] || 'inlet');
     this.setSelectValue('cfg-face-neg-z', faces['-z'] || 'outlet');
 
+    // Boundary patch names (fall back to defaults for display)
+    const patches = cfg.patches || {};
+    this.setVal('cfg-patch-inlet', patches.inlet ?? '');
+    this.setVal('cfg-patch-outlet', patches.outlet ?? '');
+    this.setVal('cfg-patch-ground', patches.ground ?? '');
+    this.setVal('cfg-patch-walls', patches.walls ?? '');
+    this.setVal('cfg-patch-symmetry', patches.symmetry ?? '');
+
+    // Surface integrity check
+    const surface = cfg.surface_check || {};
+    this.setCheck('cfg-surface-enabled', surface.enabled !== false);
+    this.setCheck('cfg-surface-enforce', surface.enforce === true);
+    this.setCheck('cfg-surface-selfintersection', surface.check_self_intersection !== false);
+    this.setCheck('cfg-surface-allowopen', surface.allow_open === true);
+    this.setVal('cfg-surface-maxillegal', surface.max_illegal_triangles ?? '');
+    this.setVal('cfg-surface-maxparts', surface.max_unconnected_parts ?? '');
+
+    // Vehicle geometry
+    const vehicle = cfg.vehicle || {};
+    this.setVal('cfg-vehicle-wheelbase', vehicle.wheelbase ?? '');
+    this.setVal('cfg-vehicle-frontpct', vehicle.front_weight_pct ?? '');
+
     // Parallel & SLURM
     const par = cfg.parallel || {};
     this.setSelectValue('cfg-parallel-procs', par.n_procs || 32);
@@ -619,6 +641,11 @@ class CFDApp {
     this.setSelectValue('cfg-override-autosize', autoSizeMode);
     this.setVal('cfg-override-featurecells', meshParams?.feature_cells ?? '');
     this.setVal('cfg-override-maxsurflevel', meshParams?.max_surface_level ?? '');
+    const gradingMode = meshParams?.grading === 'auto' || Array.isArray(meshParams?.grading)
+      ? 'on'
+      : (meshParams?.grading === 'off' ? 'off' : 'auto');
+    this.setSelectValue('cfg-override-grading', gradingMode);
+    this.setVal('cfg-override-grading-ratio', meshParams?.grading_ratio ?? '');
 
     // Feature extraction sits outside the overrides block: only show a value
     // when the loaded config actually differs from the default.
@@ -870,6 +897,12 @@ class CFDApp {
     if (featureCells !== null) meshOverrides.feature_cells = featureCells; else delete meshOverrides.feature_cells;
     const maxSurfLevel = getOptionalInt('cfg-override-maxsurflevel');
     if (maxSurfLevel !== null) meshOverrides.max_surface_level = maxSurfLevel; else delete meshOverrides.max_surface_level;
+    const gradingMode = this.getVal('cfg-override-grading') || 'auto';
+    if (gradingMode === 'on') meshOverrides.grading = 'auto';
+    else if (gradingMode === 'off') meshOverrides.grading = 'off';
+    else delete meshOverrides.grading;
+    const gradingRatio = getOptionalFloat('cfg-override-grading-ratio');
+    if (gradingRatio !== null) meshOverrides.grading_ratio = gradingRatio; else delete meshOverrides.grading_ratio;
     if (Object.keys(meshOverrides).length > 0) overrides.mesh_params = meshOverrides;
     else delete overrides.mesh_params;
 
@@ -946,6 +979,35 @@ class CFDApp {
       // No active overrides: keep the section absent (the loader tolerates it)
       // and leave any "_" comment keys the clone carried untouched.
       delete cfg.overrides;
+    }
+
+    // 7. Boundary patch names (optional rename; blank keeps the default/loaded name)
+    const patchDefaults = { inlet: 'inlet', outlet: 'outlet', ground: 'ground', walls: 'farField', symmetry: 'symmetry' };
+    const prevPatches = (cfg.patches && typeof cfg.patches === 'object') ? cfg.patches : {};
+    const patchesOut = {};
+    Object.entries(patchDefaults).forEach(([role, fallback]) => {
+      const entered = (this.getVal(`cfg-patch-${role}`) || '').trim();
+      patchesOut[role] = entered !== '' ? entered : (prevPatches[role] || fallback);
+    });
+    cfg.patches = patchesOut;
+
+    // 8. Surface integrity check (report-only unless enforce)
+    cfg.surface_check = {
+      enabled: this.getCheck('cfg-surface-enabled'),
+      enforce: this.getCheck('cfg-surface-enforce'),
+      check_self_intersection: this.getCheck('cfg-surface-selfintersection'),
+      allow_open: this.getCheck('cfg-surface-allowopen'),
+      max_illegal_triangles: getOptionalInt('cfg-surface-maxillegal') ?? 0,
+      max_unconnected_parts: getOptionalInt('cfg-surface-maxparts') ?? 1,
+    };
+
+    // 9. Vehicle geometry (aero balance), persisted to the case config
+    const wheelbase = getOptionalFloat('cfg-vehicle-wheelbase');
+    const frontPct = getOptionalFloat('cfg-vehicle-frontpct');
+    if (wheelbase !== null || frontPct !== null) {
+      cfg.vehicle = { ...(cfg.vehicle || {}), wheelbase, front_weight_pct: frontPct };
+    } else {
+      delete cfg.vehicle;
     }
 
     this.activeConfig = cfg;
