@@ -298,7 +298,7 @@
   },
   "slurm": {
     "cpus_per_task": 1,
-    "mem_per_cpu": "3G",
+    "mem_per_cpu": "2G",
     "nodes": 1,
     "openfoam_module": null,
     "openfoam_source": "$HOME/OpenFOAM/OpenFOAM-v2606/etc/bashrc",

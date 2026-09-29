@@ -100,7 +100,7 @@
         "partition": "cpu",
         "nodes": 1,
         "_time_comment": "Optional walltime. Omit to follow the fidelity preset (fast 04:00, standard 08:00, fine 14:00).",
-        "_mem_per_cpu_comment": "Optional memory per CPU. Omit to follow the fidelity preset (fast 2G, standard 3G, fine 4G).",
+        "_mem_per_cpu_comment": "Optional memory per CPU. Omit to follow the fidelity preset (fast 2G, standard 2G, fine 4G).",
         "_cpus_per_task_comment": "Optional: CPUs per SLURM task (default 1).",
         "_cpus_per_task": 1,
         "openfoam_module": [

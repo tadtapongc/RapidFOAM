@@ -74,7 +74,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "nLayerIter": 50,
         "nRelaxIter_layers": 10,
         "slurm_time": "08:00:00",
-        "slurm_mem_per_cpu": "3G",
+        "slurm_mem_per_cpu": "2G",
         # Feature-based auto-sizing: refine until the smallest feature spans
         # feature_cells, capped at max_surface_level.
         "feature_percentile": 10.0,
