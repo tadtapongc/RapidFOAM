@@ -10,7 +10,7 @@
     "_stl_files": "ASCII STL geometry files located in the fixed stl/ directory (project root)",
     "stl_files": ["geometry.stl"],
 
-    "_fidelity": "Presets: 'fast' (~3-5M cells, ~10-20 min, y+~30), 'standard' (~9-13M cells, ~1-2 hrs, y+~10, RECOMMENDED for general aerodynamics), 'fine' (~20-28M cells, ~4-6 hrs, y+~1). Each preset carries a near-wall y+ target converted to an absolute first-layer thickness from the flow velocity and fluid properties; targets sit near the achievable value for an auto-refined surface (the clamp + CLI warning report when features force finer wall cells). All presets use Spalding-bridging wall functions, so 'fine' is wall-function-bridged at low y+ (not classical wall-resolved).",
+    "_fidelity": "Presets: 'fast' (~3-5M cells, ~10-20 min, y+~50), 'standard' (~9-13M cells, ~1-2 hrs, y+~30, RECOMMENDED for general aerodynamics), 'fine' (~20-28M cells, ~4-6 hrs, y+~1). Each preset carries a near-wall y+ target converted to an absolute first-layer thickness from the flow velocity and fluid properties; targets sit near the achievable value for an auto-refined surface (the clamp + CLI warning report when features force finer wall cells). All presets use Spalding-bridging wall functions, so 'fine' is wall-function-bridged at low y+ (not classical wall-resolved).",
     "fidelity": "standard",
 
     "_section_flow": "--- 2. Flow & Operating Conditions ---",

@@ -17,7 +17,12 @@ router = APIRouter()
 
 @router.get("/api/config/schema-defaults")
 async def api_config_defaults() -> dict[str, Any]:
-    """Return default config template and presets for the UI."""
+    """Return default config template and presets for the UI.
+
+    Exposes every field the generator applies from the preset (including snap,
+    layer-iteration, feature-angle and slurm values) so the UI cannot drift from
+    FIDELITY_PRESETS with stale hard-coded placeholders.
+    """
     return {
         "default_config": DEFAULT_CONFIG,
         "fidelity_presets": {
@@ -31,6 +36,8 @@ async def api_config_defaults() -> dict[str, Any]:
                     "n_layers": p.get("n_layers"),
                     "expansion_ratio": p.get("expansion_ratio"),
                     "ground_layers": p.get("ground_layers", False),
+                    "nLayerIter": p.get("nLayerIter"),
+                    "nRelaxIter": p.get("nRelaxIter_layers"),
                 },
                 "mesh": {
                     "cells_per_length": p.get("cells_per_length"),
@@ -42,10 +49,20 @@ async def api_config_defaults() -> dict[str, Any]:
                     "feature_cells": p.get("feature_cells"),
                     "max_surface_level": p.get("max_surface_level"),
                     "feature_percentile": p.get("feature_percentile"),
+                    "resolveFeatureAngle": p.get("resolveFeatureAngle"),
+                    "nCellsBetweenLevels": p.get("nCellsBetweenLevels"),
+                },
+                "snap": {
+                    "nSolveIter": p.get("nSolveIter"),
+                    "nFeatureSnapIter": p.get("nFeatureSnapIter"),
                 },
                 "solver": {
                     "end_time": p.get("end_time"),
                     "write_interval": p.get("write_interval"),
+                },
+                "slurm": {
+                    "time": p.get("slurm_time"),
+                    "mem_per_cpu": p.get("slurm_mem_per_cpu"),
                 },
             }
             for name, p in FIDELITY_PRESETS.items()

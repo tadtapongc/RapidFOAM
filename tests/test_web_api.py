@@ -95,6 +95,14 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(standard.get("mesh", {}).get("cells_per_length"), 30)
         self.assertIn("mesh", standard)
         self.assertIn("solver", standard)
+        # The full preset generation uses is exposed (PAIN_POINTS #9b/#1).
+        self.assertEqual(standard["layers"]["nLayerIter"], 50)
+        self.assertEqual(standard["layers"]["nRelaxIter"], 10)
+        self.assertEqual(standard["snap"]["nSolveIter"], 200)
+        self.assertEqual(standard["snap"]["nFeatureSnapIter"], 15)
+        self.assertEqual(standard["slurm"]["time"], "08:00:00")
+        self.assertEqual(standard["slurm"]["mem_per_cpu"], "3G")
+        self.assertEqual(standard["mesh"]["resolveFeatureAngle"], 35)
 
     def test_config_templates(self):
         """Test templates list endpoint."""

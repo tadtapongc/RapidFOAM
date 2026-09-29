@@ -212,12 +212,12 @@ class CFDApp {
           _edge_level: 6,
           _near_wake_level: 3,
           _far_wake_level: 1,
-          _auto_size: true,
+          _auto_size: false,
           _feature_cells: 4,
           _max_surface_level: 7,
         },
         layers: {
-          _n_layers: 5,
+          _n_layers: 8,
           _expansion_ratio: 1.2,
           _first_layer_thickness: 0.3,
           _min_thickness: 0.05,
@@ -517,8 +517,8 @@ class CFDApp {
       document.getElementById('custom-domain-container').style.display = 'none';
     }
 
-    const sym = cfg.symmetry_plane !== undefined ? cfg.symmetry_plane : (cfg._symmetry_plane !== undefined ? cfg._symmetry_plane : 0.0);
-    this.setVal('cfg-symmetry-plane', sym);
+    const sym = cfg.symmetry_plane !== undefined ? cfg.symmetry_plane : cfg._symmetry_plane;
+    this.setVal('cfg-symmetry-plane', (sym === null || sym === undefined) ? '' : sym);
 
     // Ground Level Specification (2 + 1 Styles)
     const groupRel = document.getElementById('group-ground-relative');
@@ -728,8 +728,15 @@ class CFDApp {
       cfg.domain_box = 'auto';
     }
 
-    const symPlane = parseFloat(this.getVal('cfg-symmetry-plane'));
-    cfg.symmetry_plane = isNaN(symPlane) ? 0.0 : symPlane;
+    // A blank symmetry field means "full car" — omit symmetry_plane rather than
+    // coercing it to 0.0, which would make a full-car case look like a half model.
+    const symRaw = this.getVal('cfg-symmetry-plane');
+    const symPlane = parseFloat(symRaw);
+    if (symRaw === null || symRaw === undefined || String(symRaw).trim() === '' || isNaN(symPlane)) {
+      delete cfg.symmetry_plane;
+    } else {
+      cfg.symmetry_plane = symPlane;
+    }
 
     // Ground placement is mutually exclusive: at most one of ground_clearance /
     // ground_plane may be set. Comment ("_") keys are already carried by the
@@ -1121,9 +1128,9 @@ class CFDApp {
 
   updateOverridePlaceholders(fidelity = 'standard') {
     const fallback = {
-      fast: { base_cell: 'L/20', surf_min: '3', surf_max: '4', edge: '5', nearwake: '2', farwake: '1', featurecells: '3', maxsurflevel: '6', endtime: '800', writeint: '400', n_layers: '2', expansion: '1.30', yplus: '30' },
-      standard: { base_cell: 'L/30', surf_min: '4', surf_max: '5', edge: '6', nearwake: '3', farwake: '1', featurecells: '4', maxsurflevel: '7', endtime: '1500', writeint: '500', n_layers: '3', expansion: '1.20', yplus: '10' },
-      fine: { base_cell: 'L/37.5', surf_min: '4', surf_max: '5', edge: '7', nearwake: '4', farwake: '2', featurecells: '5', maxsurflevel: '8', endtime: '2500', writeint: '500', n_layers: '12', expansion: '1.20', yplus: '1' },
+      fast: { base_cell: 'L/20', surf_min: '3', surf_max: '4', edge: '5', nearwake: '2', farwake: '1', featurecells: '3', maxsurflevel: '6', endtime: '800', writeint: '400', n_layers: '5', expansion: '1.20', yplus: '50' },
+      standard: { base_cell: 'L/30', surf_min: '4', surf_max: '5', edge: '6', nearwake: '3', farwake: '1', featurecells: '4', maxsurflevel: '7', endtime: '1500', writeint: '500', n_layers: '8', expansion: '1.20', yplus: '30' },
+      fine: { base_cell: 'L/37.5', surf_min: '4', surf_max: '5', edge: '7', nearwake: '4', farwake: '2', featurecells: '5', maxsurflevel: '8', endtime: '2500', writeint: '500', n_layers: '20', expansion: '1.10', yplus: '1' },
     };
     const p = { ...(fallback[fidelity] || fallback.standard) };
     const server = this.fidelityPresets?.[fidelity];

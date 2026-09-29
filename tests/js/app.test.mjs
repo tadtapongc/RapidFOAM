@@ -450,6 +450,21 @@ test('buildConfigFromVisualForm drops a section whose active inputs are blank', 
   );
 });
 
+// ------------------------------------------- Symmetry (full car)
+test('buildConfigFromVisualForm omits symmetry_plane for a blank field (full car)', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app._window.document.getElementById('cfg-symmetry-plane').value = '';
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.symmetry_plane, undefined);
+
+  app._window.document.getElementById('cfg-symmetry-plane').value = '0.5';
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.symmetry_plane, 0.5);
+});
+
 // ------------------------------------------- Fidelity cards (data-driven)
 
 test('updateFidelityCards sources cell/time text from the server presets', async () => {
