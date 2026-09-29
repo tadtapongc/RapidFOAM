@@ -22,8 +22,8 @@ from rapidfoam.postproc.forces import check_convergence, find_force_files, read_
 from rapidfoam.postproc.plotting import _force_stats, _rolling_average
 from rapidfoam.postproc.residuals import read_residuals
 from rapidfoam.postproc.convergence_monitor import monitor
-from rapidfoam.stl_utils import copy_stl, stl_bounds, stl_info, write_stl
-from rapidfoam.writers.scripts import _convergence_monitor_script
+from rapidfoam.geometry.stl import copy_stl, stl_bounds, stl_info, write_stl
+from rapidfoam.casegen.scripts import _convergence_monitor_script
 
 
 def force_row(time, drag, downforce=20):
@@ -60,7 +60,7 @@ class ProjectTest(unittest.TestCase):
             ((0, 0, 1), (10, 0, 0), (11, 0, 0), (10, 1, 3)),
         ])
         case = self.generate(stl_files=["wing.stl", "body.stl"])
-        from rapidfoam.stl_utils import stl_bounds
+        from rapidfoam.geometry.stl import stl_bounds
         self.assertEqual(stl_bounds(case / "constant/triSurface/wing.stl")[0][0], 10)
         self.assertEqual(stl_bounds(case / "constant/triSurface/body.stl")[0][0], 0)
 
@@ -252,7 +252,7 @@ class ProjectTest(unittest.TestCase):
             "endsolid wing_α\n"
         )
         path.write_bytes(content.encode("utf-8"))
-        from rapidfoam.stl_utils import read_stl
+        from rapidfoam.geometry.stl import read_stl
         name, triangles = read_stl(path)
         self.assertEqual(name, "wing_α")
         self.assertEqual(len(triangles), 1)
@@ -469,7 +469,7 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(box["min"][0], 0.25)
 
     def test_pitch_axis_default_convention_is_positive_x(self):
-        from rapidfoam.writers.solver import write_control_dict
+        from rapidfoam.casegen.solver import write_control_dict
 
         cfg = load_config(self.config())
         cfg["stl_names"] = ["body"]

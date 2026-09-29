@@ -14,7 +14,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from rapidfoam.config import DEFAULT_CONFIG
-from rapidfoam.writers.scripts import write_scripts
+from rapidfoam.casegen.scripts import write_scripts
 
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Requires Linux bash")

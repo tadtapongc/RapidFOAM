@@ -16,7 +16,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.casegen.builder import CaseGenerationError, build_case
-from rapidfoam.stl_utils import write_stl
+from rapidfoam.geometry.stl import write_stl
 
 
 class BuildCaseTest(unittest.TestCase):

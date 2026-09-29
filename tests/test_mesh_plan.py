@@ -23,7 +23,7 @@ from rapidfoam.meshing.layers import resolve_layers
 from rapidfoam.meshing.params import compute_mesh_params
 from rapidfoam.meshing.plan import apply_plan_to_cfg, build_mesh_plan
 from rapidfoam.meshing.presets import apply_fidelity_preset
-from rapidfoam.stl_utils import stl_bounds, write_stl
+from rapidfoam.geometry.stl import stl_bounds, write_stl
 
 
 class MeshPlanTest(unittest.TestCase):

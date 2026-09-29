@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 from rapidfoam.config import effective_config, find_stl, validate
 from rapidfoam.core.axes import flow_axis_index_sign, up_axis_index
 from rapidfoam.meshing.domain import compute_domain_box
-from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats, stl_analyze_full
+from rapidfoam.geometry.stl import EdgeStats, FeatureAngleStats, stl_analyze_full
 from rapidfoam.web.schemas import (
     CaseDownloadRequest,
     DomainBoxRequest,

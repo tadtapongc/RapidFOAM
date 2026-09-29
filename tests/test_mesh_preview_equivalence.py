@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.cli import _do_generate
 from rapidfoam.config import effective_config
-from rapidfoam.stl_utils import stl_bounds, write_stl
+from rapidfoam.geometry.stl import stl_bounds, write_stl
 from rapidfoam.web.services.geometry import layer_preview
 
 

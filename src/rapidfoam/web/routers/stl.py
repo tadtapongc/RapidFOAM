@@ -9,7 +9,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from rapidfoam.config import find_stl
-from rapidfoam.stl_utils import stl_info
+from rapidfoam.geometry.stl import stl_info
 from rapidfoam.web.state import PROJECT_ROOT, ssh_client
 
 router = APIRouter()

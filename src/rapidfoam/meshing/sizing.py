@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats
+from rapidfoam.geometry.stl import EdgeStats, FeatureAngleStats
 
 
 def _resolve_feature_sizing(

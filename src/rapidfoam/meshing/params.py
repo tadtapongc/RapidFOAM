@@ -15,7 +15,7 @@ from rapidfoam.meshing.domain import GROUND_EMBED, compute_domain_box
 from rapidfoam.meshing.grading import compute_block_grading
 from rapidfoam.meshing.presets import FIDELITY_PRESETS
 from rapidfoam.meshing.sizing import _resolve_feature_angle, _resolve_feature_sizing
-from rapidfoam.stl_utils import BBox, EdgeStats, FeatureAngleStats
+from rapidfoam.geometry.stl import BBox, EdgeStats, FeatureAngleStats
 
 
 def compute_mesh_params(

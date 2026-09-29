@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from rapidfoam.config import DEFAULT_CONFIG, deep_merge, load_config, validate
 from rapidfoam.meshing.params import compute_mesh_params
 from rapidfoam.meshing.presets import FIDELITY_PRESETS
-from rapidfoam.stl_utils import (
+from rapidfoam.geometry.stl import (
     EdgeStats,
     FeatureAngleStats,
     _dihedral_angle_deg,

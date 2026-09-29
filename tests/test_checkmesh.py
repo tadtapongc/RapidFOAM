@@ -28,7 +28,7 @@ from rapidfoam.postproc.checkmesh import (
     resolve_bands,
     verdict_bands_from_dict,
 )
-from rapidfoam.stl_utils import write_stl
+from rapidfoam.geometry.stl import write_stl
 
 BODY_TRIANGLES = [((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 3))]
 

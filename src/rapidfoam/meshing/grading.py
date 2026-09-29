@@ -7,7 +7,7 @@ from typing import Any
 
 from rapidfoam.core.axes import flow_axis_index_sign, up_axis_index
 from rapidfoam.core.faces import face_assignments, face_role
-from rapidfoam.stl_utils import BBox
+from rapidfoam.geometry.stl import BBox
 
 # Far/near cell-size ratio for the auto-graded background mesh. The near-body
 # (fine) cell stays at the base cell size while cells grow toward the domain

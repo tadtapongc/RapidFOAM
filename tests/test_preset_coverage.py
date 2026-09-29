@@ -19,7 +19,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.cli import _do_generate
-from rapidfoam.stl_utils import write_stl
+from rapidfoam.geometry.stl import write_stl
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

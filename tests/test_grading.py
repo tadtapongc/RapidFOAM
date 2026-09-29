@@ -18,7 +18,7 @@ from rapidfoam.meshing.grading import (
     compute_block_grading,
 )
 from rapidfoam.meshing.params import compute_mesh_params
-from rapidfoam.stl_utils import write_stl
+from rapidfoam.geometry.stl import write_stl
 from rapidfoam.meshing.context import build_mesh_context
 from rapidfoam.meshing.plan import plan_from_config
 from rapidfoam.meshing.writers.block_mesh import write_block_mesh_dict

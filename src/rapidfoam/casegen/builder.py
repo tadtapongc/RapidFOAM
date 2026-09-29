@@ -50,7 +50,7 @@ def build_case(
     from rapidfoam.meshing.pipeline import emit_mesh_files
     from rapidfoam.meshing.plan import apply_plan_to_cfg, build_mesh_plan
     from rapidfoam.meshing.presets import apply_fidelity_preset
-    from rapidfoam.stl_utils import EdgeStats, FeatureAngleStats, copy_stl, stl_analyze_full
+    from rapidfoam.geometry.stl import EdgeStats, FeatureAngleStats, copy_stl, stl_analyze_full
 
     if not cfg_path.exists():
         raise CaseGenerationError(f"ERROR: {cfg_path} not found")
@@ -310,10 +310,10 @@ def build_case(
             raise CaseGenerationError(f"ERROR: {stem}: {e}")
 
     # Write all OpenFOAM files
-    from rapidfoam.writers.constants import write_constant
-    from rapidfoam.writers.fields import write_fields
-    from rapidfoam.writers.scripts import write_scripts
-    from rapidfoam.writers.solver import (
+    from rapidfoam.casegen.constants import write_constant
+    from rapidfoam.casegen.fields import write_fields
+    from rapidfoam.casegen.scripts import write_scripts
+    from rapidfoam.casegen.solver import (
         write_control_dict,
         write_decompose_par_dict,
         write_fv_schemes,

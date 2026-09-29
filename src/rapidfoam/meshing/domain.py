@@ -6,7 +6,7 @@ from typing import Any
 
 from rapidfoam.core.axes import flow_axis_index_sign, up_axis_index
 from rapidfoam.core.faces import face_assignments, face_role
-from rapidfoam.stl_utils import BBox
+from rapidfoam.geometry.stl import BBox
 
 # Small distance the ground patch is embedded below the configured plane so the
 # moving-ground wall reliably cuts the background mesh. Shared by the domain

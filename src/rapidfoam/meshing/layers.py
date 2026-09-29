@@ -12,7 +12,7 @@ from typing import Any
 
 from rapidfoam.core.axes import flow_axis_index_sign, up_axis_index
 from rapidfoam.meshing.domain import GROUND_EMBED
-from rapidfoam.stl_utils import BBox
+from rapidfoam.geometry.stl import BBox
 
 
 def estimate_friction_velocity(U: float, nu: float, length: float) -> float:
