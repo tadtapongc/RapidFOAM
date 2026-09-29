@@ -438,6 +438,24 @@ class TestWebAPI(unittest.TestCase):
         res = asyncio.run(api_telemetry_surface("test_case_surface_absent"))
         self.assertFalse(res["has_data"])
 
+    def test_remote_telemetry_bundle_includes_surfacecheck(self):
+        """The shared remote bundle must fetch log.surfaceCheck (surface panel)."""
+        from rapidfoam.web.services import telemetry as svc
+
+        captured: dict = {}
+
+        def fake_bundle(specs):
+            captured["specs"] = list(specs)
+            return {}
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
+                patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
+            svc._remote_telemetry_cache.clear()
+            asyncio.run(svc._read_remote_telemetry("remote_case_surface"))
+
+        patterns = [pattern for pattern, _ in captured["specs"]]
+        self.assertTrue(any("log.surfaceCheck" in p for p in patterns), patterns)
+
     def test_telemetry_residuals_alignment(self):
         """Test telemetry residuals alignment where variable arrays have equal length."""
         case_name = "test_case_residuals"
