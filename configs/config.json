@@ -165,7 +165,7 @@
             "_min_thickness": "Same units as first_layer_thickness. Must not exceed the total layer stack. Leave unset to auto-derive as the first layer.",
             "_ground_layers": "Off by default. Opt-in prism layers on the moving ground patch; requires at least max(2 mm, 2x first layer) clearance and is capped by ground_n_layers.",
             "_two_pass": "false (default). true = two-pass meshing: pass 1 castellates + snaps, pass 2 adds layers with the quality gate relaxed (system/snappyHexMeshDict_layering) for higher boundary-layer coverage at some quality cost. Taper the layering limits back with checkMesh.",
-            "_y_plus_fit": "false (default). true = if the y+ target is unreachable at the current surface resolution (snappy caps a layer at maxFaceThicknessRatio x the local face), raise maxFaceThicknessRatio (up to 0.8) and, only if needed, coarsen the finest surface level so the target is met instead of clamped.",
+            "_y_plus_fit": "false (default) / 'ratio' / 'full'. If the y+ target is unreachable at the current surface resolution (snappy caps a layer at maxFaceThicknessRatio x the local face): 'ratio' raises maxFaceThicknessRatio up to 0.8 only (surface_level untouched); 'full' also coarsens the finest surface level if the cap is not enough. Falls back to the plain clamp+warning if the target still cannot be built.",
             "_ground_n_layers": "Maximum ground layer count (default 2, never more than n_layers)"
         },
         "fluid": {

@@ -763,10 +763,11 @@
                     <label for="cfg-override-layer-yplusfit">Fit y+ to Target</label>
                     <select id="cfg-override-layer-yplusfit" class="input">
                       <option value="auto" selected>Auto (preset: off)</option>
-                      <option value="on">On</option>
+                      <option value="full">On — ratio + surface level</option>
+                      <option value="ratio">On — ratio only (keep surface level)</option>
                       <option value="off">Off</option>
                     </select>
-                    <span class="field-hint">When the target y+ is unreachable at the current surface resolution, raise maxFaceThicknessRatio (up to 0.8) and, only if needed, coarsen the finest surface level so the requested y+ is met instead of clamped.</span>
+                    <span class="field-hint">When the target y+ is unreachable at the current surface resolution: "ratio" raises maxFaceThicknessRatio (up to 0.8) only; "full" also coarsens the finest surface level if the cap is not enough. Falls back to the plain clamp when still unreachable.</span>
                   </div>
 
                   <div class="form-group col-span-2">

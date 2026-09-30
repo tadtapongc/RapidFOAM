@@ -525,16 +525,20 @@ test('buildConfigFromVisualForm emits two_pass on/off/auto', async () => {
 });
 
 // ------------------------------------------- y+ fit
-test('buildConfigFromVisualForm emits y_plus_fit on/off/auto', async () => {
+test('buildConfigFromVisualForm emits y_plus_fit full/ratio/off/auto', async () => {
   const app = await makeApp(buildStubBody());
   installFormStubs(app);
   seedForm(app);
   const sel = app._window.document.getElementById('cfg-override-layer-yplusfit');
 
-  sel.value = 'on';
+  sel.value = 'full';
   app.activeConfig = { case_name: 'c' };
   app.buildConfigFromVisualForm();
-  assert.equal(app.activeConfig.overrides.layers.y_plus_fit, true);
+  assert.equal(app.activeConfig.overrides.layers.y_plus_fit, 'full');
+
+  sel.value = 'ratio';
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.overrides.layers.y_plus_fit, 'ratio');
 
   sel.value = 'off';
   app.buildConfigFromVisualForm();
@@ -554,11 +558,13 @@ test('renderLayerPreview reports an applied y+ fit', async () => {
     y_plus_effective: 30,
     stack: 0.01,
     fit_applied: true,
+    fit_mode: 'ratio',
     fit_ratio: 0.69,
     fit_level: 4,
   });
   const text = app._window.document.getElementById('cfg-layer-preview').textContent;
   assert.ok(text.includes('y+ fit'), text);
+  assert.ok(text.includes('ratio'), text);
   assert.ok(text.includes('0.69'), text);
   assert.ok(text.includes('level 4'), text);
   assert.ok(text.includes('surface level 4'), text);

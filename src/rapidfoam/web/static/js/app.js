@@ -664,7 +664,10 @@ class CFDApp {
     this.setSelectValue('cfg-override-layer-ground', groundMode);
     const twoPassMode = layers?.two_pass === true ? 'on' : (layers?.two_pass === false ? 'off' : 'auto');
     this.setSelectValue('cfg-override-layer-twopass', twoPassMode);
-    const yPlusFitMode = layers?.y_plus_fit === true ? 'on' : (layers?.y_plus_fit === false ? 'off' : 'auto');
+    const yPlusFitValue = layers?.y_plus_fit;
+    const yPlusFitMode = (yPlusFitValue === true || yPlusFitValue === 'full')
+      ? 'full'
+      : (yPlusFitValue === 'ratio' ? 'ratio' : (yPlusFitValue === false ? 'off' : 'auto'));
     this.setSelectValue('cfg-override-layer-yplusfit', yPlusFitMode);
     this.setVal('cfg-override-layer-yplus', layers?.y_plus_target ?? '');
     this.setVal('cfg-override-layer-nlayers', layers?.n_layers ?? '');
@@ -955,7 +958,8 @@ class CFDApp {
     else if (twoPassMode === 'off') layersOverrides.two_pass = false;
     else delete layersOverrides.two_pass;
     const yPlusFitMode = this.getVal('cfg-override-layer-yplusfit') || 'auto';
-    if (yPlusFitMode === 'on') layersOverrides.y_plus_fit = true;
+    if (yPlusFitMode === 'full') layersOverrides.y_plus_fit = 'full';
+    else if (yPlusFitMode === 'ratio') layersOverrides.y_plus_fit = 'ratio';
     else if (yPlusFitMode === 'off') layersOverrides.y_plus_fit = false;
     else delete layersOverrides.y_plus_fit;
     if (Object.keys(layersOverrides).length > 0) overrides.layers = layersOverrides;
@@ -1339,7 +1343,8 @@ class CFDApp {
     if (p.fit_applied) {
       const ratio = p.fit_ratio != null ? p.fit_ratio : '—';
       const level = p.fit_level != null ? p.fit_level : '—';
-      text += ` | y+ fit: maxFaceThicknessRatio ${ratio}, surface level ${level}`;
+      const mode = p.fit_mode ? ` (${p.fit_mode})` : '';
+      text += ` | y+ fit${mode}: maxFaceThicknessRatio ${ratio}, surface level ${level}`;
     }
     el.textContent = text;
     this.renderAutoSizePreview(auto, fangle);

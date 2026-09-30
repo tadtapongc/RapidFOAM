@@ -10,6 +10,7 @@ from rapidfoam.meshing.layers import (
     estimate_friction_velocity,
     first_layer_height,
     resolve_layers,
+    resolve_y_plus_fit_mode,
 )
 from rapidfoam.meshing.params import compute_mesh_params
 from rapidfoam.meshing.presets import FIDELITY_PRESETS
@@ -367,7 +368,7 @@ class TestYPlusFit(unittest.TestCase):
         cfg = base_cfg("standard")
         cfg["layers"]["y_plus_target"] = target
         if fit:
-            cfg["layers"]["y_plus_fit"] = True
+            cfg["layers"]["y_plus_fit"] = fit
         return cfg
 
     def test_disabled_leaves_clamp_and_level_unchanged(self):
@@ -384,6 +385,7 @@ class TestYPlusFit(unittest.TestCase):
         original_level = list(cfg["mesh_params"]["surface_level"])
         res = resolve_layers(cfg, BOUNDS)
         self.assertTrue(res["fit_applied"])
+        self.assertEqual(res["fit_mode"], "full")
         self.assertFalse(res["clamped"])
         self.assertEqual(cfg["mesh_params"]["surface_level"], original_level)
         self.assertEqual(res["fit_level"], original_level[1])
@@ -391,17 +393,45 @@ class TestYPlusFit(unittest.TestCase):
         self.assertLessEqual(cfg["layers"]["maxFaceThicknessRatio"], 0.8)
         self.assertAlmostEqual(res["y_plus_effective"], 40.0, delta=0.5)
 
-    def test_high_target_coarsens_finest_level(self):
-        cfg = self._cfg(100)
+    def test_ratio_mode_meets_target_when_ratio_suffices(self):
+        cfg = self._cfg(40, fit="ratio")
         original_level = list(cfg["mesh_params"]["surface_level"])
         res = resolve_layers(cfg, BOUNDS)
         self.assertTrue(res["fit_applied"])
+        self.assertEqual(res["fit_mode"], "ratio")
+        self.assertFalse(res["clamped"])
+        self.assertEqual(cfg["mesh_params"]["surface_level"], original_level)
+        self.assertAlmostEqual(res["y_plus_effective"], 40.0, delta=0.5)
+
+    def test_ratio_mode_never_changes_surface_level(self):
+        # y+ 100 needs a ratio beyond the 0.8 cap, which "full" would satisfy by
+        # coarsening the finest level. "ratio" must decline instead of touching
+        # the surface resolution.
+        cfg = self._cfg(100, fit="ratio")
+        original_level = list(cfg["mesh_params"]["surface_level"])
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertFalse(res["fit_applied"])
+        self.assertTrue(res["clamped"])
+        self.assertEqual(cfg["mesh_params"]["surface_level"], original_level)
+
+    def test_high_target_coarsens_finest_level(self):
+        cfg = self._cfg(100, fit="full")
+        original_level = list(cfg["mesh_params"]["surface_level"])
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertTrue(res["fit_applied"])
+        self.assertEqual(res["fit_mode"], "full")
         self.assertFalse(res["clamped"])
         new_level = cfg["mesh_params"]["surface_level"]
         self.assertLess(new_level[1], original_level[1])
         self.assertLessEqual(new_level[0], new_level[1])
         self.assertLessEqual(cfg["layers"]["maxFaceThicknessRatio"], 0.8)
         self.assertAlmostEqual(res["y_plus_effective"], 100.0, delta=1.0)
+
+    def test_true_is_full_alias(self):
+        cfg = self._cfg(100, fit=True)
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertTrue(res["fit_applied"])
+        self.assertEqual(res["fit_mode"], "full")
 
     def test_impossible_target_falls_back_to_clamp(self):
         cfg = self._cfg(200)
@@ -427,6 +457,14 @@ class TestYPlusFit(unittest.TestCase):
 
     def test_default_config_has_fit_off(self):
         self.assertIs(DEFAULT_CONFIG["layers"]["y_plus_fit"], False)
+
+    def test_mode_normalisation(self):
+        self.assertIsNone(resolve_y_plus_fit_mode({}))
+        self.assertIsNone(resolve_y_plus_fit_mode({"y_plus_fit": False}))
+        self.assertEqual(resolve_y_plus_fit_mode({"y_plus_fit": True}), "full")
+        self.assertEqual(resolve_y_plus_fit_mode({"y_plus_fit": "ratio"}), "ratio")
+        self.assertEqual(resolve_y_plus_fit_mode({"y_plus_fit": "FULL"}), "full")
+        self.assertIsNone(resolve_y_plus_fit_mode({"y_plus_fit": "bogus"}))
 
     def test_fitted_ratio_reaches_emitted_dict(self):
         cfg = deep_merge(DEFAULT_CONFIG, {

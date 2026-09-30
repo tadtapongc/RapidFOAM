@@ -501,8 +501,11 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         errors.append("layers.ground_layers must be true or false")
     if "two_pass" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["two_pass"], bool):
         errors.append("layers.two_pass must be true or false")
-    if "y_plus_fit" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["y_plus_fit"], bool):
-        errors.append("layers.y_plus_fit must be true or false")
+    y_plus_fit = cfg.get("layers", {}).get("y_plus_fit")
+    if y_plus_fit is not None and not (
+            isinstance(y_plus_fit, bool)
+            or (isinstance(y_plus_fit, str) and y_plus_fit.strip().lower() in ("ratio", "full"))):
+        errors.append('layers.y_plus_fit must be false, "ratio", or "full"')
     if cfg.get("layers", {}).get("two_pass") is True:
         warnings.append(
             "layers.two_pass is experimental: the layering pass disables the "
