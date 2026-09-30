@@ -96,6 +96,7 @@ def write_control_dict(cfg: dict[str, Any], case_dir: Path) -> None:
                     "        type            surfaceFieldValue;\n"
                     "        libs            (fieldFunctionObjects);\n"
                     "        writeControl    writeTime;\n"
+                    "        writeFields     false;\n"
                     f"        operation       {_op};\n"
                     "        fields          (p);\n"
                     "        regionType      patch;\n"

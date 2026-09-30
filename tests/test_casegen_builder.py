@@ -139,6 +139,8 @@ class SolverFieldOutputsTest(unittest.TestCase):
         self.assertIn("wallPressure_max_body", text)
         self.assertIn("wallPressure_average_body", text)
         self.assertIn("type            surfaceFieldValue;", text)
+        # surfaceFieldValue requires writeFields in v2606.
+        self.assertIn("writeFields     false;", text)
         # Opt-in vorticity is off by default.
         self.assertNotIn("type            vorticity;", text)
 
