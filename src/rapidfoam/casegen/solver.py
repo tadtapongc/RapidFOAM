@@ -70,6 +70,7 @@ def write_control_dict(cfg: dict[str, Any], case_dir: Path) -> None:
             "        type            wallPressure;\n"
             "        libs            (fieldFunctionObjects);\n"
             "        writeControl    writeTime;\n"
+            "        writeFields     true;\n"
             f"        patches         ({force_patches});\n"
             "    }\n"
         )
