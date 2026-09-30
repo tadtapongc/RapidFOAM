@@ -154,7 +154,8 @@
                 "_override_example": {
                     "max_non_ortho": { "good": 55.0, "caution": 65.0 }
                 }
-            }
+            },
+            "_layering_relaxed": "Optional: meshQualityControls override for the two-pass layering pass (system/snappyHexMeshDict_layering). Defaults to mesh_quality.relaxed. Only set to taper the layer gate further; the stock relaxed values are a real relaxation (maxNonOrtho 70, minDeterminant 5e-4), not a disable."
         },
         "layers": {
             "_y_plus_target": "Near-wall target. 1 = wall-function-bridged at low y+ (first cell in the sublayer), 30-100 = wall-function regime. Overrides first_layer_thickness unless that is set explicitly.",

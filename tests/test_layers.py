@@ -300,9 +300,31 @@ class TestTwoPassLayering(unittest.TestCase):
         self.assertIn("castellatedMesh false;", lay)
         self.assertIn("snap            false;", lay)
         self.assertIn("addLayers       true;", lay)
-        # Quality gate disabled in the layering pass.
-        self.assertIn("maxNonOrtho         180;", lay)
-        self.assertIn("minDeterminant      -1e30;", lay)
+        # Layering pass uses the configured relaxed limits (a real relaxation),
+        # not a total disable: maxNonOrtho 70 / minDeterminant 5e-4.
+        self.assertIn("maxNonOrtho         70;", lay)
+        self.assertIn("minDeterminant      0.0005;", lay)
+        self.assertNotIn("-1e30", lay)
+
+    def test_layering_relaxed_override_is_honoured(self):
+        cfg = deep_merge(DEFAULT_CONFIG, {
+            "stl_files": ["body.stl"],
+            "flow": {"velocity": U, "direction": "-z", "ground": True},
+        })
+        cfg["stl_names"] = ["body"]
+        cfg["domain_box"] = {"min": [0.0, 0.0, -2.0], "max": [4.0, 3.0, 6.0]}
+        cfg["layers"] = dict(cfg["layers"], two_pass=True, y_plus_target=40, n_layers=3)
+        cfg["mesh_quality"] = dict(cfg["mesh_quality"], layering_relaxed={"maxNonOrtho": 90, "minDeterminant": 1e-6})
+        cfg["mesh_params"] = compute_mesh_params(cfg, ((-0.5, 0.0, -1.5), (0.5, 1.0, 1.5)))
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / "system").mkdir()
+            emit_mesh_files_from_config(cfg, case)
+            lay = (case / "system" / "snappyHexMeshDict_layering").read_text(encoding="utf-8")
+        self.assertIn("maxNonOrtho         90;", lay)
+        self.assertIn("minDeterminant      1e-06;", lay)
+        # A key absent from the override still falls back to the strict controls.
+        self.assertIn("minVol              1e-13;", lay)
 
 
 class TestGroundLayerGuard(unittest.TestCase):

@@ -528,6 +528,14 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
                     errors.append(
                         f"mesh_quality.verdict_bands.{metric}.good/caution must be finite numbers"
                     )
+    layering_relaxed = cfg.get("mesh_quality", {}).get("layering_relaxed")
+    if layering_relaxed is not None:
+        if not isinstance(layering_relaxed, dict):
+            errors.append("mesh_quality.layering_relaxed must be an object")
+        else:
+            for key, value in layering_relaxed.items():
+                if not finite(value):
+                    errors.append(f"mesh_quality.layering_relaxed.{key} must be a finite number")
     surface_check = cfg.get("surface_check", {})
     for key in ("enabled", "enforce", "check_self_intersection", "allow_open"):
         if key in surface_check and not isinstance(surface_check[key], bool):

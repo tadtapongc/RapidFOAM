@@ -53,6 +53,61 @@ def _location_in_mesh(plan: MeshPlan, ctx: MeshContext) -> list[float]:
     return loc
 
 
+def _quality_controls_block(
+    controls: dict, relaxed: dict, fallback: dict
+) -> str:
+    """Render one snappyHexMesh ``meshQualityControls`` block.
+
+    ``controls`` supplies the main limits (falling back to ``fallback`` then a
+    hard-coded default); ``relaxed`` supplies the sub-block applied while layers
+    are added. Reused for the single-pass dict and the layering dict so the
+    layering gate is a *real* relaxation rather than a total disable.
+    """
+
+    def c(key: str, default):
+        return controls.get(key, fallback.get(key, default))
+
+    def r(key: str, default):
+        return relaxed.get(key, default)
+
+    return f"""\
+meshQualityControls
+{{
+    maxNonOrtho         {c("maxNonOrtho", 65)};
+    maxBoundarySkewness {c("maxBoundarySkewness", 20)};
+    maxInternalSkewness {c("maxInternalSkewness", 4)};
+    maxConcave          {c("maxConcave", 80)};
+    minVol              {c("minVol", 1e-13)};
+    minTetQuality       {c("minTetQuality", 1e-15)};
+    minArea             {c("minArea", -1)};
+    minTwist            {c("minTwist", 0.02)};
+    minDeterminant      {c("minDeterminant", 0.001)};
+    minFaceWeight       {c("minFaceWeight", 0.05)};
+    minVolRatio         {c("minVolRatio", 0.01)};
+    minTriangleTwist    {c("minTriangleTwist", -1)};
+    nSmoothScale        {c("nSmoothScale", 4)};
+    errorReduction      {c("errorReduction", 0.75)};
+
+    relaxed
+    {{
+        maxNonOrtho     {r("maxNonOrtho", 75)};
+        maxBoundarySkewness {r("maxBoundarySkewness", 25)};
+        maxInternalSkewness {r("maxInternalSkewness", 5)};
+        maxConcave      {r("maxConcave", 85)};
+        minVol          {r("minVol", 1e-13)};
+        minTetQuality   {r("minTetQuality", 1e-30)};
+        minArea         {r("minArea", -1)};
+        minTwist        {r("minTwist", 0.001)};
+        minDeterminant  {r("minDeterminant", 0.0005)};
+        minFaceWeight   {r("minFaceWeight", 0.02)};
+        minVolRatio     {r("minVolRatio", 0.005)};
+        minTriangleTwist {r("minTriangleTwist", -1)};
+    }}
+}}
+
+"""
+
+
 def write_snappy_hex_mesh_dict(plan: MeshPlan, ctx: MeshContext, case_dir: Path) -> None:
     """Generate snappyHexMeshDict (and the two-pass layering dict) from the plan."""
     mesh = plan.mesh_params
@@ -113,79 +168,16 @@ def write_snappy_hex_mesh_dict(plan: MeshPlan, ctx: MeshContext, case_dir: Path)
 
     loc = _location_in_mesh(plan, ctx)
 
-    quality_text = f"""\
-meshQualityControls
-{{
-    maxNonOrtho         {quality.get("maxNonOrtho", 65)};
-    maxBoundarySkewness {quality.get("maxBoundarySkewness", 20)};
-    maxInternalSkewness {quality.get("maxInternalSkewness", 4)};
-    maxConcave          {quality.get("maxConcave", 80)};
-    minVol              {quality.get("minVol", 1e-13)};
-    minTetQuality       {quality.get("minTetQuality", 1e-15)};
-    minArea             {quality.get("minArea", -1)};
-    minTwist            {quality.get("minTwist", 0.02)};
-    minDeterminant      {quality.get("minDeterminant", 0.001)};
-    minFaceWeight       {quality.get("minFaceWeight", 0.05)};
-    minVolRatio         {quality.get("minVolRatio", 0.01)};
-    minTriangleTwist    {quality.get("minTriangleTwist", -1)};
-    nSmoothScale        {quality.get("nSmoothScale", 4)};
-    errorReduction      {quality.get("errorReduction", 0.75)};
+    quality_text = _quality_controls_block(quality, relaxed, quality)
 
-    relaxed
-    {{
-        maxNonOrtho     {relaxed.get("maxNonOrtho", 75)};
-        maxBoundarySkewness {relaxed.get("maxBoundarySkewness", 25)};
-        maxInternalSkewness {relaxed.get("maxInternalSkewness", 5)};
-        maxConcave      {relaxed.get("maxConcave", 85)};
-        minVol          {relaxed.get("minVol", 1e-13)};
-        minTetQuality   {relaxed.get("minTetQuality", 1e-30)};
-        minArea         {relaxed.get("minArea", -1)};
-        minTwist        {relaxed.get("minTwist", 0.001)};
-        minDeterminant  {relaxed.get("minDeterminant", 0.0005)};
-        minFaceWeight   {relaxed.get("minFaceWeight", 0.02)};
-        minVolRatio     {relaxed.get("minVolRatio", 0.005)};
-        minTriangleTwist {relaxed.get("minTriangleTwist", -1)};
-    }}
-}}
-
-"""
-
-    layering_quality_text = """\
-meshQualityControls
-{
-    maxNonOrtho         180;
-    maxBoundarySkewness -1;
-    maxInternalSkewness -1;
-    maxConcave          180;
-    minVol              -1e30;
-    minTetQuality       -1e30;
-    minArea             -1;
-    minTwist            -1;
-    minDeterminant      -1e30;
-    minFaceWeight       -1;
-    minVolRatio         -1;
-    minTriangleTwist    -1;
-    nSmoothScale        4;
-    errorReduction      0.75;
-
-    relaxed
-    {
-        maxNonOrtho         180;
-        maxBoundarySkewness -1;
-        maxInternalSkewness -1;
-        maxConcave          180;
-        minVol              -1e30;
-        minTetQuality       -1e30;
-        minArea             -1;
-        minTwist            -1;
-        minDeterminant      -1e30;
-        minFaceWeight       -1;
-        minVolRatio         -1;
-        minTriangleTwist    -1;
-    }
-}
-
-"""
+    # Layering pass gate: reuse the configured relaxed limits (a genuine
+    # relaxation) instead of the historical "disable everything" block, which
+    # let badly skewed/folded prisms through (max skewness ~285, failed checks).
+    # A case may override with mesh_quality.layering_relaxed.
+    layering_relaxed = quality.get("layering_relaxed") if isinstance(quality, dict) else None
+    if not isinstance(layering_relaxed, dict):
+        layering_relaxed = relaxed
+    layering_quality_text = _quality_controls_block(layering_relaxed, layering_relaxed, quality)
 
     def _render(castellated, snap_flag, add_layers, quality_block):
         return f"""\
