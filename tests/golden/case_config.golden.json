@@ -29,7 +29,6 @@
     "field_min_max": true,
     "surface_field_value": true,
     "vorticity": false,
-    "wall_pressure": true,
     "wall_shear_stress": true,
     "y_plus": true
   },

@@ -64,16 +64,6 @@ def write_control_dict(cfg: dict[str, Any], case_dir: Path) -> None:
             f"        patches         ({force_patches});\n"
             "    }\n"
         )
-    if bool(field_outputs.get("wall_pressure", True)):
-        wall_fields += (
-            "\n    wallPressure\n    {\n"
-            "        type            wallPressure;\n"
-            "        libs            (fieldFunctionObjects);\n"
-            "        writeControl    writeTime;\n"
-            "        writeFields     true;\n"
-            f"        patches         ({force_patches});\n"
-            "    }\n"
-        )
     # Locate the extrema of a volume field: gives the max y+ AND its coordinate,
     # which is the useful form of the near-wall tail (small text reduction).
     if bool(field_outputs.get("field_min_max", True)):

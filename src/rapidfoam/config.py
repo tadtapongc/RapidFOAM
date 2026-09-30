@@ -216,11 +216,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
 
     # Diagnostic surface/field outputs for ParaView inspection of the spatial
-    # load map (wall pressure and shear stress) and the y+ field, plus small
-    # text reductions (fieldMinMax, surfaceFieldValue) the telemetry can read.
-    # Cheap enough to leave on; set a flag false to suppress the extra output.
+    # load map (wall shear stress, the wall pressure as the p boundary) and the
+    # y+ field, plus small text reductions (fieldMinMax, surfaceFieldValue) the
+    # telemetry can read. Cheap enough to leave on; set a flag false to suppress.
     "field_outputs": {
-        "wall_pressure": True,
         "wall_shear_stress": True,
         "y_plus": True,
         "field_min_max": True,
@@ -562,7 +561,7 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
     if not isinstance(field_outputs, dict):
         errors.append("'field_outputs' must be an object")
     else:
-        for key in ("wall_pressure", "wall_shear_stress", "y_plus",
+        for key in ("wall_shear_stress", "y_plus",
                     "field_min_max", "surface_field_value", "vorticity"):
             if key in field_outputs and not isinstance(field_outputs[key], bool):
                 errors.append(f"field_outputs.{key} must be true or false")

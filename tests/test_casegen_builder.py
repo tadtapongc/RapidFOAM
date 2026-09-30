@@ -126,13 +126,12 @@ class SolverFieldOutputsTest(unittest.TestCase):
             write_control_dict(cfg, case)
             return (case / "system" / "controlDict").read_text(encoding="utf-8")
 
-    def test_default_writes_wall_fields_and_yplus_field(self):
+    def test_default_writes_wall_shear_and_yplus_field(self):
         text = self._write()
         self.assertIn("type            wallShearStress;", text)
-        self.assertIn("type            wallPressure;", text)
         self.assertIn("patches         (body);", text)
         self.assertIn("writeFields     true;", text)
-        # Extrema location + per-patch wall-pressure stats.
+        # Extrema location + per-patch wall-pressure stats (sampled from p).
         self.assertIn("type            fieldMinMax;", text)
         self.assertIn("writeLocation   true;", text)
         self.assertIn("wallPressure_min_body", text)
@@ -141,15 +140,17 @@ class SolverFieldOutputsTest(unittest.TestCase):
         self.assertIn("type            surfaceFieldValue;", text)
         # surfaceFieldValue requires writeFields in v2606.
         self.assertIn("writeFields     false;", text)
-        # Opt-in vorticity is off by default.
+        # Opt-in vorticity is off by default, and there is no wallPressure FO
+        # (the type does not exist in v2606; wall pressure is the p boundary).
         self.assertNotIn("type            vorticity;", text)
+        self.assertNotIn("type            wallPressure;", text)
 
     def test_vorticity_opt_in(self):
         self.assertIn("type            vorticity;", self._write(vorticity=True))
 
     def test_flags_disable_outputs(self):
         text = self._write(
-            wall_pressure=False, wall_shear_stress=False, y_plus=False,
+            wall_shear_stress=False, y_plus=False,
             field_min_max=False, surface_field_value=False, vorticity=False,
         )
         self.assertNotIn("wallShearStress", text)
