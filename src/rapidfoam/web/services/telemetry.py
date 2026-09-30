@@ -323,6 +323,10 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
         (f"cases/{case_name}/log.snappyHexMesh*", 600),
         (f"cases/{case_name}/log.surfaceCheck", None),
         (f"cases/{case_name}/postProcessing/yPlus/*/yPlus.dat", None),
+        # Field diagnostics (small text reductions): max y+ location and
+        # per-patch wall-pressure stats.
+        (f"cases/{case_name}/postProcessing/fieldMinMax/*/fieldMinMax.dat", None),
+        (f"cases/{case_name}/postProcessing/*/*/surfaceFieldValue.dat", None),
         (f"cases/{case_name}/case_config.json", None),
     ])
     with _remote_telemetry_lock:

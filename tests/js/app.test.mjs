@@ -682,6 +682,29 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
   assert.ok(ct.includes('98.6%'));
 });
 
+test('renderMeshQuality surfaces field diagnostics (max y+ location, wall pressure)', async () => {
+  const app = await makeApp(MESH_BODY);
+  app.renderMeshQuality({
+    ok: true,
+    verdict: 'good',
+    verdict_label: 'Good',
+    stats: { cells: 10 },
+    metrics: [],
+    layers: {},
+    patches: {},
+    cell_types: {},
+    y_plus: { available: true, target: 50, patches: {}, missed: [], note: 'all patches met' },
+    field_min_max: { yPlus: { max: 242.0, location: [1.0, 0.2, -0.3] } },
+    surface_values: { max_geometry: { operation: 'max', patch: 'geometry', value: 0.85 } },
+    note: 'mesh quality OK',
+  });
+  const text = app._window.document.getElementById('mesh-quality-note-yplus').textContent;
+  assert.ok(text.includes('Field diagnostics'), text);
+  assert.ok(text.includes('max y+ 242.0'), text);
+  assert.ok(text.includes('(1.00, 0.20, -0.30)'), text);
+  assert.ok(text.includes('wall p max geometry 0.850'), text);
+});
+
 test('renderMeshQuality flags concerns and escapes the patch name', async () => {
   const app = await makeApp(MESH_BODY);
   app.renderMeshQuality({

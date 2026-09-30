@@ -360,6 +360,32 @@ class TestWebAPI(unittest.TestCase):
         self.assertIn("geometry", res["layers"])
         self.assertAlmostEqual(res["layers"]["geometry"]["layers"], 5.0)
 
+    def test_telemetry_mesh_reports_field_diagnostics(self):
+        """fieldMinMax (y+ max location) and surfaceFieldValue are surfaced."""
+        case_name = "test_case_field_data"
+        case_dir = Path(f"cases/{case_name}")
+        case_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+        (case_dir / "log.checkMesh").write_text("    cells: 100\nMesh OK.\n", encoding="utf-8")
+        fmm = case_dir / "postProcessing" / "fieldMinMax" / "400"
+        fmm.mkdir(parents=True)
+        (fmm / "fieldMinMax.dat").write_text(
+            "# Time field min max location\n400 yPlus 0.1 242.0 (1.0 0.2 -0.3)\n",
+            encoding="utf-8",
+        )
+        svf = case_dir / "postProcessing" / "wallPressure_max_geometry" / "400"
+        svf.mkdir(parents=True)
+        (svf / "surfaceFieldValue.dat").write_text("# Time p\n400 0.85\n", encoding="utf-8")
+        (case_dir / "case_config.json").write_text(
+            json.dumps({"layers": {"n_layers": 5}}), encoding="utf-8"
+        )
+
+        res = asyncio.run(api_telemetry_mesh(case_name))
+        self.assertTrue(res["has_data"])
+        self.assertAlmostEqual(res["field_min_max"]["yPlus"]["max"], 242.0)
+        self.assertEqual(res["field_min_max"]["yPlus"]["location"], [1.0, 0.2, -0.3])
+        self.assertAlmostEqual(res["surface_values"]["max_geometry"]["value"], 0.85)
+
     def test_telemetry_mesh_yplus_miss(self):
         """A realised y+ far from target is reported as missed."""
         from rapidfoam.web.services.telemetry import _read_yplus_texts, _summarise_yplus

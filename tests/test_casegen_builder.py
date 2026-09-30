@@ -16,6 +16,8 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.casegen.builder import CaseGenerationError, build_case
+from rapidfoam.casegen.solver import write_control_dict
+from rapidfoam.config import DEFAULT_CONFIG, deep_merge
 from rapidfoam.geometry.stl import write_stl
 
 
@@ -108,6 +110,54 @@ class BuildCaseTest(unittest.TestCase):
         allrun = (case / "Allrun").read_text()
         self.assertIn("Surface is not closed", allrun)
         self.assertNotIn("Open surface allowed", allrun)
+
+
+class SolverFieldOutputsTest(unittest.TestCase):
+    """controlDict diagnostic surface fields (Phase: ParaView load map)."""
+
+    def _write(self, **field_outputs):
+        cfg = deep_merge(DEFAULT_CONFIG, {"stl_files": ["body.stl"]})
+        cfg["stl_names"] = ["body"]
+        if field_outputs:
+            cfg["field_outputs"] = field_outputs
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / "system").mkdir()
+            write_control_dict(cfg, case)
+            return (case / "system" / "controlDict").read_text(encoding="utf-8")
+
+    def test_default_writes_wall_fields_and_yplus_field(self):
+        text = self._write()
+        self.assertIn("type            wallShearStress;", text)
+        self.assertIn("type            wallPressure;", text)
+        self.assertIn("patches         (body);", text)
+        self.assertIn("writeFields     true;", text)
+        # Extrema location + per-patch wall-pressure stats.
+        self.assertIn("type            fieldMinMax;", text)
+        self.assertIn("writeLocation   true;", text)
+        self.assertIn("wallPressure_min_body", text)
+        self.assertIn("wallPressure_max_body", text)
+        self.assertIn("wallPressure_average_body", text)
+        self.assertIn("type            surfaceFieldValue;", text)
+        # Opt-in vorticity is off by default.
+        self.assertNotIn("type            vorticity;", text)
+
+    def test_vorticity_opt_in(self):
+        self.assertIn("type            vorticity;", self._write(vorticity=True))
+
+    def test_flags_disable_outputs(self):
+        text = self._write(
+            wall_pressure=False, wall_shear_stress=False, y_plus=False,
+            field_min_max=False, surface_field_value=False, vorticity=False,
+        )
+        self.assertNotIn("wallShearStress", text)
+        self.assertNotIn("wallPressure", text)
+        self.assertNotIn("writeFields", text)
+        self.assertNotIn("fieldMinMax", text)
+        self.assertNotIn("surfaceFieldValue", text)
+        # The base diagnostic objects are always present.
+        self.assertIn("type            forces;", text)
+        self.assertIn("type            yPlus;", text)
 
 
 if __name__ == "__main__":

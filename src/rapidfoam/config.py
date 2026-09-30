@@ -215,6 +215,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "includedAngle": 140,
     },
 
+    # Diagnostic surface/field outputs for ParaView inspection of the spatial
+    # load map (wall pressure and shear stress) and the y+ field, plus small
+    # text reductions (fieldMinMax, surfaceFieldValue) the telemetry can read.
+    # Cheap enough to leave on; set a flag false to suppress the extra output.
+    "field_outputs": {
+        "wall_pressure": True,
+        "wall_shear_stress": True,
+        "y_plus": True,
+        "field_min_max": True,
+        "surface_field_value": True,
+        "vorticity": False,
+    },
+
     # Mesh quality controls. snappyHexMesh's limits are where it stops *trying*,
     # not where a mesh becomes good, so they are set near the CFD-practical good
     # bands (verdict_bands below) to push it to actually fix bad faces. Tightening
@@ -545,6 +558,14 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         if value is not None and (not isinstance(value, int)
                                   or isinstance(value, bool) or value < 0):
             errors.append(f"surface_check.{key} must be an integer ≥ 0")
+    field_outputs = cfg.get("field_outputs", {})
+    if not isinstance(field_outputs, dict):
+        errors.append("'field_outputs' must be an object")
+    else:
+        for key in ("wall_pressure", "wall_shear_stress", "y_plus",
+                    "field_min_max", "surface_field_value", "vorticity"):
+            if key in field_outputs and not isinstance(field_outputs[key], bool):
+                errors.append(f"field_outputs.{key} must be true or false")
     for section, keys in {
         "parallel": ("n_procs",), "slurm": ("nodes", "cpus_per_task"),
         "mesh_params": ("maxGlobalCells", "maxLocalCells", "nCellsBetweenLevels"),

@@ -3570,9 +3570,30 @@ class CFDApp {
         }).join('');
       }
     }
+    // Spatial field diagnostics: location of the max y+ and per-patch wall pressure.
+    const fieldParts = [];
+    const fmm = data.field_min_max || {};
+    const yPlusFmm = fmm.yPlus || fmm.yplus || fmm.YPlus;
+    if (yPlusFmm && num(yPlusFmm.max) !== null) {
+      const loc = Array.isArray(yPlusFmm.location)
+        ? ` at (${yPlusFmm.location.map((v) => Number(v).toFixed(2)).join(', ')})`
+        : '';
+      fieldParts.push(`max y+ ${num(yPlusFmm.max).toFixed(1)}${loc}`);
+    }
+    const surfaceValues = data.surface_values || {};
+    const pressureMax = Object.values(surfaceValues).filter(
+      (v) => v && v.operation === 'max' && v.patch,
+    );
+    if (pressureMax.length) {
+      fieldParts.push('wall p max ' + pressureMax.map(
+        (v) => `${v.patch} ${num(v.value).toFixed(3)}`,
+      ).join(', '));
+    }
+    const yPlusNote = yPlus.available && yPlus.note ? `Near-wall y+: ${yPlus.note}` : '';
+    const fieldNote = fieldParts.length ? `Field diagnostics: ${fieldParts.join(' | ')}` : '';
     this.setValText(
       'mesh-quality-note-yplus',
-      yPlus.available && yPlus.note ? `Near-wall y+: ${yPlus.note}` : '',
+      [yPlusNote, fieldNote].filter(Boolean).join('  |  '),
     );
 
     // Boundary patches: closure status.

@@ -46,6 +46,72 @@ def write_control_dict(cfg: dict[str, Any], case_dir: Path) -> None:
     rho = cfg["fluid"]["rho"]
     velocity = cfg["flow"]["velocity"]
 
+    # Optional diagnostic outputs so the spatial load map can be inspected in
+    # ParaView and the extrema located by telemetry. Defaults on; set
+    # ``field_outputs.<name>: false`` to suppress.
+    field_outputs = cfg.get("field_outputs")
+    if not isinstance(field_outputs, dict):
+        field_outputs = {}
+    y_plus_field = bool(field_outputs.get("y_plus", True))
+    y_plus_write = "        writeFields     true;\n" if y_plus_field else ""
+    wall_fields = ""
+    if bool(field_outputs.get("wall_shear_stress", True)):
+        wall_fields += (
+            "\n    wallShearStress\n    {\n"
+            "        type            wallShearStress;\n"
+            "        libs            (fieldFunctionObjects);\n"
+            "        writeControl    writeTime;\n"
+            f"        patches         ({force_patches});\n"
+            "    }\n"
+        )
+    if bool(field_outputs.get("wall_pressure", True)):
+        wall_fields += (
+            "\n    wallPressure\n    {\n"
+            "        type            wallPressure;\n"
+            "        libs            (fieldFunctionObjects);\n"
+            "        writeControl    writeTime;\n"
+            f"        patches         ({force_patches});\n"
+            "    }\n"
+        )
+    # Locate the extrema of a volume field: gives the max y+ AND its coordinate,
+    # which is the useful form of the near-wall tail (small text reduction).
+    if bool(field_outputs.get("field_min_max", True)):
+        wall_fields += (
+            "\n    fieldMinMax\n    {\n"
+            "        type            fieldMinMax;\n"
+            "        libs            (fieldFunctionObjects);\n"
+            "        writeControl    writeTime;\n"
+            "        fields          (yPlus);\n"
+            "        mode            component;\n"
+            "        writeLocation   true;\n"
+            "    }\n"
+        )
+    # Per-patch wall-pressure statistics (min/max/average). surfaceFieldValue is
+    # the correct reduction for a surface field (fieldMinMax is volume-only).
+    if bool(field_outputs.get("surface_field_value", True)):
+        for _patch in stl_names:
+            for _op in ("min", "max", "average"):
+                wall_fields += (
+                    f"\n    wallPressure_{_op}_{_patch}\n    {{\n"
+                    "        type            surfaceFieldValue;\n"
+                    "        libs            (fieldFunctionObjects);\n"
+                    "        writeControl    writeTime;\n"
+                    f"        operation       {_op};\n"
+                    "        fields          (p);\n"
+                    "        regionType      patch;\n"
+                    f"        name            {_patch};\n"
+                    "    }\n"
+                )
+    # Opt-in volume field for wake/vortex visualization in ParaView.
+    if bool(field_outputs.get("vorticity", False)):
+        wall_fields += (
+            "\n    vorticity\n    {\n"
+            "        type            vorticity;\n"
+            "        libs            (fieldFunctionObjects);\n"
+            "        writeControl    writeTime;\n"
+            "    }\n"
+        )
+
     # Per-patch forces for multi-part geometry
     per_patch = ""
     if len(stl_names) > 1:
@@ -129,8 +195,8 @@ functions
         type            yPlus;
         libs            (fieldFunctionObjects);
         writeControl    writeTime;
-    }}
-}}
+{y_plus_write}    }}
+{wall_fields}}}
 
 """
     (case_dir / "system" / "controlDict").write_text(

@@ -80,6 +80,15 @@
     },
 
     "_feature_extract_comment": "Feature edges for snappyHexMesh. includedAngle (degrees) is the threshold BELOW which an edge is kept as a feature; 140 captures real aero edges without cosmetic CAD seams. The generator derives resolveFeatureAngle from the STL crease histogram and only sharpens this, never loosens it.",
+    "_field_outputs_comment": "Diagnostic outputs for inspecting the spatial load map in ParaView (open test.foam) and for telemetry. wall_pressure/wall_shear_stress: per-face surface fields. y_plus: writes the y+ field. field_min_max: small text reduction giving the max y+ value and its location (volume fields). surface_field_value: per-patch wall-pressure min/max/average. vorticity: opt-in volume field for wake/vortex visualization. Set a flag false to suppress.",
+    "field_outputs": {
+        "wall_pressure": true,
+        "wall_shear_stress": true,
+        "y_plus": true,
+        "field_min_max": true,
+        "surface_field_value": true,
+        "vorticity": false
+    },
     "_feature_extract": {
         "extractionMethod": "extractFromSurface",
         "includedAngle": 140

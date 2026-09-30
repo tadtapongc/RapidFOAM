@@ -25,6 +25,14 @@
     "includedAngle": 140
   },
   "fidelity": "standard",
+  "field_outputs": {
+    "field_min_max": true,
+    "surface_field_value": true,
+    "vorticity": false,
+    "wall_pressure": true,
+    "wall_shear_stress": true,
+    "y_plus": true
+  },
   "flow": {
     "direction": "-z",
     "ground": true,
