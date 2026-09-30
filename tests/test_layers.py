@@ -360,5 +360,93 @@ class TestGroundLayerGuard(unittest.TestCase):
         self.assertGreater(res["ground_clearance"], smin_up - (-0.02))
 
 
+class TestYPlusFit(unittest.TestCase):
+    """Opt-in layers.y_plus_fit: recalculate instead of clamping a y+ target."""
+
+    def _cfg(self, target, fit=True):
+        cfg = base_cfg("standard")
+        cfg["layers"]["y_plus_target"] = target
+        if fit:
+            cfg["layers"]["y_plus_fit"] = True
+        return cfg
+
+    def test_disabled_leaves_clamp_and_level_unchanged(self):
+        cfg = self._cfg(40, fit=False)
+        original_level = list(cfg["mesh_params"]["surface_level"])
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertTrue(res["clamped"])
+        self.assertFalse(res["fit_applied"])
+        self.assertEqual(cfg["mesh_params"]["surface_level"], original_level)
+        self.assertNotIn("maxFaceThicknessRatio", cfg["layers"])
+
+    def test_ratio_only_fit_meets_target_without_coarsening(self):
+        cfg = self._cfg(40)
+        original_level = list(cfg["mesh_params"]["surface_level"])
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertTrue(res["fit_applied"])
+        self.assertFalse(res["clamped"])
+        self.assertEqual(cfg["mesh_params"]["surface_level"], original_level)
+        self.assertEqual(res["fit_level"], original_level[1])
+        self.assertGreater(cfg["layers"]["maxFaceThicknessRatio"], 0.5)
+        self.assertLessEqual(cfg["layers"]["maxFaceThicknessRatio"], 0.8)
+        self.assertAlmostEqual(res["y_plus_effective"], 40.0, delta=0.5)
+
+    def test_high_target_coarsens_finest_level(self):
+        cfg = self._cfg(100)
+        original_level = list(cfg["mesh_params"]["surface_level"])
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertTrue(res["fit_applied"])
+        self.assertFalse(res["clamped"])
+        new_level = cfg["mesh_params"]["surface_level"]
+        self.assertLess(new_level[1], original_level[1])
+        self.assertLessEqual(new_level[0], new_level[1])
+        self.assertLessEqual(cfg["layers"]["maxFaceThicknessRatio"], 0.8)
+        self.assertAlmostEqual(res["y_plus_effective"], 100.0, delta=1.0)
+
+    def test_impossible_target_falls_back_to_clamp(self):
+        cfg = self._cfg(200)
+        cfg["mesh_params"]["base_cell_size"] = 1e-4
+        cfg["mesh_params"]["surface_level"] = [0, 0]
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertTrue(res["clamped"])
+        self.assertFalse(res["fit_applied"])
+        self.assertEqual(cfg["mesh_params"]["surface_level"], [0, 0])
+
+    def test_fit_not_needed_when_target_fits(self):
+        cfg = self._cfg(5)
+        res = resolve_layers(cfg, BOUNDS)
+        self.assertFalse(res["clamped"])
+        self.assertFalse(res["fit_applied"])
+
+    def test_explicit_first_layer_ignores_fit(self):
+        cfg = self._cfg(40)
+        cfg["layers"].update(relativeSizes=False, first_layer_thickness=2e-5)
+        res = resolve_layers(cfg, BOUNDS, explicit_first_layer=True)
+        self.assertFalse(res["fit_applied"])
+        self.assertEqual(cfg["layers"]["first_layer_thickness"], 2e-5)
+
+    def test_default_config_has_fit_off(self):
+        self.assertIs(DEFAULT_CONFIG["layers"]["y_plus_fit"], False)
+
+    def test_fitted_ratio_reaches_emitted_dict(self):
+        cfg = deep_merge(DEFAULT_CONFIG, {
+            "stl_files": ["body.stl"],
+            "flow": {"velocity": U, "direction": "-z", "ground": True},
+        })
+        cfg["stl_names"] = ["body"]
+        cfg["domain_box"] = {"min": [0.0, 0.0, -2.0], "max": [4.0, 3.0, 6.0]}
+        cfg["layers"] = dict(cfg["layers"], y_plus_target=40, y_plus_fit=True,
+                             n_layers=3, expansion_ratio=1.2)
+        cfg["mesh_params"] = compute_mesh_params(cfg, ((-0.5, 0.0, -1.5), (0.5, 1.0, 1.5)))
+        resolve_layers(cfg, ((-0.5, 0.0, -1.5), (0.5, 1.0, 1.5)))
+        self.assertIn("maxFaceThicknessRatio", cfg["layers"])
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / "system").mkdir()
+            emit_mesh_files_from_config(cfg, case)
+            text = (case / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
+        self.assertIn(f"maxFaceThicknessRatio   {cfg['layers']['maxFaceThicknessRatio']:g}", text)
+
+
 if __name__ == "__main__":
     unittest.main()

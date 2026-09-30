@@ -201,6 +201,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # gate relaxed (system/snappyHexMeshDict_layering). Reaches much higher
         # boundary-layer coverage on complex geometry at some quality cost.
         "two_pass": False,
+        # Opt-in: when true and the requested y+ target cannot be built at the
+        # current surface resolution (snappy caps a layer at
+        # maxFaceThicknessRatio x the local face), raise maxFaceThicknessRatio
+        # and, if still needed, coarsen the finest surface level so the target
+        # is met instead of being clamped. Off by default (predictable).
+        "y_plus_fit": False,
     },
 
     # Feature extraction (140° captures real aero edges without cosmetic CAD seams)
@@ -495,6 +501,8 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         errors.append("layers.ground_layers must be true or false")
     if "two_pass" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["two_pass"], bool):
         errors.append("layers.two_pass must be true or false")
+    if "y_plus_fit" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["y_plus_fit"], bool):
+        errors.append("layers.y_plus_fit must be true or false")
     if cfg.get("layers", {}).get("two_pass") is True:
         warnings.append(
             "layers.two_pass is experimental: the layering pass disables the "
@@ -599,12 +607,14 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
             and isinstance(surf_level, (list, tuple)) and len(surf_level) == 2
             and isinstance(surf_level[1], int) and not isinstance(surf_level[1], bool) and surf_level[1] >= 0):
         cell_fine = float(base_cell) / (2 ** surf_level[1])
-        if first > 0.5 * cell_fine:
+        thickness_ratio = float(lay.get("maxFaceThicknessRatio", 0.5) or 0.5)
+        if first > thickness_ratio * cell_fine:
             warnings.append(
-                f"layers.first_layer_thickness {first:g} m exceeds half the finest "
+                f"layers.first_layer_thickness {first:g} m exceeds "
+                f"maxFaceThicknessRatio ({thickness_ratio:g}) of the finest "
                 f"surface cell ({cell_fine:.3g} m, level {surf_level[1]}) — snappyHexMesh "
                 f"may drop boundary layers. Reduce the thickness, raise surface_level, "
-                f"or lower base_cell_size."
+                f"lower base_cell_size, or enable layers.y_plus_fit."
             )
 
     # Domain box (can be "auto" or {"min": [x,y,z], "max": [x,y,z]})

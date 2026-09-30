@@ -664,6 +664,8 @@ class CFDApp {
     this.setSelectValue('cfg-override-layer-ground', groundMode);
     const twoPassMode = layers?.two_pass === true ? 'on' : (layers?.two_pass === false ? 'off' : 'auto');
     this.setSelectValue('cfg-override-layer-twopass', twoPassMode);
+    const yPlusFitMode = layers?.y_plus_fit === true ? 'on' : (layers?.y_plus_fit === false ? 'off' : 'auto');
+    this.setSelectValue('cfg-override-layer-yplusfit', yPlusFitMode);
     this.setVal('cfg-override-layer-yplus', layers?.y_plus_target ?? '');
     this.setVal('cfg-override-layer-nlayers', layers?.n_layers ?? '');
     this.setVal('cfg-override-layer-expansion', layers?.expansion_ratio ?? '');
@@ -952,6 +954,10 @@ class CFDApp {
     if (twoPassMode === 'on') layersOverrides.two_pass = true;
     else if (twoPassMode === 'off') layersOverrides.two_pass = false;
     else delete layersOverrides.two_pass;
+    const yPlusFitMode = this.getVal('cfg-override-layer-yplusfit') || 'auto';
+    if (yPlusFitMode === 'on') layersOverrides.y_plus_fit = true;
+    else if (yPlusFitMode === 'off') layersOverrides.y_plus_fit = false;
+    else delete layersOverrides.y_plus_fit;
     if (Object.keys(layersOverrides).length > 0) overrides.layers = layersOverrides;
     else delete overrides.layers;
 
@@ -1330,6 +1336,11 @@ class CFDApp {
       : `y+ ${yPlus}`;
     let text = `u_tau ≈ ${uTau} m/s | first layer ${first} µm (${yDisplay}) | stack ${stack} mm`;
     if (p.ground_layers_note) text += ` | ground layers ${p.ground_layers_note}`;
+    if (p.fit_applied) {
+      const ratio = p.fit_ratio != null ? p.fit_ratio : '—';
+      const level = p.fit_level != null ? p.fit_level : '—';
+      text += ` | y+ fit: maxFaceThicknessRatio ${ratio}, surface level ${level}`;
+    }
     el.textContent = text;
     this.renderAutoSizePreview(auto, fangle);
   }
@@ -1392,6 +1403,7 @@ class CFDApp {
     this.setSelectValue('cfg-override-layer-mode', 'auto');
     this.setSelectValue('cfg-override-layer-ground', 'auto');
     this.setSelectValue('cfg-override-layer-twopass', 'auto');
+    this.setSelectValue('cfg-override-layer-yplusfit', 'auto');
     this.setSelectValue('cfg-override-autosize', 'auto');
     this.updateLayerModeUI();
     const preview = document.getElementById('cfg-layer-preview');

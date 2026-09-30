@@ -49,6 +49,9 @@
       "clamp_level": 5,
       "clamped": false,
       "first_layer_thickness": 0.0011805798182942158,
+      "fit_applied": false,
+      "fit_level": null,
+      "fit_ratio": null,
       "ground_clearance": 0.0,
       "ground_layers": false,
       "ground_layers_note": "",
@@ -87,6 +90,7 @@
     "relativeSizes": false,
     "slipFeatureAngle": 30,
     "two_pass": false,
+    "y_plus_fit": false,
     "y_plus_target": 30
   },
   "linear_solvers": {

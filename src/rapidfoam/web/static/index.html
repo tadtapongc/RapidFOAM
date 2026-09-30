@@ -759,6 +759,16 @@
                     <span class="field-hint">Experimental: pass 1 castellates + snaps, pass 2 adds layers with the relaxed quality gate (system/snappyHexMeshDict_layering) for higher layer coverage at some quality cost.</span>
                   </div>
 
+                  <div class="form-group">
+                    <label for="cfg-override-layer-yplusfit">Fit y+ to Target</label>
+                    <select id="cfg-override-layer-yplusfit" class="input">
+                      <option value="auto" selected>Auto (preset: off)</option>
+                      <option value="on">On</option>
+                      <option value="off">Off</option>
+                    </select>
+                    <span class="field-hint">When the target y+ is unreachable at the current surface resolution, raise maxFaceThicknessRatio (up to 0.8) and, only if needed, coarsen the finest surface level so the requested y+ is met instead of clamped.</span>
+                  </div>
+
                   <div class="form-group col-span-2">
                     <span id="cfg-layer-preview" class="field-hint"></span>
                   </div>

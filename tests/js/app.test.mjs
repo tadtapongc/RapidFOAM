@@ -305,7 +305,7 @@ const CONFIG_STUB_IDS = [
   'cfg-face-pos-z', 'cfg-face-neg-z', 'cfg-parallel-procs', 'cfg-parallel-method',
   'cfg-slurm-qos', 'cfg-slurm-partition', 'cfg-slurm-time', 'cfg-slurm-mem',
   'cfg-slurm-source', 'cfg-slurm-modules', 'cfg-override-feature-angle',
-  'cfg-slurm-cpus', 'cfg-override-layer-twopass',
+  'cfg-slurm-cpus', 'cfg-override-layer-twopass', 'cfg-override-layer-yplusfit',
   'cfg-patch-inlet', 'cfg-patch-outlet', 'cfg-patch-ground', 'cfg-patch-walls', 'cfg-patch-symmetry',
   'cfg-surface-enabled', 'cfg-surface-enforce', 'cfg-surface-selfintersection', 'cfg-surface-allowopen',
   'cfg-surface-maxillegal', 'cfg-surface-maxparts',
@@ -522,6 +522,46 @@ test('buildConfigFromVisualForm emits two_pass on/off/auto', async () => {
   sel.value = 'auto';
   app.buildConfigFromVisualForm();
   assert.equal(app.activeConfig.overrides?.layers?.two_pass, undefined);
+});
+
+// ------------------------------------------- y+ fit
+test('buildConfigFromVisualForm emits y_plus_fit on/off/auto', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  const sel = app._window.document.getElementById('cfg-override-layer-yplusfit');
+
+  sel.value = 'on';
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.overrides.layers.y_plus_fit, true);
+
+  sel.value = 'off';
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.overrides.layers.y_plus_fit, false);
+
+  sel.value = 'auto';
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.overrides?.layers?.y_plus_fit, undefined);
+});
+
+test('renderLayerPreview reports an applied y+ fit', async () => {
+  const app = await makeApp('<span id="cfg-layer-preview"></span>');
+  installFormStubs(app);
+  app.renderLayerPreview({
+    u_tau: 0.65,
+    first_layer_thickness: 0.001,
+    y_plus_effective: 30,
+    stack: 0.01,
+    fit_applied: true,
+    fit_ratio: 0.69,
+    fit_level: 4,
+  });
+  const text = app._window.document.getElementById('cfg-layer-preview').textContent;
+  assert.ok(text.includes('y+ fit'), text);
+  assert.ok(text.includes('0.69'), text);
+  assert.ok(text.includes('level 4'), text);
+  assert.ok(text.includes('surface level 4'), text);
 });
 
 // ------------------------------------------- Symmetry (full car)

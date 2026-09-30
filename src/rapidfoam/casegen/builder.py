@@ -249,6 +249,11 @@ def build_case(
         if layer_resolution.get("y_plus_effective") is not None:
             suffix = " (clamped by maxFaceThicknessRatio)" if layer_resolution.get("clamped") else ""
             report(f"    effective y+:   {layer_resolution['y_plus_effective']:.1f}{suffix}")
+        if layer_resolution.get("fit_applied"):
+            report(f"    y+ fit:         maxFaceThicknessRatio -> "
+                   f"{layer_resolution.get('fit_ratio'):g}, finest surface level -> "
+                   f"{layer_resolution.get('fit_level')} to reach y+ "
+                   f"{layer_resolution.get('y_plus_target'):g}")
         # Only flag a *significant* shortfall: the flat-plate u_tau is itself
         # ~30-40% off, so a minor clamp is not worth alarming the user about.
         requested = layer_resolution.get("y_plus_target")

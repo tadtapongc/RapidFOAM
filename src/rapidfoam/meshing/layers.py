@@ -14,6 +14,55 @@ from rapidfoam.core.axes import flow_axis_index_sign, up_axis_index
 from rapidfoam.meshing.domain import GROUND_EMBED
 from rapidfoam.geometry.stl import BBox
 
+# Upper bound on the value ``layers.y_plus_fit`` will auto-set for
+# ``maxFaceThicknessRatio``. snappyHexMesh will not extrude a layer thicker than
+# this fraction of the local face, and pushing it much past ~0.8 produces badly
+# skewed prisms, so the fit refuses to raise it beyond this.
+Y_PLUS_FIT_RATIO_CAP = 0.8
+
+
+def _fit_y_plus_clamp(
+    cfg: dict[str, Any],
+    layers: dict[str, Any],
+    requested_thickness: float,
+    base_cell: float,
+    levels: list[int],
+    ratio_limit: float,
+) -> tuple[float, int] | None:
+    """Make ``requested_thickness`` buildable by snappyHexMesh (opt-in y+ fit).
+
+    Prefers the least destructive lever: raise ``maxFaceThicknessRatio`` up to
+    :data:`Y_PLUS_FIT_RATIO_CAP`. Only when the target cannot fit under the cap
+    does it coarsen the *finest* surface level so the near-wall cell is large
+    enough (a wall-function layer must be a fraction of the local face). Mutates
+    ``layers`` and ``cfg['mesh_params']`` so the chosen values reach the writers.
+
+    Returns ``(ratio, level_fine)`` or ``None`` when even level 0 cannot build
+    the layer (then the caller keeps the plain clamp + warning).
+    """
+    if base_cell <= 0 or requested_thickness <= 0:
+        return None
+    level_fine = int(levels[1])
+    cap = max(ratio_limit, Y_PLUS_FIT_RATIO_CAP)
+    needed = requested_thickness / (base_cell / (2 ** level_fine))
+    if needed <= cap:
+        new_level = level_fine
+    else:
+        max_level = int(math.floor(math.log2(base_cell * cap / requested_thickness)))
+        new_level = max(0, min(level_fine, max_level))
+    new_cell = base_cell / (2 ** new_level)
+    if new_cell <= 0:
+        return None
+    new_ratio = min(cap, max(ratio_limit, requested_thickness / new_cell))
+    if new_ratio * new_cell + 1e-12 < requested_thickness:
+        return None
+    mesh = cfg.get("mesh_params")
+    if new_level != level_fine and isinstance(mesh, dict) and isinstance(mesh.get("surface_level"), (list, tuple)):
+        mesh["surface_level"] = [min(int(levels[0]), new_level), new_level]
+    if new_ratio > ratio_limit + 1e-9:
+        layers["maxFaceThicknessRatio"] = round(new_ratio, 4)
+    return new_ratio, new_level
+
 
 def estimate_friction_velocity(U: float, nu: float, length: float) -> float:
     """Flat-plate friction velocity estimate for external aero.
@@ -159,6 +208,10 @@ def resolve_layers(
         "thickness_max": None,
         "clamp_level": None,
         "clamp_cell_m": None,
+        # y+ fit provenance (only populated when layers.y_plus_fit resolves a clamp).
+        "fit_applied": False,
+        "fit_ratio": None,
+        "fit_level": None,
     }
     layers["_resolved"] = resolved
 
@@ -191,8 +244,28 @@ def resolve_layers(
                 resolved["clamp_level"] = level_fine
                 resolved["clamp_cell_m"] = cell_fine
                 if thickness > thickness_max:
-                    thickness = thickness_max
-                    resolved["clamped"] = True
+                    # Opt-in: instead of only clamping + warning, recalculate the
+                    # buildable thickness by raising maxFaceThicknessRatio (and,
+                    # only if needed, coarsening the finest surface level) so the
+                    # requested y+ is actually met. Default off — the plain clamp
+                    # stays predictable and is reported honestly.
+                    if bool(layers.get("y_plus_fit", False)):
+                        fitted = _fit_y_plus_clamp(
+                            cfg, layers, thickness, base_cell, levels, ratio_limit
+                        )
+                        if fitted is not None:
+                            ratio_limit, level_fine = fitted
+                            cell_fine = base_cell / (2 ** level_fine)
+                            thickness_max = ratio_limit * cell_fine
+                            resolved["thickness_max"] = thickness_max
+                            resolved["clamp_level"] = level_fine
+                            resolved["clamp_cell_m"] = cell_fine
+                            resolved["fit_applied"] = True
+                            resolved["fit_ratio"] = round(ratio_limit, 4)
+                            resolved["fit_level"] = level_fine
+                    if thickness > thickness_max and not resolved["fit_applied"]:
+                        thickness = thickness_max
+                        resolved["clamped"] = True
 
             layers["relativeSizes"] = False
             layers["first_layer_thickness"] = thickness
