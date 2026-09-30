@@ -316,9 +316,11 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
         (f"cases/{case_name}/postProcessing/residuals/*/residuals.dat", None),
         (f"cases/{case_name}/log.simpleFoam", 20000),
         # Mesh-quality inputs: checkMesh is small; the final snappy layer table
-        # sits near the end of the log, so a modest tail is enough.
+        # sits near the end of the log, so a modest tail is enough. Glob the
+        # snappy log so two-pass cases also fetch log.snappyHexMesh.layering
+        # (the layered pass writes the coverage table there; later table wins).
         (f"cases/{case_name}/log.checkMesh", 400),
-        (f"cases/{case_name}/log.snappyHexMesh", 600),
+        (f"cases/{case_name}/log.snappyHexMesh*", 600),
         (f"cases/{case_name}/log.surfaceCheck", None),
         (f"cases/{case_name}/postProcessing/yPlus/*/yPlus.dat", None),
         (f"cases/{case_name}/case_config.json", None),

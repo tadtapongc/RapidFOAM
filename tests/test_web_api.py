@@ -462,6 +462,29 @@ class TestWebAPI(unittest.TestCase):
         patterns = [pattern for pattern, _ in captured["specs"]]
         self.assertTrue(any("log.surfaceCheck" in p for p in patterns), patterns)
 
+    def test_remote_telemetry_bundle_includes_layering_log(self):
+        """The remote bundle must glob log.snappyHexMesh* so two-pass cases fetch
+        log.snappyHexMesh.layering (layer coverage would otherwise be blank)."""
+        import fnmatch
+        from rapidfoam.web.services import telemetry as svc
+
+        captured: dict = {}
+
+        def fake_bundle(specs):
+            captured["specs"] = list(specs)
+            return {}
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
+                patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
+            svc._remote_telemetry_cache.clear()
+            asyncio.run(svc._read_remote_telemetry("remote_case_layering"))
+
+        patterns = [pattern for pattern, _ in captured["specs"]]
+        self.assertTrue(
+            any(fnmatch.fnmatch("log.snappyHexMesh.layering", Path(p).name) for p in patterns),
+            patterns,
+        )
+
     def test_telemetry_residuals_alignment(self):
         """Test telemetry residuals alignment where variable arrays have equal length."""
         case_name = "test_case_residuals"
