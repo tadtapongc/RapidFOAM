@@ -370,7 +370,9 @@ class TestWebAPI(unittest.TestCase):
         fmm = case_dir / "postProcessing" / "fieldMinMax" / "400"
         fmm.mkdir(parents=True)
         (fmm / "fieldMinMax.dat").write_text(
-            "# Time field min max location\n400 yPlus 0.1 242.0 (1.0 0.2 -0.3)\n",
+            "# Field minima and maxima\n"
+            "# Time field min location(min) processor max location(max) processor\n"
+            "400 yPlus 0.0 (0.02 0.23 -0.68) 0 242.0 (1.0 0.2 -0.3) 0\n",
             encoding="utf-8",
         )
         svf = case_dir / "postProcessing" / "wallPressure_max_geometry" / "400"

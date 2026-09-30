@@ -15,10 +15,10 @@ from rapidfoam.postproc.fielddata import (
 )
 
 FIELD_MIN_MAX = """\
-# FieldMinMax fieldMinMax write:
-# Time        	field	min        	max        	location
-1	yPlus	0.0012	245.2	(1.2 0.3 -0.5)
-400	yPlus	0.0009	80.14	(0.4 0.1 -1.1)
+# Field minima and maxima
+# Time          	field           	min             	location(min)   	processor       	max             	location(max)   	processor
+1	yPlus	0.00000000e+00	(2.5e-02 2.3e-01 -6.9e-01)	0	2.45205080e+02	(4.8e-01 -4.2e-02 1.5e-01)	7
+400	yPlus	0.00000000e+00	(2.5e-02 2.3e-01 -6.9e-01)	0	8.01400000e+01	(4.0e-01 1.0e-01 -1.1e+00)	7
 """
 
 SURFACE_VALUE = """\
@@ -34,7 +34,7 @@ class ParseFieldMinMaxTest(unittest.TestCase):
         self.assertIn("yPlus", parsed)
         entry = parsed["yPlus"]
         self.assertEqual(entry["time"], 400.0)
-        self.assertAlmostEqual(entry["min"], 0.0009)
+        self.assertAlmostEqual(entry["min"], 0.0)
         self.assertAlmostEqual(entry["max"], 80.14)
         self.assertEqual(entry["location"], [0.4, 0.1, -1.1])
 

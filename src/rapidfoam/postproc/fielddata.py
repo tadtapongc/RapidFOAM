@@ -40,35 +40,54 @@ def find_field_min_max_files(base_dir: str | Path | None = None) -> list[Path]:
 def parse_field_min_max(text: str) -> dict[str, dict[str, Any]]:
     """Parse a ``fieldMinMax.dat`` into ``{field: {time, min, max, location}}``.
 
-    The row shape is ``<time> <field> <min> <max> (<x> <y> <z>)``; later rows
-    override earlier ones so the result is the latest write time.
+    OpenFOAM v2606 writes one row per field per write time with the columns
+    ``Time field min location(min) [processor] max location(max) [processor]``
+    (the ``processor`` column only appears in parallel runs). Later rows override
+    earlier ones, so the result is the latest write time; ``location`` is the
+    location of the **maximum**.
     """
     result: dict[str, dict[str, Any]] = {}
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        location: Optional[list[float]] = None
-        match = re.search(r"\(([^)]*)\)", line)
-        if match:
-            parts = match.group(1).split()
-            try:
-                location = [float(v) for v in parts] if len(parts) == 3 else None
-            except ValueError:
-                location = None
-            line = line[: match.start()]
         tokens = line.replace("(", " ").replace(")", " ").split()
-        if len(tokens) < 4:
+        if len(tokens) < 10:
             continue
         time = _num(tokens[0])
-        if time is None:
-            continue
         field = tokens[1]
         lo = _num(tokens[2])
-        hi = _num(tokens[3])
-        if lo is None or hi is None:
+
+        idx = 3
+        loc_min: list[float] = []
+        while idx < len(tokens) and len(loc_min) < 3:
+            value = _num(tokens[idx])
+            if value is None:
+                break
+            loc_min.append(value)
+            idx += 1
+        # Optional processor column before the max (present when run in parallel).
+        if len(tokens) - idx >= 6:
+            idx += 1
+        hi = _num(tokens[idx]) if idx < len(tokens) else None
+        idx += 1
+        loc_max: list[float] = []
+        while idx < len(tokens) and len(loc_max) < 3:
+            value = _num(tokens[idx])
+            if value is None:
+                break
+            loc_max.append(value)
+            idx += 1
+
+        if time is None or lo is None or hi is None:
             continue
-        result[field] = {"time": time, "min": lo, "max": hi, "location": location}
+        result[field] = {
+            "time": time,
+            "min": lo,
+            "max": hi,
+            "location": loc_max if len(loc_max) == 3 else None,
+            "location_min": loc_min if len(loc_min) == 3 else None,
+        }
     return result
 
 
