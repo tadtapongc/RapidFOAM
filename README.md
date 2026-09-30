@@ -26,6 +26,10 @@ RapidFOAM streamlines the OpenFOAM workflow for external vehicle aerodynamics: C
 - **Mesh-Quality Verification**: Parses the `checkMesh` log and snappyHexMesh's per-patch layer table to report non-orthogonality, skewness, aspect ratio, concave cells, boundary closure and boundary-layer coverage (both layer count and realised thickness), then rolls them into a tiered Good/Usable/Marginal/Bad verdict. A full-but-thin layer stack (all layers present but below 70% of the requested thickness) is flagged as a warning. Cross-references the realised `yPlus` output against the layer sizing target, which remains the authoritative near-wall check.
 - **Geometry-Adaptive Meshing (opt-in)**: Streaming STL analysis can drive feature-based surface/edge auto-sizing (`mesh_params.auto_size`) and a geometry-derived `resolveFeatureAngle` (`mesh_params.auto_feature_angle`). Both are **off by default** so the generated mesh is the plain fidelity preset and stays predictable; enable them for geometries with small features or subtle creases.
 - **Graded Background Mesh (opt-in)**: `mesh_params.grading` derives a `blockMesh` `simpleGrading` toward the ground/symmetry planes, keeping the near-body cell at the base cell size while coarsening *away* from the body (flow/wake axis stays uniform). Off by default — measured on a real case it trims ~10–30% of the final cells but raises non-orthogonality/aspect ratio, so it is opted into with `"auto"` or an explicit `[gx, gy, gz]`.
+- **Boundary-Layer y+ Fit (opt-in)**: when a `layers.y_plus_target` cannot be built at the current surface resolution (snappy caps a layer at `maxFaceThicknessRatio` × the local face), `layers.y_plus_fit` recalculates instead of silently clamping. `"ratio"` raises `maxFaceThicknessRatio` only (surface resolution untouched); `"full"` also coarsens the finest `surface_level` if the cap is insufficient. Off by default; the CLI dry-run and Studio preview report exactly what changed.
+- **Two-Pass Layering (opt-in)**: `layers.two_pass` runs `snappyHexMesh` twice — pass 1 castellates + snaps, pass 2 adds layers with *relaxed* quality limits (`system/snappyHexMeshDict_layering`) — to avoid snappy's undo iterations stripping prisms. The layering gate reuses `mesh_quality.relaxed` (a real relaxation, not a disable) and can be tuned per case with `mesh_quality.layering_relaxed`.
+- **Diagnostic Field Outputs**: opt-in/out `field_outputs` writes the surface fields `wallShearStress` (skin friction + separation) and the `yPlus` field, a `fieldMinMax` reduction giving the **maximum y+ value and its location**, and per-patch `surfaceFieldValue` wall-pressure statistics. An opt-in `vorticity` volume field is available for wake/vortex visualization. Open the case's `test.foam` in ParaView.
+- **Field & Build-up Telemetry**: the Studio Mesh Quality panel shows the individual `checkMesh` failure reasons behind a verdict, the max-y+ location, the per-patch y+ **min–max** range and the wall-pressure stats; the Telemetry tab adds a per-component drag/downforce **build-up** table from the `forces_<part>` outputs.
 - **Remote Case Management**: Submit, monitor and gracefully cancel SLURM jobs; download finished cases from the cluster with live progress (streamed and published atomically, so an interrupted transfer never leaves a partial case).
 - **Convergence Auto-Stop**: Background monitor tracks rolling force variation and signals `stopAt writeNow;` once drag and downforce stabilize within a user-defined threshold (default +/- 0.5%).
 - **Post-Processing CLI**: Tabulates aerodynamic forces (Drag, Downforce, L/D), plots live convergence curves, compares multiple case iterations side-by-side, verifies near-wall y+ against the sizing target, and reports mesh quality.
@@ -256,6 +260,14 @@ Key settings available in `configs/config.json`:
 | `surface_check.allow_open` | `bool` | Permit an open surface without a symmetry plane | `false` |
 | `mesh_params.grading` | `string` / `list` | Background grading: `"off"` (default), `"auto"`, or `[gx, gy, gz]` | `"off"` |
 | `mesh_params.grading_ratio` | `float` | Far/near cell-size ratio for auto grading (1–20) | `3.0` |
+| `layers.y_plus_fit` | `bool` / `string` | Recalculate a clamped y+ target: `false` (clamp + warn), `"ratio"` (raise `maxFaceThicknessRatio` only), or `"full"` (also coarsen the finest surface level); `true` = `"full"` | `false` |
+| `layers.two_pass` | `bool` | Two-pass layering (castellate+snap, then add layers with the relaxed gate) | `false` |
+| `mesh_quality.layering_relaxed` | `object` | Override the two-pass layering gate limits; defaults to `mesh_quality.relaxed` | — |
+| `field_outputs.wall_shear_stress` | `bool` | Write the `wallShearStress` surface field | `true` |
+| `field_outputs.y_plus` | `bool` | Write the `yPlus` field (`fieldMinMax` also reports its max + location) | `true` |
+| `field_outputs.field_min_max` | `bool` | `fieldMinMax` reduction for `yPlus` (max value + coordinate) | `true` |
+| `field_outputs.surface_field_value` | `bool` | Per-patch wall-pressure min/max/average (`surfaceFieldValue`) | `true` |
+| `field_outputs.vorticity` | `bool` | Write the `vorticity` volume field (~5–6 MB/write per million cells) | `false` |
 
 ### Mesh Fidelity Presets
 
@@ -296,6 +308,14 @@ a fine surface cell (`maxFaceThicknessRatio`), so wall-function runs want a
 coarser near-wall surface than wall-resolved ones. When the clamp bites, the CLI
 reports the realised y+ and warns instead of silently degrading the mesh.
 
+If you need the target met rather than clamped, enable `layers.y_plus_fit`:
+`"ratio"` raises `maxFaceThicknessRatio` (up to 0.8) without touching the surface
+resolution, while `"full"` additionally coarsens the finest surface level when the
+cap is not enough. The CLI dry-run and Studio layer preview report the applied
+`maxFaceThicknessRatio` and level; if even level 0 cannot build the layer, the
+plain clamp + warning is kept. Note that a thicker first layer generally lowers
+boundary-layer coverage on hard geometry, so fit-on trades coverage for y+.
+
 **Wall treatment.** All presets use the Spalding-bridging wall functions
 (`nutUSpaldingWallFunction`, `omegaWallFunction`, `kqRWallFunction`), valid
 across the whole y+ range. Spalding bridges the entire range, so `fast`/`standard`
@@ -331,7 +351,8 @@ so the mesh stays predictable:
 | `mesh_params.auto_size` | `false` | Raise surface/edge refinement so the smallest STL feature is resolved (capped by `max_surface_level`) |
 | `mesh_params.auto_feature_angle` | `false` | Derive `resolveFeatureAngle` from the STL crease (normal-angle) distribution |
 | `mesh_params.grading` | `"off"` | Grade the background grid toward the ground/symmetry planes (fewer cells, slightly higher non-orthogonality/aspect ratio) |
-| `layers.two_pass` | `false` | Two-pass layering: a second `snappyHexMesh` pass adds layers with the quality gate relaxed (`system/snappyHexMeshDict_layering`) — higher boundary-layer coverage at some quality cost; taper the limits back with `checkMesh` |
+| `layers.two_pass` | `false` | Two-pass layering: a second `snappyHexMesh` pass adds layers with the *relaxed* quality limits (`system/snappyHexMeshDict_layering`, defaulting to `mesh_quality.relaxed`; tune with `mesh_quality.layering_relaxed`) — higher boundary-layer coverage at some quality cost. Verify with `checkMesh` |
+| `layers.y_plus_fit` | `false` | Recalculate a clamped y+ target instead of clamping: `"ratio"` raises `maxFaceThicknessRatio` only; `"full"` also coarsens the finest surface level |
 
 When `checkMesh` flags a metric, change **one** thing and re-mesh:
 
@@ -348,6 +369,33 @@ When `checkMesh` flags a metric, change **one** thing and re-mesh:
 every geometry without CFD validation; the goal is a predictable mesh with no
 obvious defects (the `surfaceCheck` gate) and no obvious quality failures (the
 `checkMesh` verdict), then iterate on a single knob when needed.
+
+---
+
+## Data, Diagnostics & ParaView
+
+Every generated case writes a `test.foam` marker so it can be opened directly in
+ParaView. Beyond the standard fields (`U`, `p`, `k`, `omega`, `nut`), the optional
+config section `field_outputs` writes diagnostics for the *spatial* load and
+near-wall flow:
+
+| Output | File / field | Use |
+| :--- | :--- | :--- |
+| `wall_shear_stress` | `wallShearStress` surface field | skin friction (magnitude) and separation (direction) |
+| `y_plus` | `yPlus` field | near-wall resolution map |
+| `field_min_max` | `postProcessing/fieldMinMax/.../fieldMinMax.dat` | max y+ **value + location** |
+| `surface_field_value` | `postProcessing/wallPressure_{min,max,average}_<patch>/.../surfaceFieldValue.dat` | per-patch wall-pressure statistics |
+| `vorticity` | `vorticity` volume field (opt-in) | wake / tip-vortex structure |
+
+Wall pressure itself is the `p` boundary on the body patch (`p` is **kinematic**:
+multiply by ρ for Pa, and `Cp = p / (½U∞²)`). `fieldMinMax` and
+`surfaceFieldValue` are small text reductions that the Studio reads: the Mesh
+Quality panel shows the **max-y+ location**, the **per-patch y+ min–max range**
+and the wall-pressure stats, and the individual `checkMesh` failure reasons behind
+a verdict. For a multi-STL case the generator also writes `forces_<part>`,
+surfaced as the Telemetry tab's **Build-up by Component** table (drag/downforce/L·D
+per part). The `field_outputs` flags are also editable in the Studio (Expert →
+Diagnostic Field Outputs).
 
 ## Technical Notes & Conventions
 
@@ -405,9 +453,10 @@ RapidFOAM/
 │   ├── postproc/       # Force/residual/y+/checkMesh/surfaceCheck parsers & plots
 │   └── web/            # Web Studio: app.py, state, schemas, routers/, services/,
 │                       #   ssh_client.py, static/ (Three.js viewport, telemetry)
-├── tests/              # Python unit & regression tests
+├── tests/              # Python unit, regression, golden & architecture tests
+│   ├── golden/         # Committed casegen snapshots
 │   └── js/             # JSDOM front-end tests (npm test)
-├── docs/               # Architecture notes + historical bug-hunt reports
+├── docs/               # KNOWLEDGE_BASE.md — single comprehensive reference
 ├── package.json        # Front-end test tooling (jsdom)
 ├── CHANGELOG.md        # Release history
 ├── run_app.bat         # 1-click launcher for Windows
@@ -422,18 +471,26 @@ RapidFOAM/
 
 ### Python (core, API, post-processing)
 
-Run the backend suite with Python's standard `unittest`:
+Run the backend suite with Python's standard `unittest` (384 tests across 19
+modules, including the architecture boundary test and golden casegen snapshots):
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-### Front-end (Web Studio)
-
-The browser logic is covered by a JSDOM + `node:test` suite. Node.js 18+ is required:
+Lint (pyflakes baseline):
 
 ```bash
-npm install
+ruff check src tests
+```
+
+### Front-end (Web Studio)
+
+The browser logic is covered by a JSDOM + `node:test` suite (62 tests).
+Node.js 18+ is required:
+
+```bash
+npm ci
 npm test
 ```
 
