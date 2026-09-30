@@ -685,6 +685,14 @@ class CFDApp {
     this.setVal('cfg-override-turb-intensity', turb?.intensity ?? '');
     this.setVal('cfg-override-turb-nut-ratio', turb?.nut_ratio ?? '');
 
+    // 7. Diagnostic field outputs
+    const fieldOut = cfg.field_outputs || {};
+    this.setCheck('cfg-field-wall-shear', fieldOut.wall_shear_stress !== false);
+    this.setCheck('cfg-field-yplus', fieldOut.y_plus !== false);
+    this.setCheck('cfg-field-minmax', fieldOut.field_min_max !== false);
+    this.setCheck('cfg-field-surfacevalue', fieldOut.surface_field_value !== false);
+    this.setCheck('cfg-field-vorticity', fieldOut.vorticity === true);
+
     this.updateOverridePlaceholders(fidelity);
 
     // Render active STL chips (reconcile placeholders with available server geometries)
@@ -1020,6 +1028,17 @@ class CFDApp {
       cfg.vehicle = { ...(cfg.vehicle || {}), wheelbase, front_weight_pct: frontPct };
     } else {
       delete cfg.vehicle;
+    }
+
+    // 10. Diagnostic field outputs (top-level; defaulted in DEFAULT_CONFIG)
+    if (document.getElementById('cfg-field-wall-shear')) {
+      cfg.field_outputs = {
+        wall_shear_stress: this.getCheck('cfg-field-wall-shear'),
+        y_plus: this.getCheck('cfg-field-yplus'),
+        field_min_max: this.getCheck('cfg-field-minmax'),
+        surface_field_value: this.getCheck('cfg-field-surfacevalue'),
+        vorticity: this.getCheck('cfg-field-vorticity'),
+      };
     }
 
     this.activeConfig = cfg;
@@ -1410,6 +1429,10 @@ class CFDApp {
     this.setSelectValue('cfg-override-layer-twopass', 'auto');
     this.setSelectValue('cfg-override-layer-yplusfit', 'auto');
     this.setSelectValue('cfg-override-autosize', 'auto');
+    ['cfg-field-wall-shear', 'cfg-field-yplus', 'cfg-field-minmax', 'cfg-field-surfacevalue'].forEach(
+      (id) => this.setCheck(id, true),
+    );
+    this.setCheck('cfg-field-vorticity', false);
     this.updateLayerModeUI();
     const preview = document.getElementById('cfg-layer-preview');
     if (preview) preview.textContent = '';

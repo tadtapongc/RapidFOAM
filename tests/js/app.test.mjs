@@ -549,6 +549,37 @@ test('buildConfigFromVisualForm emits y_plus_fit full/ratio/off/auto', async () 
   assert.equal(app.activeConfig.overrides?.layers?.y_plus_fit, undefined);
 });
 
+// ------------------------------------------- Diagnostic field outputs
+test('buildConfigFromVisualForm writes field_outputs from the checkboxes', async () => {
+  const app = await makeApp(buildStubBody() + `
+    <input type="checkbox" id="cfg-field-wall-shear" checked>
+    <input type="checkbox" id="cfg-field-yplus" checked>
+    <input type="checkbox" id="cfg-field-minmax">
+    <input type="checkbox" id="cfg-field-surfacevalue" checked>
+    <input type="checkbox" id="cfg-field-vorticity" checked>
+  `);
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = { case_name: 'c' };
+  app.buildConfigFromVisualForm();
+  assert.deepEqual(JSON.parse(JSON.stringify(app.activeConfig.field_outputs)), {
+    wall_shear_stress: true,
+    y_plus: true,
+    field_min_max: false,
+    surface_field_value: true,
+    vorticity: true,
+  });
+});
+
+test('buildConfigFromVisualForm leaves field_outputs untouched without the controls', async () => {
+  const app = await makeApp(buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = { case_name: 'c', field_outputs: { vorticity: true } };
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.field_outputs.vorticity, true);
+});
+
 test('renderLayerPreview reports an applied y+ fit', async () => {
   const app = await makeApp('<span id="cfg-layer-preview"></span>');
   installFormStubs(app);

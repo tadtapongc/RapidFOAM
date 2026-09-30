@@ -832,6 +832,17 @@
                     <span class="field-hint">Freestream nut ratio (default 10)</span>
                   </div>
 
+                  <!-- 7. Diagnostic field outputs -->
+                  <div class="form-group col-span-2 overrides-section-header">
+                    <h4 class="section-subtitle">7. Diagnostic Field Outputs</h4>
+                    <span class="field-hint">Extra fields/reductions for ParaView (open test.foam) and telemetry. Wall pressure is the p boundary. Vorticity adds a volume field (~5&ndash;6&nbsp;MB per write per million cells).</span>
+                  </div>
+                  <div class="form-group"><label><input type="checkbox" id="cfg-field-wall-shear" checked> Wall shear stress field</label></div>
+                  <div class="form-group"><label><input type="checkbox" id="cfg-field-yplus" checked> y+ field</label></div>
+                  <div class="form-group"><label><input type="checkbox" id="cfg-field-minmax" checked> Field min/max reductions (max y+ location)</label></div>
+                  <div class="form-group"><label><input type="checkbox" id="cfg-field-surfacevalue" checked> Per-patch wall-pressure stats</label></div>
+                  <div class="form-group"><label><input type="checkbox" id="cfg-field-vorticity"> Vorticity field (opt-in)</label></div>
+
                 </div>
 
               </div>
