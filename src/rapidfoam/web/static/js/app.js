@@ -3565,7 +3565,7 @@ class CFDApp {
       const layers = data.layers || {};
       const patches = Object.keys(layers).sort();
       if (!patches.length) {
-        layerTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No layer data</td></tr>';
+        layerTbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No layer data</td></tr>';
       } else {
         const target = (data.target_layers !== null && data.target_layers !== undefined)
           ? `/${data.target_layers}` : '';
@@ -3585,11 +3585,16 @@ class CFDApp {
           }
           let thCls = 'monospace';
           if (thickness !== null && thickness < 0.7) thCls += ' mesh-metric-usable';
+          const ypMin = num(yp.min);
+          const ypMax = num(yp.max);
+          const ypRange = (ypMin !== null && ypMax !== null)
+            ? `${ypMin.toFixed(1)} – ${ypMax.toFixed(1)}` : '--';
           return `<tr><td>${this.escapeHtml(patch)}</td>`
             + `<td class="monospace">${achieved === null ? '--' : achieved}${target}</td>`
             + `<td class="monospace">${coverage === null ? '--' : `${Math.round(coverage * 100)}%`}</td>`
             + `<td class="${thCls}">${thickness === null ? '--' : `${Math.round(thickness * 100)}%`}</td>`
-            + `<td class="${ypCls}">${ypText}</td></tr>`;
+            + `<td class="${ypCls}">${ypText}</td>`
+            + `<td class="monospace">${ypRange}</td></tr>`;
         }).join('');
       }
     }

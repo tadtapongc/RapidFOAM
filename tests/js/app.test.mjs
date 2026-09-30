@@ -682,7 +682,7 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
     layers: { geometry: { layers: 2, coverage: 1.0, thickness_fraction: 0.9 } },
     patches: { geometry: { faces: 124862, closed: true, closure: 'closed singly connected' } },
     cell_types: { hexahedra: { count: 8881583, fraction: 0.9859 } },
-    y_plus: { available: true, target: 40, patches: { geometry: { average: 42.0 } }, missed: [], note: 'all patches within 50% of target' },
+    y_plus: { available: true, target: 40, patches: { geometry: { average: 42.0, min: 12.0, max: 118.0 } }, missed: [], note: 'all patches within 50% of target' },
     target_layers: 2,
     issues: [],
     note: 'mesh quality OK',
@@ -699,6 +699,7 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
   assert.ok(rows.includes('100%'));
   assert.ok(rows.includes('90%'), 'thickness coverage column');
   assert.ok(rows.includes('42.0 / 40'), 'realised y+ vs target');
+  assert.ok(rows.includes('12.0 – 118.0'), 'y+ min–max range');
   assert.ok(doc.getElementById('mesh-quality-note-yplus').textContent.includes('all patches'));
   // metrics table
   const metrics = doc.getElementById('mesh-metrics-tbody').innerHTML;
