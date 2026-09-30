@@ -56,6 +56,23 @@ _VOLRATIO_RE = re.compile(
 _FAILED_RE = re.compile(r"Failed (\d+) mesh checks")
 _MESH_OK_RE = re.compile(r"\bMesh OK\b")
 
+# Individual failure reasons (the "***" lines), for a readable verdict.
+_NONORTHO_ERRORS_RE = re.compile(r"Number of non-orthogonality errors:\s*(\d+)")
+_FACE_PYRAMIDS_RE = re.compile(r"(\d+) faces are incorrectly oriented")
+_FACE_TETS_RE = re.compile(r"(\d+) faces with low quality or negative volume decomposition tets")
+_SMALL_DET_RE = re.compile(r"Cells with small determinant.*?number of cells:\s*(\d+)")
+_SMALL_WEIGHT_RE = re.compile(r"Faces with small interpolation weight.*?number of faces:\s*(\d+)")
+_SMALL_VOLRATIO_RE = re.compile(r"Faces with small volume ratio.*?number of faces:\s*(\d+)")
+
+_FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (_NONORTHO_ERRORS_RE, "non-orthogonality error(s)"),
+    (_FACE_PYRAMIDS_RE, "face(s) incorrectly oriented"),
+    (_FACE_TETS_RE, "face(s) with low-quality/negative-volume decomposition tets"),
+    (_SMALL_DET_RE, "cell(s) with small determinant"),
+    (_SMALL_WEIGHT_RE, "face(s) with small interpolation weight"),
+    (_SMALL_VOLRATIO_RE, "face(s) with small volume ratio"),
+)
+
 # Cell-type breakdown block ("Overall number of cells of each type:").
 _CELL_TYPE_RE = re.compile(
     r"^\s*(hexahedra|prisms|wedges|pyramids|tet wedges|tetrahedra|polyhedra):\s+(\d+)",
@@ -299,6 +316,16 @@ def parse_checkmesh(text: str) -> dict[str, Any]:
     elif _MESH_OK_RE.search(text):
         stats["failed_checks"] = 0
         stats["ok"] = True
+
+    failures: list[str] = []
+    for pattern, label in _FAILURE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            count = int(match.group(1))
+            if count > 0:
+                failures.append(f"{count} {label}")
+    if failures:
+        stats["failures"] = failures
 
     return stats
 
@@ -686,6 +713,7 @@ def check_mesh_quality(
         "open_patches": open_patches,
         "cell_types": cell_types if isinstance(cell_types, dict) else {},
         "target_layers": target_layers,
+        "failures": stats.get("failures", []),
         "issues": issues,
         "warnings": warnings,
         "ok": ok,

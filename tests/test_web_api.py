@@ -278,6 +278,37 @@ class TestWebAPI(unittest.TestCase):
         self.assertAlmostEqual(res["drag_avg"], 50.0, places=1)
         self.assertAlmostEqual(res["downforce_avg"], 200.0, places=1)
 
+    def test_telemetry_per_part_forces(self):
+        """Per-component forces_<part> outputs are summarised separately."""
+        case_name = "test_case_per_part"
+        case_dir = Path(f"cases/{case_name}")
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+
+        combined = case_dir / "postProcessing" / "forces" / "0"
+        combined.mkdir(parents=True, exist_ok=True)
+        lines = ["# Time total(fx fy fz) pressure(fx fy fz) viscous(fx fy fz)\n"]
+        for i in range(1, 60):
+            lines.append(f"{i} (0.0 -100.0 -20.0) (0 0 0) (0 0 0)\n")
+        (combined / "force.dat").write_text("".join(lines))
+
+        for part, fy, fz in (("front_wing", -60.0, -5.0), ("rear_wing", -40.0, -15.0)):
+            d = case_dir / "postProcessing" / f"forces_{part}" / "0"
+            d.mkdir(parents=True, exist_ok=True)
+            part_lines = ["# Time total(fx fy fz) pressure(fx fy fz) viscous(fx fy fz)\n"]
+            for i in range(1, 60):
+                part_lines.append(f"{i} (0.0 {fy} {fz}) (0 0 0) (0 0 0)\n")
+            (d / "force.dat").write_text("".join(part_lines))
+
+        res = asyncio.run(api_telemetry_forces(case_name))
+        self.assertTrue(res["has_data"])
+        self.assertIn("front_wing", res["per_part"])
+        self.assertIn("rear_wing", res["per_part"])
+        # drag = -fz, downforce = -fy
+        self.assertAlmostEqual(res["per_part"]["front_wing"]["drag"], 5.0, places=1)
+        self.assertAlmostEqual(res["per_part"]["front_wing"]["downforce"], 60.0, places=1)
+        self.assertAlmostEqual(res["per_part"]["rear_wing"]["drag"], 15.0, places=1)
+        self.assertAlmostEqual(res["per_part"]["rear_wing"]["downforce"], 40.0, places=1)
+
     def test_telemetry_mesh_quality(self):
         """Mesh endpoint parses checkMesh metrics and boundary-layer coverage."""
         case_name = "test_case_mesh_quality"

@@ -167,6 +167,28 @@ def find_force_files(base_dir: str | Path | None = None) -> list[Path]:
     return all_files
 
 
+def find_per_part_force_files(base_dir: str | Path | None = None) -> dict[str, list[Path]]:
+    """Find per-component ``force.dat`` files from the ``forces_<part>`` objects.
+
+    Returns ``{part: [force.dat, ...]}`` ordered by time directory. Only present
+    when the case has more than one STL (the generator emits ``forces_<part>``
+    per component in that case).
+    """
+    base = Path(base_dir) if base_dir else Path(".")
+    parts: dict[str, list[Path]] = {}
+    for forces_dir in sorted(base.glob("postProcessing/forces_*")):
+        if not forces_dir.is_dir():
+            continue
+        part = forces_dir.name[len("forces_"):]
+        files = [
+            f for f in (d / "force.dat" for d in sorted(forces_dir.glob("*/"), key=_dir_time))
+            if f.exists()
+        ]
+        if files:
+            parts[part] = files
+    return parts
+
+
 # ============================================================
 # DATA READING
 # ============================================================

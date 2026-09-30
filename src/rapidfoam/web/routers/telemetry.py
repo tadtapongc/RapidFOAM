@@ -24,6 +24,7 @@ from rapidfoam.postproc.forces import (
     find_coefficient_files,
     find_force_files,
     find_moment_files,
+    find_per_part_force_files,
     is_symmetry_case,
     load_axis_config,
     normalize_coefficient_columns,
@@ -60,6 +61,7 @@ from rapidfoam.web.services.telemetry import (
     _load_solver_end_time,
     _load_stl_files,
     _load_vehicle_geometry,
+    _per_part_forces,
     _project_coefficient_columns_for_symmetry,
     _project_force_columns_for_symmetry,
     _project_moment_columns_for_symmetry,
@@ -71,6 +73,7 @@ from rapidfoam.web.services.telemetry import (
     _sorted_segments,
     _subsample_indices,
     _summarise_yplus,
+    _time_dir_key,
     _yplus_target_from_config,
     parse_residuals_from_log,
     parse_solver_diagnostics_from_log,
@@ -152,17 +155,34 @@ async def api_telemetry_forces(
     force_segments: list[str] = []
     moment_segments: list[str] = []
     coeff_segments: list[str] = []
+    parts_segments: dict[str, list[str]] = {}
 
     if ssh_client.is_connected:
         bundle = await _read_remote_telemetry(case_name)
-        force_segments = _sorted_segments(bundle, "/force.dat")
+        force_segments = _sorted_segments(bundle, "/force.dat", "/forces/")
         moment_segments = _sorted_segments(bundle, "/moment.dat")
         coeff_segments = _sorted_segments(bundle, "/coefficient.dat")
+        part_items: dict[str, list[tuple[str, str]]] = {}
+        for path, text in bundle.items():
+            if not path.endswith("/force.dat") or "/forces_" not in path:
+                continue
+            for segment in path.split("/"):
+                if segment.startswith("forces_"):
+                    part_items.setdefault(segment[len("forces_"):], []).append((path, text))
+                    break
+        for part, items in part_items.items():
+            items.sort(key=lambda item: _time_dir_key(item[0]))
+            parts_segments[part] = [text for _, text in items]
 
     if not force_segments and local_case.is_dir():
         force_segments = _read_text_files(find_force_files(local_case))
         moment_segments = _read_text_files(find_moment_files(local_case))
         coeff_segments = _read_text_files(find_coefficient_files(local_case))
+    if not parts_segments and local_case.is_dir():
+        for part, files in find_per_part_force_files(local_case).items():
+            parts_segments[part] = _read_text_files(files)
+
+    per_part = _per_part_forces(parts_segments, drag_idx, drag_sign, df_idx, df_sign, sym_scale)
 
     times, force_rows, force_header = parse_tabular_dat(force_segments)
     force_cols = normalize_component_columns(force_rows, force_header)
@@ -210,6 +230,7 @@ async def api_telemetry_forces(
             "balance": {"available": False},
             "coefficients": {"available": False, "summary": {}, "series": {}},
             "components": {"available": False},
+            "per_part": per_part,
         }
 
     # Apply symmetry projection to full-car values: drag/downforce (in-plane)
@@ -368,6 +389,7 @@ async def api_telemetry_forces(
             "force": force_components,
             "moment": moment_components,
         },
+        "per_part": per_part,
     }
 
 

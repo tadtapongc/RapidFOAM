@@ -272,11 +272,57 @@ async def _read_remote_bundle(specs: list[tuple[str, Optional[int]]]) -> dict[st
         return {}
 
 
-def _sorted_segments(bundle: dict[str, str], suffix: str) -> list[str]:
-    """Select bundle entries ending with ``suffix``, ordered by time-directory."""
-    paths = [path for path in bundle if path.endswith(suffix)]
+def _sorted_segments(bundle: dict[str, str], suffix: str, contain: str | None = None) -> list[str]:
+    """Select bundle entries ending with ``suffix`` (and containing ``contain``).
+
+    ``contain`` disambiguates the combined ``forces`` output from the per-part
+    ``forces_<part>`` outputs, which share the same ``/force.dat`` suffix.
+    """
+    paths = [
+        path for path in bundle
+        if path.endswith(suffix) and (contain is None or contain in path)
+    ]
     paths.sort(key=_time_dir_key)
     return [bundle[path] for path in paths]
+
+
+def _per_part_forces(
+    parts_segments: dict[str, list[str]],
+    drag_idx: int,
+    drag_sign: int,
+    df_idx: int,
+    df_sign: int,
+    sym_scale: float,
+) -> dict[str, dict[str, Any]]:
+    """Trailing-window drag/downforce per component (forces_<part> outputs)."""
+    from rapidfoam.postproc.forces import (
+        normalize_component_columns,
+        parse_tabular_dat,
+        window_stats,
+    )
+
+    drag_key = f"total_{'xyz'[drag_idx]}"
+    df_key = f"total_{'xyz'[df_idx]}"
+    result: dict[str, dict[str, Any]] = {}
+    for part, segments in parts_segments.items():
+        times, rows, header = parse_tabular_dat(segments)
+        cols = normalize_component_columns(rows, header)
+        if not times or drag_key not in cols or df_key not in cols:
+            continue
+        drags = [value * drag_sign * sym_scale for value in cols[drag_key]]
+        downforces = [value * df_sign * sym_scale for value in cols[df_key]]
+        drag_avg, drag_pct = window_stats(drags)
+        df_avg, df_pct = window_stats(downforces)
+        result[part] = {
+            "drag": round(drag_avg, 3) if drag_avg is not None else None,
+            "downforce": round(df_avg, 3) if df_avg is not None else None,
+            "ld": round(abs(df_avg / drag_avg), 2)
+            if drag_avg not in (None, 0) and df_avg is not None else None,
+            "drag_pct": round(drag_pct, 3) if drag_pct is not None else None,
+            "downforce_pct": round(df_pct, 3) if df_pct is not None else None,
+            "iterations": len(times),
+        }
+    return result
 
 
 def _time_dir_key(path: str) -> float:
@@ -310,6 +356,7 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
 
     bundle = await _read_remote_bundle([
         (f"cases/{case_name}/postProcessing/forces/*/force.dat", None),
+        (f"cases/{case_name}/postProcessing/forces_*/*/force.dat", None),
         (f"cases/{case_name}/postProcessing/forces/*/moment.dat", None),
         (f"cases/{case_name}/postProcessing/forceCoeffs/*/coefficient.dat", None),
         (f"cases/{case_name}/postProcessing/residuals/*/solverInfo.dat", None),

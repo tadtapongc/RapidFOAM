@@ -737,6 +737,49 @@ test('renderMeshQuality surfaces field diagnostics (max y+ location, wall pressu
   assert.ok(text.includes('wall p max geometry 0.850'), text);
 });
 
+test('renderMeshQuality surfaces failed-check detail', async () => {
+  const app = await makeApp(MESH_BODY);
+  app.renderMeshQuality({
+    ok: false,
+    verdict: 'bad',
+    verdict_label: 'Bad',
+    stats: { cells: 10 },
+    metrics: [],
+    layers: {},
+    patches: {},
+    cell_types: {},
+    failures: ['17 non-orthogonality error(s)', '5 cell(s) with small determinant'],
+    note: 'failed',
+  });
+  const text = app._window.document.getElementById('mesh-quality-note').textContent;
+  assert.ok(text.includes('failed checks'), text);
+  assert.ok(text.includes('17 non-orthogonality'), text);
+  assert.ok(text.includes('5 cell(s) with small determinant'), text);
+});
+
+test('renderTelemetryAnalysis renders the per-part build-up table', async () => {
+  const app = await makeApp(`
+    <table><tbody id="coeff-summary-tbody"></tbody></table>
+    <span id="coeff-source-badge"></span><span id="ref-source-badge"></span>
+    <table><tbody id="component-breakdown-tbody"></tbody></table>
+    <table><tbody id="per-part-tbody"></tbody></table>
+    <span id="reference-conditions"></span>
+    <input id="ref-aref"><input id="ref-lref"><input id="ref-rho"><input id="ref-velocity">
+    <input id="ref-cofr-x"><input id="ref-cofr-y"><input id="ref-cofr-z">
+  `);
+  app.renderTelemetryAnalysis({
+    coefficients: { summary: {}, source: 'forceCoeffs' },
+    components: {},
+    reference: {},
+    per_part: { front_wing: { drag: 5.0, downforce: 60.0, ld: 12.0 } },
+  });
+  const rows = app._window.document.getElementById('per-part-tbody').innerHTML;
+  assert.ok(rows.includes('front_wing'), rows);
+  assert.ok(rows.includes('5.00'), rows);
+  assert.ok(rows.includes('60.00'), rows);
+  assert.ok(rows.includes('12.00'), rows);
+});
+
 test('renderMeshQuality flags concerns and escapes the patch name', async () => {
   const app = await makeApp(MESH_BODY);
   app.renderMeshQuality({

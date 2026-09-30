@@ -3665,7 +3665,11 @@ class CFDApp {
       }
     }
 
-    this.setValText('mesh-quality-note', data.note || '');
+    // Failed-check detail (the *** reasons behind a Bad verdict).
+    const failures = Array.isArray(data.failures) ? data.failures : [];
+    let noteText = data.note || '';
+    if (failures.length) noteText += ` — failed checks: ${failures.join('; ')}`;
+    this.setValText('mesh-quality-note', noteText);
   }
 
   resetMeshQuality(message) {
@@ -3719,6 +3723,10 @@ class CFDApp {
     const compTbody = document.getElementById('component-breakdown-tbody');
     if (compTbody) {
       compTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No component data</td></tr>';
+    }
+    const perPartReset = document.getElementById('per-part-tbody');
+    if (perPartReset) {
+      perPartReset.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No per-part data</td></tr>';
     }
     this.setValText('coeff-source-badge', 'Source: --');
     this.setValText('ref-source-badge', 'Normalization: --');
@@ -3787,6 +3795,26 @@ class CFDApp {
       const html = buildRows(force.average || force.latest, { x: 'Fx', y: 'Fy', z: 'Fz' }, 'N') +
         buildRows(moment.average || moment.latest, { x: 'Mx', y: 'My', z: 'Mz' }, 'N·m');
       compTbody.innerHTML = html || '<tr><td colspan="4" class="text-center text-muted">No component data</td></tr>';
+    }
+
+    // Drag/downforce build-up per component (forces_<part> objects).
+    const perPartTbody = document.getElementById('per-part-tbody');
+    if (perPartTbody) {
+      const perPart = data.per_part || {};
+      const parts = Object.keys(perPart).sort();
+      if (!parts.length) {
+        perPartTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No per-part data</td></tr>';
+      } else {
+        const fmt = (value, digits = 2) => (value === null || value === undefined)
+          ? '--' : Number(value).toFixed(digits);
+        perPartTbody.innerHTML = parts.map((name) => {
+          const p = perPart[name] || {};
+          return `<tr><td>${this.escapeHtml(name)}</td>`
+            + `<td class="monospace">${fmt(p.drag)}</td>`
+            + `<td class="monospace">${fmt(p.downforce)}</td>`
+            + `<td class="monospace">${fmt(p.ld)}</td></tr>`;
+        }).join('');
+      }
     }
 
     const refEl = document.getElementById('reference-conditions');

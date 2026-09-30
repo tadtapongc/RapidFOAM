@@ -564,5 +564,39 @@ class TestMeshQualityReport(unittest.TestCase):
             self.assertAlmostEqual(report["layers"]["geometry"]["coverage"], 1.0)
 
 
+class TestFailureReasons(unittest.TestCase):
+    LOG = """\
+    cells:            470303
+Mesh non-orthogonality Max: 101.83896 average: 10.910046
+***Number of non-orthogonality errors: 17.
+***Error in face pyramids: 63 faces are incorrectly oriented.
+***Max skewness = 285.52718, 11 highly skew faces detected which may impair the quality of the results
+***Error in face tets: 423 faces with low quality or negative volume decomposition tets.
+***Cells with small determinant (< 0.001) found, number of cells: 5
+***Faces with small interpolation weight (< 0.05) found, number of faces: 14
+***Faces with small volume ratio (< 0.01) found, number of faces: 2
+Failed 8 mesh checks.
+"""
+
+    def test_parse_failure_reasons(self):
+        stats = parse_checkmesh(self.LOG)
+        self.assertEqual(stats["failed_checks"], 8)
+        failures = stats["failures"]
+        self.assertIn("17 non-orthogonality error(s)", failures)
+        self.assertIn("63 face(s) incorrectly oriented", failures)
+        self.assertIn("423 face(s) with low-quality/negative-volume decomposition tets", failures)
+        self.assertIn("5 cell(s) with small determinant", failures)
+        self.assertIn("14 face(s) with small interpolation weight", failures)
+        self.assertIn("2 face(s) with small volume ratio", failures)
+
+    def test_report_surfaces_failures(self):
+        report = check_mesh_quality(parse_checkmesh(self.LOG))
+        self.assertEqual(report["failures"], parse_checkmesh(self.LOG)["failures"])
+        self.assertEqual(report["verdict"], "bad")
+
+    def test_clean_log_has_no_failures(self):
+        self.assertNotIn("failures", parse_checkmesh(GOOD_CHECKMESH))
+
+
 if __name__ == "__main__":
     unittest.main()
