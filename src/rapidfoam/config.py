@@ -516,6 +516,10 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         errors.append("layers.ground_layers must be true or false")
     if "two_pass" in cfg.get("layers", {}) and not isinstance(cfg["layers"]["two_pass"], bool):
         errors.append("layers.two_pass must be true or false")
+    min_ratio = cfg.get("layers", {}).get("min_thickness_ratio")
+    if min_ratio is not None:
+        if not finite(min_ratio) or min_ratio <= 0 or min_ratio > 1.0:
+            errors.append("layers.min_thickness_ratio must be a finite number in (0, 1]")
     y_plus_fit = cfg.get("layers", {}).get("y_plus_fit")
     if y_plus_fit is not None and not (
             isinstance(y_plus_fit, bool)

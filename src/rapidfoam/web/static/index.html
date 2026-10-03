@@ -740,6 +740,12 @@
                   </div>
 
                   <div class="form-group">
+                    <label for="cfg-override-layer-minratio">Min Thickness Ratio</label>
+                    <input type="number" id="cfg-override-layer-minratio" class="input" step="0.05" min="0.05" max="1" placeholder="Auto (1.0)">
+                    <span class="field-hint">Fraction of the derived first layer used as minThickness. 1.0 (default) keeps the full-first-layer gate; lower it (e.g. 0.5) to let snappy keep partial stacks and improve layer coverage on hard geometry, at the cost of thinner prisms.</span>
+                  </div>
+
+                  <div class="form-group">
                     <label for="cfg-override-layer-ground">Ground Boundary Layers</label>
                     <select id="cfg-override-layer-ground" class="input">
                       <option value="auto" selected>Auto (preset: off)</option>

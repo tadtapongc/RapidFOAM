@@ -163,6 +163,20 @@ class TestResolveLayers(unittest.TestCase):
         layers = cfg["layers"]
         self.assertAlmostEqual(layers["min_thickness"], layers["first_layer_thickness"])
 
+    def test_min_thickness_ratio_scales_the_floor(self):
+        cfg = base_cfg("standard")
+        cfg["layers"]["min_thickness_ratio"] = 0.5
+        resolve_layers(cfg, BOUNDS)
+        layers = cfg["layers"]
+        self.assertAlmostEqual(layers["min_thickness"], 0.5 * layers["first_layer_thickness"])
+
+    def test_min_thickness_ratio_ignored_when_explicit_min(self):
+        cfg = base_cfg("standard")
+        cfg["layers"]["min_thickness_ratio"] = 0.5
+        cfg["layers"]["min_thickness"] = 9e-5
+        resolve_layers(cfg, BOUNDS, explicit_min_thickness=True)
+        self.assertEqual(cfg["layers"]["min_thickness"], 9e-5)
+
     def test_explicit_min_thickness_still_wins(self):
         cfg = base_cfg("standard")
         cfg["layers"]["min_thickness"] = 9e-5

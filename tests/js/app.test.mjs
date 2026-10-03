@@ -306,6 +306,7 @@ const CONFIG_STUB_IDS = [
   'cfg-slurm-qos', 'cfg-slurm-partition', 'cfg-slurm-time', 'cfg-slurm-mem',
   'cfg-slurm-source', 'cfg-slurm-modules', 'cfg-override-feature-angle',
   'cfg-slurm-cpus', 'cfg-override-layer-twopass', 'cfg-override-layer-yplusfit',
+  'cfg-override-layer-minratio',
   'cfg-patch-inlet', 'cfg-patch-outlet', 'cfg-patch-ground', 'cfg-patch-walls', 'cfg-patch-symmetry',
   'cfg-surface-enabled', 'cfg-surface-enforce', 'cfg-surface-selfintersection', 'cfg-surface-allowopen',
   'cfg-surface-maxillegal', 'cfg-surface-maxparts',

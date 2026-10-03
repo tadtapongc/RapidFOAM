@@ -201,6 +201,7 @@ def resolve_layers(
     relative = bool(layers.get("relativeSizes", True))
     n_layers = int(layers.get("n_layers", 0) or 0)
     ratio = float(layers.get("expansion_ratio", 1.0) or 1.0)
+    min_ratio = float(layers.get("min_thickness_ratio", 1.0) or 1.0)
 
     def _stack(t: float) -> float:
         if n_layers >= 1 and ratio > 1.0:
@@ -208,10 +209,14 @@ def resolve_layers(
         return t * max(n_layers, 1)
 
     def _min_thickness(t: float) -> float:
-        """Minimum layer thickness snappy may keep: the full first layer, never
-        exceeding the total stack (see the module note: minThickness == first
-        layer drops whole stacks rather than degenerating them)."""
-        return min(t, _stack(t))
+        """Minimum layer thickness snappy may keep.
+
+        ruler-scaled by ``layers.min_thickness_ratio`` (default 1.0 = the full
+        first layer). Lowering it lets snappy keep partial stacks instead of
+        dropping them entirely, materially improving coverage on hard geometry
+        at the cost of thinner/partial prisms. Never exceeds the total stack.
+        """
+        return min(max(min_ratio, 0.0) * t, _stack(t))
 
     resolved: dict[str, Any] = {
         "u_tau": u_tau,

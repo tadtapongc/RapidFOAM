@@ -674,6 +674,7 @@ class CFDApp {
     this.setVal('cfg-override-layer-expansion', layers?.expansion_ratio ?? '');
     this.setVal('cfg-override-layer-firstlayer', layers?.first_layer_thickness ?? '');
     this.setVal('cfg-override-layer-minthickness', layers?.min_thickness ?? '');
+    this.setVal('cfg-override-layer-minratio', layers?.min_thickness_ratio ?? '');
     this.updateLayerModeUI();
 
     // 5. Fluid Properties (Priority 5: Ambient medium)
@@ -957,6 +958,8 @@ class CFDApp {
     }
     const minThickness = getOptionalFloat('cfg-override-layer-minthickness');
     if (minThickness !== null) layersOverrides.min_thickness = minThickness; else delete layersOverrides.min_thickness;
+    const minRatio = getOptionalFloat('cfg-override-layer-minratio');
+    if (minRatio !== null) layersOverrides.min_thickness_ratio = minRatio; else delete layersOverrides.min_thickness_ratio;
     const groundMode = this.getVal('cfg-override-layer-ground') || 'auto';
     if (groundMode === 'on') layersOverrides.ground_layers = true;
     else if (groundMode === 'off') layersOverrides.ground_layers = false;
@@ -1417,6 +1420,7 @@ class CFDApp {
       'cfg-override-layer-yplus',
       'cfg-override-layer-firstlayer',
       'cfg-override-layer-minthickness',
+      'cfg-override-layer-minratio',
       'cfg-override-fluid-rho',
       'cfg-override-fluid-nu',
       'cfg-override-turb-model',
