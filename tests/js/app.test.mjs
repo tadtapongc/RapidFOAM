@@ -570,7 +570,6 @@ test('buildConfigFromVisualForm writes field_outputs from the checkboxes', async
     vorticity: true,
   });
 });
-
 test('buildConfigFromVisualForm leaves field_outputs untouched without the controls', async () => {
   const app = await makeApp(buildStubBody());
   installFormStubs(app);

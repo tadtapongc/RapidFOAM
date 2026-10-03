@@ -223,7 +223,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "wall_shear_stress": True,
         "y_plus": True,
         "field_min_max": True,
-        "surface_field_value": True,
+        # Opt-in: surfaceFieldValue aborts the solve if a referenced patch does
+        # not exist (e.g. a fully-internal STL part), so this is off by default.
+        # Set to true (all STL patches) or a list of patch names that exist.
+        "surface_field_value": False,
         "vorticity": False,
     },
 
@@ -561,10 +564,13 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
     if not isinstance(field_outputs, dict):
         errors.append("'field_outputs' must be an object")
     else:
-        for key in ("wall_shear_stress", "y_plus",
-                    "field_min_max", "surface_field_value", "vorticity"):
+        for key in ("wall_shear_stress", "y_plus", "field_min_max", "vorticity"):
             if key in field_outputs and not isinstance(field_outputs[key], bool):
                 errors.append(f"field_outputs.{key} must be true or false")
+        sfv = field_outputs.get("surface_field_value")
+        if sfv is not None and not isinstance(sfv, bool) and not (
+                isinstance(sfv, (list, tuple)) and all(isinstance(p, str) for p in sfv)):
+            errors.append("field_outputs.surface_field_value must be true, false, or a list of patch names")
     for section, keys in {
         "parallel": ("n_procs",), "slurm": ("nodes", "cpus_per_task"),
         "mesh_params": ("maxGlobalCells", "maxLocalCells", "nCellsBetweenLevels"),

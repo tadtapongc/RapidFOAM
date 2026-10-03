@@ -690,7 +690,7 @@ class CFDApp {
     this.setCheck('cfg-field-wall-shear', fieldOut.wall_shear_stress !== false);
     this.setCheck('cfg-field-yplus', fieldOut.y_plus !== false);
     this.setCheck('cfg-field-minmax', fieldOut.field_min_max !== false);
-    this.setCheck('cfg-field-surfacevalue', fieldOut.surface_field_value !== false);
+    this.setCheck('cfg-field-surfacevalue', fieldOut.surface_field_value === true);
     this.setCheck('cfg-field-vorticity', fieldOut.vorticity === true);
 
     this.updateOverridePlaceholders(fidelity);
@@ -1429,9 +1429,10 @@ class CFDApp {
     this.setSelectValue('cfg-override-layer-twopass', 'auto');
     this.setSelectValue('cfg-override-layer-yplusfit', 'auto');
     this.setSelectValue('cfg-override-autosize', 'auto');
-    ['cfg-field-wall-shear', 'cfg-field-yplus', 'cfg-field-minmax', 'cfg-field-surfacevalue'].forEach(
+    ['cfg-field-wall-shear', 'cfg-field-yplus', 'cfg-field-minmax'].forEach(
       (id) => this.setCheck(id, true),
     );
+    this.setCheck('cfg-field-surfacevalue', false);
     this.setCheck('cfg-field-vorticity', false);
     this.updateLayerModeUI();
     const preview = document.getElementById('cfg-layer-preview');
