@@ -601,6 +601,30 @@ test('renderLayerPreview reports an applied y+ fit', async () => {
   assert.ok(text.includes('surface level 4'), text);
 });
 
+test('renderLayerPreview shows the effective layer controls', async () => {
+  const app = await makeApp('<span id="cfg-layer-preview"></span><span id="cfg-effective-layers"></span>');
+  installFormStubs(app);
+  app.renderLayerPreview({
+    first_layer_thickness: 0.001,
+    y_plus_effective: 30,
+    stack: 0.01,
+    n_layers: 8,
+    expansion_ratio: 1.15,
+    maxFaceThicknessRatio: 0.7,
+    min_thickness_ratio: 0.35,
+    two_pass: true,
+    y_plus_fit: false,
+  });
+  const text = app._window.document.getElementById('cfg-effective-layers').textContent;
+  assert.ok(text.includes('Effective layers'), text);
+  assert.ok(text.includes('n_layers 8'), text);
+  assert.ok(text.includes('expansion 1.15'), text);
+  assert.ok(text.includes('maxFaceThicknessRatio 0.7'), text);
+  assert.ok(text.includes('min_thickness_ratio 0.35'), text);
+  assert.ok(text.includes('two_pass on'), text);
+  assert.ok(text.includes('y+ fit off'), text);
+});
+
 // ------------------------------------------- Symmetry (full car)
 test('buildConfigFromVisualForm omits symmetry_plane for a blank field (full car)', async () => {
   const app = await makeApp(buildStubBody());

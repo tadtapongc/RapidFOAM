@@ -40,6 +40,14 @@ def layer_preview(
     resolved["feature_angle"] = plan.mesh_params.get("feature_angle")
     resolved["surface_level"] = plan.mesh_params.get("surface_level")
     resolved["edge_level"] = plan.mesh_params.get("edge_level")
+    # Effective layer controls the readout shows alongside the resolved spec.
+    layers_cfg = preview_cfg.get("layers", {})
+    resolved["n_layers"] = layers_cfg.get("n_layers")
+    resolved["expansion_ratio"] = layers_cfg.get("expansion_ratio")
+    resolved["two_pass"] = layers_cfg.get("two_pass")
+    resolved["maxFaceThicknessRatio"] = layers_cfg.get("maxFaceThicknessRatio")
+    resolved["min_thickness_ratio"] = layers_cfg.get("min_thickness_ratio")
+    resolved["y_plus_fit"] = layers_cfg.get("y_plus_fit")
     return resolved
 
 

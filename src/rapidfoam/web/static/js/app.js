@@ -1342,7 +1342,21 @@ class CFDApp {
 
   renderLayerPreview(p) {
     const el = document.getElementById('cfg-layer-preview');
+    const effEl = document.getElementById('cfg-effective-layers');
     if (!el) return;
+    // Effective layer controls (what the generator will actually use).
+    if (effEl && p) {
+      const bits = [];
+      if (p.n_layers != null) bits.push(`n_layers ${p.n_layers}`);
+      if (p.expansion_ratio != null) bits.push(`expansion ${p.expansion_ratio}`);
+      if (p.maxFaceThicknessRatio != null) bits.push(`maxFaceThicknessRatio ${p.maxFaceThicknessRatio}`);
+      if (p.min_thickness_ratio != null) bits.push(`min_thickness_ratio ${p.min_thickness_ratio}`);
+      bits.push(`two_pass ${p.two_pass ? 'on' : 'off'}`);
+      bits.push(`y+ fit ${p.y_plus_fit ? p.y_plus_fit : 'off'}`);
+      effEl.textContent = bits.length ? `Effective layers: ${bits.join(' · ')}` : '';
+    } else if (effEl) {
+      effEl.textContent = '';
+    }
     const auto = p && p.auto_size;
     const fangle = p && p.feature_angle;
     if (!p || p.first_layer_thickness == null) {
@@ -1441,6 +1455,8 @@ class CFDApp {
     this.updateLayerModeUI();
     const preview = document.getElementById('cfg-layer-preview');
     if (preview) preview.textContent = '';
+    const effPreview = document.getElementById('cfg-effective-layers');
+    if (effPreview) effPreview.textContent = '';
     const autoPreview = document.getElementById('cfg-auto-size-preview');
     if (autoPreview) autoPreview.textContent = '';
     this.buildConfigFromVisualForm();
