@@ -1153,3 +1153,28 @@ test('setRunMode toggles the grid-study settings and hint', async () => {
   app.setRunMode('normal');
   assert.equal(app._window.document.getElementById('grid-study-settings').style.display, 'none');
 });
+
+test('grid mode hides the fidelity cards and uses the study Base Preset', async () => {
+  const app = await makeApp(`
+    <div id="cfg-run-mode">
+      <button class="segment active" data-mode="normal"></button>
+      <button class="segment" data-mode="grid"></button>
+    </div>
+    <div id="fidelity-cards-group"><label class="fidelity-card selected" data-fidelity="standard"><input name="cfg-fidelity" checked></label></div>
+    <div id="grid-study-settings" style="display:none;">
+      <select id="cfg-study-base-preset"><option value="fast">f</option><option value="standard" selected>s</option><option value="fine">x</option></select>
+    </div>
+    <span id="cfg-run-mode-hint"></span>
+    <input id="cfg-study-levels" value="20, 30, 45">
+    <span id="cfg-study-preview"></span>
+  `);
+  installFormStubs(app);
+  app.activeConfig = { case_name: 'wing', fidelity: 'standard' };
+  app.setRunMode('grid');
+  assert.equal(app._window.document.getElementById('fidelity-cards-group').style.display, 'none');
+  app._window.document.getElementById('cfg-study-base-preset').value = 'fine';
+  app.buildConfigFromVisualForm();
+  assert.equal(app.activeConfig.fidelity, 'fine');
+  app.setRunMode('normal');
+  assert.notEqual(app._window.document.getElementById('fidelity-cards-group').style.display, 'none');
+});

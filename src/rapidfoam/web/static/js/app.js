@@ -478,6 +478,10 @@ class CFDApp {
     });
     document.getElementById('cfg-study-levels')?.addEventListener('input', () => this.renderStudyPreview());
     document.getElementById('cfg-study-corefine')?.addEventListener('change', () => this.renderStudyPreview());
+    document.getElementById('cfg-study-base-preset')?.addEventListener('change', () => {
+      const base = this.getVal('cfg-study-base-preset');
+      if (base) this.activeConfig.fidelity = base;
+    });
     document.getElementById('btn-submit-case')?.addEventListener('click', () => this.saveCurrentConfig(true));
     document.getElementById('btn-quick-run')?.addEventListener('click', () => this.saveCurrentConfig(true));
 
@@ -766,7 +770,10 @@ class CFDApp {
     cfg.case_name = this.getVal('cfg-case-name') || 'my_case';
 
     const selectedFidelityCard = document.querySelector('.fidelity-card.selected');
-    cfg.fidelity = selectedFidelityCard ? selectedFidelityCard.dataset.fidelity : 'standard';
+    // In grid-study mode the fidelity cards are hidden; the study card's Base
+    // Preset governs instead.
+    const studyPreset = (this.runMode === 'grid') ? this.getVal('cfg-study-base-preset') : '';
+    cfg.fidelity = studyPreset || (selectedFidelityCard ? selectedFidelityCard.dataset.fidelity : 'standard');
 
     // Flow
     cfg.flow = {
@@ -2027,6 +2034,15 @@ class CFDApp {
     });
     const settings = document.getElementById('grid-study-settings');
     if (settings) settings.style.display = this.runMode === 'grid' ? 'block' : 'none';
+    // In grid mode the fidelity cards give way to the study card's Base Preset.
+    const cards = document.getElementById('fidelity-cards-group');
+    if (cards) cards.style.display = this.runMode === 'grid' ? 'none' : '';
+    if (this.runMode === 'grid') {
+      const base = this.getVal('cfg-study-base-preset');
+      if (base) this.setSelectValue('cfg-study-base-preset', this.activeConfig?.fidelity || 'standard');
+      if (base) this.activeConfig.fidelity = base;
+      this.renderStudyPreview();
+    }
     const hint = document.getElementById('cfg-run-mode-hint');
     if (hint) {
       hint.textContent = this.runMode === 'grid'
@@ -2050,6 +2066,8 @@ class CFDApp {
   async generateRefinementStudy(submit = false) {
     this.buildConfigFromVisualForm();
     const base = this.activeConfig.case_name || 'my_case';
+    const basePreset = this.getVal('cfg-study-base-preset');
+    if (basePreset) this.activeConfig.fidelity = basePreset;
     const levelsRaw = this.getVal('cfg-study-levels') || '20, 30, 45';
     const levels = levelsRaw.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0);
     if (levels.length < 3) {

@@ -187,7 +187,7 @@
                 </div>
 
 
-                <div class="form-group col-span-2">
+                <div class="form-group col-span-2" id="fidelity-cards-group">
                   <label>Mesh & Solver Fidelity Preset</label>
                   <div class="fidelity-cards">
                     <label class="fidelity-card" data-fidelity="fast">
@@ -240,6 +240,15 @@
                     end time, solver) is <em>shared and pinned</em> across all three.
                   </div>
                   <div class="form-grid">
+                    <div class="form-group">
+                      <label for="cfg-study-base-preset">Base Preset</label>
+                      <select id="cfg-study-base-preset" class="input">
+                        <option value="fast">Fast (y+ ~50, 5 layers, 800 iters)</option>
+                        <option value="standard" selected>Standard (y+ ~30, 8 layers, 1500 iters)</option>
+                        <option value="fine">Fine (y+ ~1, 20 layers, 2500 iters)</option>
+                      </select>
+                      <span class="field-hint">Sets the pinned near-wall y+/layers and end time shared by all three cases.</span>
+                    </div>
                     <div class="form-group">
                       <label for="cfg-study-levels">Refinement Levels (cells/length)</label>
                       <input type="text" id="cfg-study-levels" class="input" value="20, 30, 45" placeholder="20, 30, 45">
