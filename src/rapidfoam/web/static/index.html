@@ -179,6 +179,14 @@
 
             <!-- SUB-TAB 1: General & Presets -->
             <div class="subtab-content active" id="subtab-general">
+              <!-- Run mode: the top-level choice for this case -->
+              <div class="run-mode-bar">
+                <div class="segmented-control" id="cfg-run-mode" role="group" aria-label="Run mode">
+                  <button type="button" class="segment active" data-mode="normal">Normal simulation</button>
+                  <button type="button" class="segment" data-mode="grid">Grid independence study</button>
+                </div>
+                <span class="run-mode-hint" id="cfg-run-mode-hint">Generate a single case at the chosen fidelity.</span>
+              </div>
               <div class="form-grid">
                 <div class="form-group col-span-2">
                   <label for="cfg-case-name">Case Directory Name <span class="required">*</span></label>
@@ -220,16 +228,6 @@
                       </div>
                     </label>
                   </div>
-                </div>
-
-                <!-- Run mode (normal vs grid study) -->
-                <div class="form-group col-span-2">
-                  <label>Run Mode</label>
-                  <div class="segmented-control" id="cfg-run-mode" role="group" aria-label="Run mode">
-                    <button type="button" class="segment active" data-mode="normal">Normal simulation</button>
-                    <button type="button" class="segment" data-mode="grid">Grid independence study</button>
-                  </div>
-                  <span class="field-hint" id="cfg-run-mode-hint">Generate a single case at the chosen fidelity.</span>
                 </div>
 
                 <!-- Grid-study settings (shown only in grid mode) -->

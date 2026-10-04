@@ -2622,28 +2622,48 @@ body.dark-theme {
 
 
 
-/* ---- Run mode segmented control + grid-study card ---- */
+/* ---- Run mode bar + segmented control + grid-study card ---- */
+.run-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: var(--bg-surface-raised, #151922);
+  border: 1px solid var(--border-color, #2a3140);
+  border-radius: var(--radius-md, 7px);
+}
+.run-mode-hint {
+  font-size: 12px;
+  color: var(--text-tertiary, #64748b);
+  flex: 1 1 200px;
+}
 .segmented-control {
   display: inline-flex;
   border: 1px solid var(--border-color, #2a3140);
   border-radius: var(--radius-md, 7px);
   overflow: hidden;
+  background: var(--bg-input, #0c0e14);
 }
 .segmented-control .segment {
   appearance: none;
   border: none;
-  background: var(--bg-input, #0c0e14);
+  background: transparent;
   color: var(--text-secondary, #94a3b8);
-  padding: 7px 14px;
-  font-size: 12px;
+  padding: 8px 18px;
+  font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s, color 0.15s;
 }
+.segmented-control .segment:hover { color: var(--text-primary, #e2e8f0); }
 .segmented-control .segment + .segment { border-left: 1px solid var(--border-color, #2a3140); }
 .segmented-control .segment.active {
   background: var(--accent-primary, #2563eb);
   color: #fff;
 }
+.segmented-control .segment.active:hover { color: #fff; }
 .study-banner {
   background: rgba(37, 99, 235, 0.08);
   border: 1px solid rgba(37, 99, 235, 0.35);
