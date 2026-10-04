@@ -476,8 +476,6 @@ class CFDApp {
     document.getElementById('btn-validate-config')?.addEventListener('click', () => this.validateCurrentConfig());
     document.getElementById('btn-save-config')?.addEventListener('click', () => this.saveCurrentConfig(false));
     document.getElementById('btn-generate-local')?.addEventListener('click', () => this.generateCaseLocally());
-    document.getElementById('btn-refinement-study')?.addEventListener('click', () => this.generateRefinementStudy(false));
-    document.getElementById('btn-refinement-study-submit')?.addEventListener('click', () => this.generateRefinementStudy(true));
     document.getElementById('cfg-study-levels')?.addEventListener('input', () => this.renderStudyPreview());
     document.getElementById('cfg-study-corefine')?.addEventListener('change', () => this.renderStudyPreview());
     document.getElementById('cfg-study-base-preset')?.addEventListener('change', () => {
@@ -2024,10 +2022,8 @@ class CFDApp {
     } catch (err) {
       this.showToast(`Generation error: ${err.message}`, 'error');
     } finally {
-      if (btnGenLocal) {
-        btnGenLocal.disabled = false;
-        btnGenLocal.textContent = 'Generate Locally';
-      }
+      if (btnGenLocal) btnGenLocal.disabled = false;
+      this.updateActionButtons();
     }
   }
 
@@ -2063,6 +2059,17 @@ class CFDApp {
         ? 'Grid study: three mesh-density variants from this config; all other fields are shared and pinned.'
         : 'Generate a single case at the chosen fidelity.';
     }
+    this.updateActionButtons();
+  }
+
+  updateActionButtons() {
+    // The footer buttons carry the run: in grid mode they generate/launch the
+    // three study cases; in normal mode they act on a single case.
+    const genLocal = document.getElementById('btn-generate-local');
+    const submit = document.getElementById('btn-submit-case');
+    const grid = this.runMode === 'grid';
+    if (genLocal) genLocal.textContent = grid ? 'Generate Grid Study (3 cases)' : 'Generate Locally';
+    if (submit) submit.textContent = grid ? 'Launch Grid Study (3 jobs)' : 'Launch Simulation on Cluster';
   }
 
   renderStudyPreview() {
@@ -2108,7 +2115,7 @@ class CFDApp {
     });
     if (decision.action === 'cancel') return;
 
-    const btn = document.getElementById(willSubmit ? 'btn-refinement-study-submit' : 'btn-refinement-study');
+    const btn = document.getElementById(willSubmit ? 'btn-submit-case' : 'btn-generate-local');
     const label = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
     const resultEl = document.getElementById('grid-study-result');
@@ -2232,10 +2239,8 @@ class CFDApp {
     } catch (err) {
       this.showToast(`Error: ${err.message}`, 'error');
     } finally {
-      if (btnSubmit) {
-        btnSubmit.disabled = false;
-        btnSubmit.textContent = 'Launch Simulation on Cluster';
-      }
+      if (btnSubmit) btnSubmit.disabled = false;
+      this.updateActionButtons();
     }
   }
 

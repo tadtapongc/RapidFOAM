@@ -1205,3 +1205,26 @@ test('Launch on Cluster delegates to the grid study in grid mode', async () => {
   await app.generateCaseLocally();
   assert.equal(calledWith, false);
 });
+
+test('footer action buttons relabel for grid mode', async () => {
+  const app = await makeApp(`
+    <div id="fidelity-cards-group">
+      <label class="fidelity-card selected" data-fidelity="standard"></label>
+      <label class="fidelity-card" data-mode="grid"></label>
+    </div>
+    <div id="grid-study-settings"></div>
+    <span id="cfg-run-mode-hint"></span>
+    <input id="cfg-study-levels" value="20, 30, 45">
+    <span id="cfg-study-preview"></span>
+    <button id="btn-generate-local">Generate Locally</button>
+    <button id="btn-submit-case">Launch Simulation on Cluster</button>
+  `);
+  installFormStubs(app);
+  app.activeConfig = { case_name: 'wing' };
+  app.setRunMode('grid');
+  assert.equal(app._window.document.getElementById('btn-generate-local').textContent, 'Generate Grid Study (3 cases)');
+  assert.equal(app._window.document.getElementById('btn-submit-case').textContent, 'Launch Grid Study (3 jobs)');
+  app.setRunMode('normal');
+  assert.equal(app._window.document.getElementById('btn-generate-local').textContent, 'Generate Locally');
+  assert.equal(app._window.document.getElementById('btn-submit-case').textContent, 'Launch Simulation on Cluster');
+});
