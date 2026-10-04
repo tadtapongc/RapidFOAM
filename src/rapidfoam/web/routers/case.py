@@ -303,6 +303,7 @@ async def api_case_refinement_study(req: RefinementStudyRequest) -> dict[str, An
                 config=variant_cfg,
                 generate_locally=req.generate_locally,
                 upload_to_cluster=req.upload_to_cluster,
+                generate_remotely=req.upload_to_cluster,
                 submit_slurm=req.submit_slurm,
             ))
             results.append({"case_name": v["name"], "ok": True, "result": res})

@@ -2195,7 +2195,7 @@ class CFDApp {
           config: this.activeConfig,
           levels,
           co_refine_surface: coRefine,
-          generate_locally: true,
+          generate_locally: !willSubmit,
           upload_to_cluster: willSubmit,
           submit_slurm: willSubmit,
         }),

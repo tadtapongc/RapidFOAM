@@ -695,6 +695,45 @@ class TestWebAPI(unittest.TestCase):
         for name in names:
             self.assertTrue((Path("configs") / f"{name}.json").is_file())
 
+    def test_refinement_study_passes_generate_remotely_when_uploading(self):
+        """A submitted study must also generate remotely, or sbatch has nothing to run."""
+        import rapidfoam.web.routers.case as case_router
+        from rapidfoam.web.schemas import RefinementStudyRequest
+
+        cfg = {
+            "case_name": "studycase2",
+            "stl_files": ["geometry.stl"],
+            "fidelity": "standard",
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+        }
+        for name in ("studycase2", "studycase2_cpl20", "studycase2_cpl30", "studycase2_cpl45"):
+            self.addCleanup(lambda n=name: (Path("configs") / f"{n}.json").unlink(missing_ok=True))
+
+        captured = []
+
+        async def fake_generate(req):
+            captured.append(req)
+            return {"success": True}
+
+        original = case_router.api_case_generate_and_submit
+        case_router.api_case_generate_and_submit = fake_generate
+        try:
+            asyncio.run(case_router.api_case_refinement_study(
+                RefinementStudyRequest(
+                    config=cfg, levels=[20, 30, 45],
+                    generate_locally=False, upload_to_cluster=True, submit_slurm=True,
+                )
+            ))
+        finally:
+            case_router.api_case_generate_and_submit = original
+
+        self.assertEqual(len(captured), 3)
+        for req in captured:
+            self.assertTrue(req.upload_to_cluster)
+            self.assertTrue(req.submit_slurm)
+            self.assertTrue(req.generate_remotely, "remote setup must run before sbatch")
+
     def test_telemetry_residuals_alignment(self):
         """Test telemetry residuals alignment where variable arrays have equal length."""
         case_name = "test_case_residuals"
