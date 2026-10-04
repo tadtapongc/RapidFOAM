@@ -261,14 +261,22 @@ def _read_text_files(paths: list[Path]) -> list[str]:
     return segments
 
 
-async def _read_remote_bundle(specs: list[tuple[str, Optional[int]]]) -> dict[str, str]:
+async def _read_remote_bundle(specs: list[tuple[str, Optional[int]]], report: Optional[dict] = None) -> dict[str, str]:
     """Read many remote files with a single SSH command (see read_remote_bundle)."""
-    if not ssh_client.is_connected or not specs:
+    if not ssh_client.is_connected:
+        if report is not None:
+            report.clear()
+            report.update({"ok": False, "reason": "not connected"})
+        return {}
+    if not specs:
         return {}
     try:
-        return await asyncio.to_thread(ssh_client.read_remote_bundle, specs)
+        return await asyncio.to_thread(ssh_client.read_remote_bundle, specs, report=report)
     except Exception as exc:
         log.warning("Remote bundle read failed: %s", exc)
+        if report is not None:
+            report.clear()
+            report.update({"ok": False, "reason": str(exc)[:200]})
         return {}
 
 
@@ -343,6 +351,16 @@ def _remote_telemetry_key(case_name: str) -> str:
     return f"{ssh_client.host}|{ssh_client.remote_repo_path}|{case_name}"
 
 
+# Last remote-bundle diagnostic per case (host|repo|case), so a failed read can
+# be surfaced instead of showing an empty "no data" state.
+_remote_telemetry_status: dict[str, dict[str, Any]] = {}
+
+
+def remote_telemetry_status(case_name: str) -> dict[str, Any]:
+    """Last diagnostic for a case's remote bundle read (ok / reason)."""
+    return dict(_remote_telemetry_status.get(_remote_telemetry_key(case_name), {}))
+
+
 async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
     """Read every telemetry file for a case in one SSH command (cached ~2.5s)."""
     if not ssh_client.is_connected:
@@ -354,6 +372,7 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
         if cached and now - cached[0] < _REMOTE_TELEMETRY_TTL:
             return cached[1]
 
+    report: dict[str, Any] = {}
     bundle = await _read_remote_bundle([
         (f"cases/{case_name}/postProcessing/forces/*/force.dat", None),
         (f"cases/{case_name}/postProcessing/forces_*/*/force.dat", None),
@@ -375,9 +394,13 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
         (f"cases/{case_name}/postProcessing/fieldMinMax/*/fieldMinMax.dat", None),
         (f"cases/{case_name}/postProcessing/*/*/surfaceFieldValue.dat", None),
         (f"cases/{case_name}/case_config.json", None),
-    ])
-    with _remote_telemetry_lock:
-        _remote_telemetry_cache[key] = (now, bundle)
+    ], report=report)
+    _remote_telemetry_status[key] = report
+    # Only cache a successful read, so a transient failure does not blank the UI
+    # for the whole TTL.
+    if report.get("ok"):
+        with _remote_telemetry_lock:
+            _remote_telemetry_cache[key] = (now, bundle)
     return bundle
 
 

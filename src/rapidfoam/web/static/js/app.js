@@ -3264,6 +3264,14 @@ class CFDApp {
             pill.querySelector('.pill-text').textContent = stage.toUpperCase();
           }
 
+          // A remote read that matched nothing is not a normal empty run: show why.
+          const remoteStatus = data.remote_status || {};
+          if (remoteStatus.ok === false && remoteStatus.reason) {
+            this.showTelemetryError(`Cluster fetch failed: ${remoteStatus.reason}`);
+          } else {
+            this.clearTelemetryError();
+          }
+
           if (forcesOverlay) forcesOverlay.style.display = 'flex';
           if (residualsOverlay) residualsOverlay.style.display = 'flex';
           if (coeffOverlay) coeffOverlay.style.display = 'flex';

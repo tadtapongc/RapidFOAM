@@ -20,6 +20,7 @@ from rapidfoam.postproc.checkmesh import (
     verdict_bands_from_dict,
 )
 from rapidfoam.postproc.forces import (
+    axis_config_from_dict,
     check_convergence,
     find_coefficient_files,
     find_force_files,
@@ -69,6 +70,7 @@ from rapidfoam.web.services.telemetry import (
     _read_text_files,
     _read_text_tail_lines,
     _read_yplus_texts,
+    remote_telemetry_status,
     _shift_moment_columns,
     _sorted_segments,
     _subsample_indices,
@@ -111,13 +113,39 @@ async def api_telemetry_forces(
 
     local_case = PROJECT_ROOT / "cases" / case_name
     local_cfg = PROJECT_ROOT / "configs" / f"{case_name}.json"
-    cfg_path = str(local_cfg) if local_cfg.is_file() else None
-    case_dir = local_case if local_case.is_dir() else None
 
-    drag_idx, drag_sign, df_idx, df_sign, drag_axis_name, df_axis_name = load_axis_config(
-        config_path=cfg_path, case_dir=case_dir
-    )
-    is_sym = is_symmetry_case(config_path=cfg_path, case_dir=case_dir)
+    # Fetch the remote bundle first (single SSH command, shared 2.5 s cache) so
+    # axis mapping / symmetry can use the *remote* case_config.json when the case
+    # lives only on the cluster. Falls back to the local files otherwise.
+    remote_bundle: dict[str, str] = {}
+    remote_status: dict[str, Any] = {}
+    if ssh_client.is_connected:
+        remote_bundle = await _read_remote_telemetry(case_name)
+        remote_status = remote_telemetry_status(case_name)
+
+    bundled_cfg: Optional[dict[str, Any]] = None
+    for path, text in remote_bundle.items():
+        if path.endswith("/case_config.json"):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    bundled_cfg = parsed
+            except ValueError:
+                bundled_cfg = None
+            break
+
+    if bundled_cfg is not None:
+        drag_idx, drag_sign, df_idx, df_sign, drag_axis_name, df_axis_name = axis_config_from_dict(bundled_cfg)
+        is_sym = caseconfig.has_symmetry(bundled_cfg)
+        cfg_path = None
+        case_dir = None
+    else:
+        cfg_path = str(local_cfg) if local_cfg.is_file() else None
+        case_dir = local_case if local_case.is_dir() else None
+        drag_idx, drag_sign, df_idx, df_sign, drag_axis_name, df_axis_name = load_axis_config(
+            config_path=cfg_path, case_dir=case_dir
+        )
+        is_sym = is_symmetry_case(config_path=cfg_path, case_dir=case_dir)
     sym_scale = 2.0 if is_sym else 1.0
     lateral_idx = _lateral_axis_index(drag_idx, df_idx)
     reference = _load_reference_quantities(cfg_path, case_dir)
@@ -157,13 +185,12 @@ async def api_telemetry_forces(
     coeff_segments: list[str] = []
     parts_segments: dict[str, list[str]] = {}
 
-    if ssh_client.is_connected:
-        bundle = await _read_remote_telemetry(case_name)
-        force_segments = _sorted_segments(bundle, "/force.dat", "/forces/")
-        moment_segments = _sorted_segments(bundle, "/moment.dat")
-        coeff_segments = _sorted_segments(bundle, "/coefficient.dat")
+    if remote_bundle:
+        force_segments = _sorted_segments(remote_bundle, "/force.dat", "/forces/")
+        moment_segments = _sorted_segments(remote_bundle, "/moment.dat")
+        coeff_segments = _sorted_segments(remote_bundle, "/coefficient.dat")
         part_items: dict[str, list[tuple[str, str]]] = {}
-        for path, text in bundle.items():
+        for path, text in remote_bundle.items():
             if not path.endswith("/force.dat") or "/forces_" not in path:
                 continue
             for segment in path.split("/"):
@@ -217,13 +244,20 @@ async def api_telemetry_forces(
             elif (local_case / "log.snappyHexMesh").is_file():
                 case_stage = "Meshing"
 
+        message = f"No force.dat found yet for case '{case_name}'. Current stage: {case_stage}."
+        if ssh_client.is_connected and not remote_bundle and remote_status.get("reason"):
+            message = (
+                f"No telemetry fetched for case '{case_name}' from the cluster "
+                f"({remote_status['reason']}). Check the remote repo path and case name."
+            )
         return {
             "has_data": False,
             "case_name": case_name,
             "stage": case_stage,
             "has_mesh": has_mesh,
             "run_command": "./Allrun.parallel",
-            "message": f"No force.dat found yet for case '{case_name}'. Current stage: {case_stage}.",
+            "message": message,
+            "remote_status": remote_status,
             "reference": reference,
             "stl_files": stl_files,
             "vehicle": vehicle,
@@ -356,6 +390,7 @@ async def api_telemetry_forces(
         "has_data": True,
         "case_name": case_name,
         "is_symmetry": is_sym,
+        "remote_status": remote_status,
         "drag_axis": drag_axis_name,
         "downforce_axis": df_axis_name,
         "total_iterations": len(times),

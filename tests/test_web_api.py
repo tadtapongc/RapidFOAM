@@ -509,7 +509,7 @@ class TestWebAPI(unittest.TestCase):
 
         captured: dict = {}
 
-        def fake_bundle(specs):
+        def fake_bundle(specs, report=None):
             captured["specs"] = list(specs)
             return {}
 
@@ -529,7 +529,7 @@ class TestWebAPI(unittest.TestCase):
 
         captured: dict = {}
 
-        def fake_bundle(specs):
+        def fake_bundle(specs, report=None):
             captured["specs"] = list(specs)
             return {}
 
@@ -543,6 +543,56 @@ class TestWebAPI(unittest.TestCase):
             any(fnmatch.fnmatch("log.snappyHexMesh.layering", Path(p).name) for p in patterns),
             patterns,
         )
+
+    def test_remote_bundle_reports_failure_reason(self):
+        """A failing remote bundle read records a diagnostic instead of silence."""
+        from rapidfoam.web.services import telemetry as svc
+
+        def fake_bundle(specs, report=None, timeout=30.0):
+            if report is not None:
+                report.update({"ok": False, "reason": "remote repo not found"})
+            return {}
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
+                patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
+            svc._remote_telemetry_cache.clear()
+            svc._remote_telemetry_status.clear()
+            asyncio.run(svc._read_remote_telemetry("remote_case_badrepo"))
+            status = svc.remote_telemetry_status("remote_case_badrepo")
+        self.assertFalse(status.get("ok"))
+        self.assertEqual(status.get("reason"), "remote repo not found")
+
+    def test_remote_forces_use_bundled_case_config_for_axes(self):
+        """Axis mapping for a cluster-only case must come from the bundled
+        case_config.json, not hard-coded defaults."""
+        from rapidfoam.web.services import telemetry as svc
+
+        case_name = "remote_axes_case"
+        cfg = {"outputs": {"drag_axis": "+x", "downforce_axis": "-z"}}
+        force_lines = ["# Time total(fx fy fz) pressure(fx fy fz) viscous(fx fy fz)\n"]
+        for i in range(1, 40):
+            force_lines.append(f"{i} (10.0 0.0 -5.0) (0 0 0) (0 0 0)\n")
+        bundle = {
+            f"cases/{case_name}/postProcessing/forces/0/force.dat": "".join(force_lines),
+            f"cases/{case_name}/case_config.json": json.dumps(cfg),
+        }
+
+        def fake_bundle(specs, report=None, timeout=30.0):
+            if report is not None:
+                report.update({"ok": True, "files": len(bundle)})
+            return dict(bundle)
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
+                patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
+            svc._remote_telemetry_cache.clear()
+            res = asyncio.run(api_telemetry_forces(case_name))
+
+        self.assertTrue(res["has_data"])
+        # drag = +fx = 10.0 (not the -z default), downforce = -fz = 5.0
+        self.assertEqual(res["drag_axis"], "+x")
+        self.assertEqual(res["downforce_axis"], "-z")
+        self.assertAlmostEqual(res["drag_avg"], 10.0, places=1)
+        self.assertAlmostEqual(res["downforce_avg"], 5.0, places=1)
 
     def test_telemetry_residuals_alignment(self):
         """Test telemetry residuals alignment where variable arrays have equal length."""

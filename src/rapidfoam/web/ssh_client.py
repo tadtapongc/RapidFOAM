@@ -424,6 +424,7 @@ class ClusterSSHClient:
         self,
         specs: list[tuple[str, Optional[int]]],
         timeout: float = 30.0,
+        report: Optional[dict] = None,
     ) -> dict[str, str]:
         """Read many remote files/globs in a *single* SSH command.
 
@@ -433,13 +434,23 @@ class ClusterSSHClient:
         Args:
             specs: list of ``(glob_pattern, tail_lines)``. ``tail_lines=None``
                 reads the whole file; otherwise only the last N lines.
+            report: optional dict populated with diagnostics on failure, e.g.
+                ``{"ok": False, "reason": "cd failed", "stderr": "..."}``.
 
         Returns:
             Mapping of matched relative path -> file content (marker headers
             stripped). Empty when disconnected or no matches.
         """
-        if not self.is_connected or not specs:
+        def _fail(reason: str, **extra: Any) -> dict[str, str]:
+            if report is not None:
+                report.clear()
+                report.update({"ok": False, "reason": reason, **extra})
             return {}
+
+        if not self.is_connected:
+            return _fail("not connected")
+        if not specs:
+            return _fail("no specs")
 
         segments: list[str] = []
         for pattern, tail_lines in specs:
@@ -454,11 +465,27 @@ class ClusterSSHClient:
                 f'printf "\\n{FILE_END}\\n"; '
                 f"fi; done"
             )
-        cmd = f"cd {shlex.quote(self.remote_repo_path)} 2>/dev/null; " + " ; ".join(segments)
-        code, out, _ = self.run_command(cmd, timeout=timeout)
-        if code != 0 or not out:
-            return {}
-        return _parse_marked_bundle(out)
+        # Fail loudly if the repo path does not exist rather than running the
+        # globs in the wrong cwd (which silently matches nothing).
+        quoted_repo = shlex.quote(self.remote_repo_path)
+        prelude = (
+            f"if [ ! -d {quoted_repo} ]; then "
+            f"echo '__RAPIDFOAM_ERR__no such remote repo: {self.remote_repo_path}'; "
+            f"exit 3; fi; cd {quoted_repo} || exit 3; "
+        )
+        cmd = prelude + " ; ".join(segments)
+        code, out, err = self.run_command(cmd, timeout=timeout)
+        if "__RAPIDFOAM_ERR__" in out:
+            return _fail("remote repo not found", remote_repo_path=self.remote_repo_path)
+        if code != 0:
+            return _fail(f"remote command failed (exit {code})", stderr=(err or "").strip()[:300])
+        if not out:
+            return _fail("no matching files")
+        files = _parse_marked_bundle(out)
+        if report is not None:
+            report.clear()
+            report.update({"ok": True, "files": len(files)})
+        return files
 
     @_synchronized
     def get_slurm_queue(self, username: Optional[str] = None) -> list[dict[str, str]]:

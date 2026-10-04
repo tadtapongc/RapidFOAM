@@ -13,6 +13,20 @@ from rapidfoam.core import caseconfig
 from rapidfoam.core.axes import AXIS_MAP as AXIS_MAP, axis_index_sign
 
 
+def axis_config_from_dict(cfg: dict | None) -> tuple[int, int, int, int, str, str]:
+    """Resolve drag/downforce axes from an already-loaded config mapping."""
+    if isinstance(cfg, dict):
+        outputs = cfg.get("outputs", {})
+        drag_axis = outputs.get("drag_axis") or cfg.get("drag_axis", "-z")
+        df_axis = outputs.get("downforce_axis") or cfg.get("downforce_axis", "-y")
+    else:
+        drag_axis = "-z"
+        df_axis = "-y"
+    drag_idx, drag_sign = axis_index_sign(drag_axis)
+    df_idx, df_sign = axis_index_sign(df_axis)
+    return drag_idx, drag_sign, df_idx, df_sign, drag_axis, df_axis
+
+
 def load_axis_config(
     config_path: str | None = None,
     case_dir: str | Path | None = None,
@@ -34,18 +48,7 @@ def load_axis_config(
         with open("case_config.json", encoding="utf-8") as f:
             cfg = json.load(f)
 
-    # Support both old and new config formats
-    if cfg:
-        outputs = cfg.get("outputs", {})
-        drag_axis = outputs.get("drag_axis") or cfg.get("drag_axis", "-z")
-        df_axis = outputs.get("downforce_axis") or cfg.get("downforce_axis", "-y")
-    else:
-        drag_axis = "-z"
-        df_axis = "-y"
-
-    drag_idx, drag_sign = axis_index_sign(drag_axis)
-    df_idx, df_sign = axis_index_sign(df_axis)
-    return drag_idx, drag_sign, df_idx, df_sign, drag_axis, df_axis
+    return axis_config_from_dict(cfg)
 
 
 def _load_case_configs(config_path: str | None, base: Path) -> list[dict]:
