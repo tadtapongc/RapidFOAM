@@ -75,6 +75,19 @@ def per_surface_preview(
     auto: dict[str, Any] = {}
     if mesh.get("auto_size"):
         base_cell = mesh.get("base_cell_size")
+        # The Studio preview runs before generation, so base_cell_size is usually
+        # unset: derive it the same way the builder does (longest STL extent /
+        # cells_per_length) so per-surface levels can be computed here too.
+        if not (isinstance(base_cell, (int, float)) and base_cell > 0):
+            preset = FIDELITY_PRESETS.get(
+                preview_cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"]
+            )
+            cells_per_length = float(mesh.get("cells_per_length", preset.get("cells_per_length", 30)))
+            model_length = max(
+                (max(e) for e in extents_by_stem.values() if e), default=0.0
+            )
+            if model_length > 0:
+                base_cell = model_length / max(cells_per_length, 1.0)
         if isinstance(base_cell, (int, float)) and base_cell > 0 and stats_by_stem:
             auto = resolve_per_surface_levels(
                 mesh,
