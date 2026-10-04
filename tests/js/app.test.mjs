@@ -1341,3 +1341,39 @@ test('grid study proceeds when names are free', async () => {
   assert.equal(confirmCount, 1, 'only the study confirm dialog is shown');
   assert.equal(posted, true);
 });
+
+test('submitting a grid study refreshes the SLURM queue', async () => {
+  const app = await makeApp(`
+    <input id="cfg-case-name" value="wing">
+    <div id="fidelity-cards-group"><label class="fidelity-card selected" data-fidelity="standard"></label></div>
+    <select id="cfg-study-base-preset"><option value="standard" selected>s</option></select>
+    <input id="cfg-study-levels" value="20, 30, 45">
+    <select id="cfg-study-corefine"><option value="off" selected>off</option></select>
+  ` + buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = { case_name: 'wing', fidelity: 'standard' };
+  app.runMode = 'grid';
+  app.clusterConnected = true;
+  app.buildConfigFromVisualForm = () => { app.activeConfig.case_name = 'wing'; };
+  app.checkCaseNameExists = async () => ({ exists: false, is_running: false });
+  app.showConfirmDialog = async () => ({ action: 'confirm' });
+  app.loadCasesArchive = () => {};
+  app.showToast = () => {};
+  const registered = [];
+  app.addTelemetryCase = (n) => registered.push(n);
+  let queueRefreshed = 0;
+  app.refreshQueue = () => { queueRefreshed += 1; };
+  app.fetchWithTimeout = async () => ({
+    ok: true,
+    json: async () => ({
+      base: 'wing',
+      variants: ['wing_cpl20', 'wing_cpl30', 'wing_cpl45'].map((n) => ({
+        case_name: n, ok: true, result: { cluster_actions: { slurm_submit: { job_id: '1' } } },
+      })),
+    }),
+  });
+  await app.generateRefinementStudy(true);
+  assert.equal(queueRefreshed, 1, 'queue must be refreshed after a study submit');
+  assert.deepEqual(registered, ['wing_cpl20', 'wing_cpl30', 'wing_cpl45']);
+});

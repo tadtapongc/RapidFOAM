@@ -2202,13 +2202,34 @@ class CFDApp {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Study failed');
-      const ok = (data.variants || []).filter((v) => v.ok).length;
-      this.showToast(`Grid study: ${ok}/${levels.length} cases ready.`, ok === levels.length ? 'success' : 'warning');
+      const variants = data.variants || [];
+      const ok = variants.filter((v) => v.ok).length;
+      const jobIds = [];
+      if (willSubmit) {
+        variants.forEach((v) => {
+          const job = v.result?.cluster_actions?.slurm_submit;
+          if (job && job.job_id) jobIds.push(`${v.case_name} (${job.job_id})`);
+        });
+      }
+      const submitted = jobIds.length > 0;
+      this.showToast(
+        submitted
+          ? `Grid study submitted: ${jobIds.length}/${levels.length} SLURM jobs.`
+          : `Grid study: ${ok}/${levels.length} cases ready.`,
+        ok === levels.length ? 'success' : 'warning',
+      );
       if (resultEl) {
-        const names = (data.variants || []).map((v) => `${v.ok ? '✓' : '✗'} ${v.case_name}`).join('  ');
+        const names = variants.map((v) => `${v.ok ? '✓' : '✗'} ${v.case_name}`).join('  ');
         resultEl.textContent = `Grid study "${data.base}": ${names}. View results in Telemetry → Grid Independence.`;
       }
       await this.loadCasesArchive();
+      if (submitted) {
+        // Mirror the single-case flow: register each study case and refresh the
+        // SLURM queue so the three jobs appear immediately.
+        variants.forEach((v) => { if (v.ok) this.addTelemetryCase(v.case_name); });
+        document.getElementById('tab-btn-telemetry')?.click();
+        this.refreshQueue();
+      }
     } catch (err) {
       this.showToast(`Grid study failed: ${err.message}`, 'error');
     } finally {
