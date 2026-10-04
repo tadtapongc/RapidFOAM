@@ -1377,3 +1377,30 @@ test('submitting a grid study refreshes the SLURM queue', async () => {
   assert.equal(queueRefreshed, 1, 'queue must be refreshed after a study submit');
   assert.deepEqual(registered, ['wing_cpl20', 'wing_cpl30', 'wing_cpl45']);
 });
+
+test('form sync keeps the grid study card selected in grid mode', async () => {
+  const app = await makeApp(`
+    <div id="custom-domain-container" style="display:none"></div>
+    <div id="group-ground-relative" style="display:none"></div>
+    <div id="group-ground-absolute" style="display:none"></div>
+    <div id="fidelity-cards-group">
+      <label class="fidelity-card" data-fidelity="fast"><input type="radio" name="cfg-fidelity" value="fast"></label>
+      <label class="fidelity-card selected" data-fidelity="standard"><input type="radio" name="cfg-fidelity" value="standard" checked></label>
+      <label class="fidelity-card" data-fidelity="fine"><input type="radio" name="cfg-fidelity" value="fine"></label>
+      <label class="fidelity-card" data-mode="grid"><input type="radio" name="cfg-fidelity" value="grid"></label>
+    </div>
+  ` + buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.runMode = 'grid';
+  app.updateVisualFormFromConfig({ case_name: 'wing', fidelity: 'standard' });
+  const doc = app._window.document;
+  const grid = doc.querySelector('.fidelity-card[data-mode="grid"]');
+  const std = doc.querySelector('.fidelity-card[data-fidelity="standard"]');
+  assert.ok(grid.classList.contains('selected'), 'grid card stays selected');
+  assert.ok(!std.classList.contains('selected'), 'fidelity card must not steal the highlight');
+  app.runMode = 'normal';
+  app.updateVisualFormFromConfig({ case_name: 'wing', fidelity: 'standard' });
+  assert.ok(doc.querySelector('.fidelity-card[data-fidelity="standard"]').classList.contains('selected'));
+  assert.ok(!grid.classList.contains('selected'));
+});

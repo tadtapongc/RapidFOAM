@@ -527,8 +527,13 @@ class CFDApp {
     this.setVal('cfg-case-name', cfg.case_name || 'my_case');
 
     const fidelity = cfg.fidelity || 'standard';
-    document.querySelectorAll('.fidelity-card').forEach((card) => {
-      const match = card.dataset.fidelity === fidelity;
+    document.querySelectorAll('#fidelity-cards-group .fidelity-card').forEach((card) => {
+      const isGridCard = card.dataset.mode === 'grid';
+      // In grid mode the Grid Study card stays selected; the base preset only
+      // governs the pinned values, it must not steal the card highlight.
+      const match = this.runMode === 'grid'
+        ? isGridCard
+        : (!isGridCard && card.dataset.fidelity === fidelity);
       card.classList.toggle('selected', match);
       const r = card.querySelector('input');
       if (r) r.checked = match;
