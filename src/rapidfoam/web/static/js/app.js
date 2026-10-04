@@ -485,7 +485,6 @@ class CFDApp {
       if (base) this.activeConfig.fidelity = base;
     });
     document.getElementById('btn-submit-case')?.addEventListener('click', () => this.saveCurrentConfig(true));
-    document.getElementById('btn-quick-run')?.addEventListener('click', () => this.saveCurrentConfig(true));
 
     document.getElementById('btn-reset-defaults')?.addEventListener('click', async () => {
       if (confirm('Reset all fields to configs/config.json?')) {
