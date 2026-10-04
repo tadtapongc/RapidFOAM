@@ -25,7 +25,7 @@ def _resolve_feature_sizing(
     ``feature / feature_cells``. Levels are only ever raised above the preset and
     are capped by ``max_surface_level`` to bound the cell budget.
     """
-    pct = float(user_mesh.get("feature_percentile", preset.get("feature_percentile", 10.0)))
+    pct = float(user_mesh.get("feature_percentile", preset.get("feature_percentile", 25.0)))
     cells_per_feature = max(float(user_mesh.get("feature_cells", preset.get("feature_cells", 3.0))), 1.0)
     max_level = int(user_mesh.get("max_surface_level", preset.get("max_surface_level", 7)))
     max_level = max(1, min(max_level, 14))

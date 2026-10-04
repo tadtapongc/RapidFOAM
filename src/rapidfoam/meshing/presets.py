@@ -35,7 +35,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "slurm_mem_per_cpu": "2G",
         # Feature-based auto-sizing: refine until the smallest feature spans
         # feature_cells, capped at max_surface_level.
-        "feature_percentile": 10.0,
+        "feature_percentile": 25.0,
         "feature_cells": 3.0,
         "max_surface_level": 6,
         # Feature-angle derivation: resolve creases in the high tail of the
@@ -77,7 +77,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "slurm_mem_per_cpu": "2G",
         # Feature-based auto-sizing: refine until the smallest feature spans
         # feature_cells, capped at max_surface_level.
-        "feature_percentile": 10.0,
+        "feature_percentile": 25.0,
         "feature_cells": 4.0,
         "max_surface_level": 7,
         # Feature-angle derivation: resolve creases in the high tail of the
@@ -119,7 +119,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "slurm_mem_per_cpu": "4G",
         # Feature-based auto-sizing: refine until the smallest feature spans
         # feature_cells, capped at max_surface_level.
-        "feature_percentile": 10.0,
+        "feature_percentile": 25.0,
         "feature_cells": 5.0,
         "max_surface_level": 8,
         # Feature-angle derivation: resolve creases in the high tail of the
