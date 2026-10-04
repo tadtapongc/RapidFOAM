@@ -146,6 +146,8 @@ def forces_main() -> None:
     parser.add_argument("--yplus", action="store_true", help="Verify near-wall y+ against the target")
     parser.add_argument("--surface", action="store_true", help="Verify surface integrity (surfaceCheck log)")
     parser.add_argument("--mesh", action="store_true", help="Verify mesh quality (checkMesh + boundary layers)")
+    parser.add_argument("--grid", action="store_true",
+                        help="Grid-independence study across <case>_fast/_standard/_fine")
     parser.add_argument("--interval", "-i", type=float, default=3, help="Live update interval (s)")
     args = parser.parse_args()
 
@@ -320,6 +322,14 @@ def forces_main() -> None:
             print(f"    ⚠  {warning}")
         print(f"    {summary['note']}")
         sys.exit(0 if summary.get("ok") else 2)
+
+    # Grid-independence study across <case>_fast/_standard/_fine
+    if args.grid:
+        from rapidfoam.postproc.gridstudy import grid_study, print_grid_study
+        base = case_dir.name if case_dir != Path(".") else (args.case or "")
+        report = grid_study(base, cases_root=case_dir.parent)
+        print_grid_study(report)
+        sys.exit(0 if report.get("converged") else (3 if not report.get("available") else 2))
 
     files = find_force_files(case_dir)
     if not files:
