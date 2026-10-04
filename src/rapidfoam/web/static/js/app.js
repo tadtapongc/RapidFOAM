@@ -417,6 +417,15 @@ class CFDApp {
       this.clearAllOverrides();
     });
 
+    // Per-surface mesh_regions override: apply button + delegated clear buttons.
+    document.getElementById('cfg-region-add')?.addEventListener('click', () => {
+      this.applyMeshRegionOverride();
+    });
+    document.getElementById('cfg-per-surface-tbody')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-clear-region]');
+      if (btn) this.clearMeshRegionOverride(btn.getAttribute('data-clear-region'));
+    });
+
     // Ground level style selector (2 + 1 styles)
     const groundStyleSelect = document.getElementById('cfg-ground-style');
     groundStyleSelect?.addEventListener('change', (e) => {
@@ -1404,6 +1413,73 @@ class CFDApp {
     el.textContent = parts.join('  |  ');
   }
 
+  renderPerSurface(perSurface) {
+    const tbody = document.getElementById('cfg-per-surface-tbody');
+    const stemSelect = document.getElementById('cfg-region-stem');
+    if (!tbody) return;
+    const stems = Object.keys(perSurface || {}).sort();
+    if (!stems.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No geometry</td></tr>';
+    } else {
+      tbody.innerHTML = stems.map((stem) => {
+        const info = perSurface[stem] || {};
+        const sl = Array.isArray(info.surface_level) ? `${info.surface_level[0]}–${info.surface_level[1]}` : '—';
+        const srcCls = info.source === 'manual' ? 'mesh-metric-usable'
+          : (info.source === 'auto' ? 'mesh-metric-pass' : 'text-muted');
+        const overridden = info.source === 'manual';
+        return `<tr><td>${this.escapeHtml(stem)}</td>`
+          + `<td class="monospace">${sl}</td>`
+          + `<td class="monospace">${info.edge_level ?? '—'}</td>`
+          + `<td class="monospace">${info.n_layers ?? '—'}</td>`
+          + `<td class="${srcCls}">${this.escapeHtml(info.source || 'preset')}</td>`
+          + `<td>${overridden ? `<button type="button" class="btn btn-ghost btn-xs" data-clear-region="${this.escapeHtml(stem)}">clear</button>` : ''}</td></tr>`;
+      }).join('');
+    }
+    if (stemSelect) {
+      const current = stemSelect.value;
+      stemSelect.innerHTML = stems.map((s) => `<option value="${this.escapeHtml(s)}">${this.escapeHtml(s)}</option>`).join('');
+      if (stems.includes(current)) stemSelect.value = current;
+    }
+  }
+
+  applyMeshRegionOverride() {
+    const stem = this.getVal('cfg-region-stem');
+    if (!stem) return;
+    const nLayers = this.getVal('cfg-region-layers');
+    const surfMin = this.getVal('cfg-region-surfmin');
+    const surfMax = this.getVal('cfg-region-surfmax');
+    const edge = this.getVal('cfg-region-edge');
+    const spec = {};
+    if (nLayers !== '') spec.n_layers = parseInt(nLayers, 10);
+    if (edge !== '') spec.edge_level = parseInt(edge, 10);
+    if (surfMin !== '' && surfMax !== '') spec.surface_level = [parseInt(surfMin, 10), parseInt(surfMax, 10)];
+    if (!Object.keys(spec).length) {
+      this.showToast('Enter at least one override value.', 'warning');
+      return;
+    }
+    const overrides = this.activeConfig.overrides || {};
+    overrides.mesh_regions = { ...(overrides.mesh_regions || {}), [stem]: spec };
+    this.activeConfig.overrides = overrides;
+    this.setVal('cfg-region-layers', '');
+    this.setVal('cfg-region-surfmin', '');
+    this.setVal('cfg-region-surfmax', '');
+    this.setVal('cfg-region-edge', '');
+    this.syncConfigToJsonDrawer();
+    this.updateDomainBoxVisualization();
+    this.showToast(`Override applied to ${stem}.`, 'success');
+  }
+
+  clearMeshRegionOverride(stem) {
+    const overrides = this.activeConfig.overrides || {};
+    if (overrides.mesh_regions && overrides.mesh_regions[stem] !== undefined) {
+      delete overrides.mesh_regions[stem];
+      if (!Object.keys(overrides.mesh_regions).length) delete overrides.mesh_regions;
+      if (!Object.keys(overrides).length) delete this.activeConfig.overrides;
+    }
+    this.syncConfigToJsonDrawer();
+    this.updateDomainBoxVisualization();
+  }
+
   clearAllOverrides() {
     const overrideIds = [
       'cfg-override-solver-endtime',
@@ -1534,6 +1610,7 @@ class CFDApp {
       // A domain-box refresh happens whenever the geometry/config changes, so
       // refresh the layer + feature auto-sizing preview from the same payload.
       if (data.layer_preview) this.renderLayerPreview(data.layer_preview);
+      if (data.per_surface) this.renderPerSurface(data.per_surface);
       if (data.domain_box && data.domain_box.min && data.domain_box.max) {
         const faces = this.activeConfig.domain_faces || {};
         const hasSymmetry = Object.values(faces).some((f) => String(f).toLowerCase().includes('symmetry'));

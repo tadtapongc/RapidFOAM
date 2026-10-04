@@ -779,6 +779,48 @@
                     <span id="cfg-effective-layers" class="field-hint"></span>
                   </div>
 
+                  <!-- Per-surface refinement (geometry-derived + manual overrides) -->
+                  <div class="form-group col-span-2">
+                    <div class="overrides-section-header">
+                      <h4 class="section-subtitle">Per-Surface Refinement</h4>
+                      <span class="field-hint">Effective surface/edge level and layer count per STL. Geometry-derived (auto-size) shown as "auto"; manual <code>mesh_regions</code> overrides as "manual".</span>
+                    </div>
+                  </div>
+                  <div class="form-group col-span-2 table-responsive">
+                    <table class="data-table mini-table" id="cfg-per-surface-table">
+                      <thead>
+                        <tr><th>STL</th><th>Surface level</th><th>Edge level</th><th>Layers</th><th>Source</th><th></th></tr>
+                      </thead>
+                      <tbody id="cfg-per-surface-tbody">
+                        <tr><td colspan="6" class="text-center text-muted">No geometry</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="form-group">
+                    <label for="cfg-region-stem">Override STL</label>
+                    <select id="cfg-region-stem" class="input"></select>
+                  </div>
+                  <div class="form-group">
+                    <label for="cfg-region-layers">Layers (n_layers)</label>
+                    <input type="number" id="cfg-region-layers" class="input" min="0" step="1" placeholder="e.g. 0">
+                  </div>
+                  <div class="form-group">
+                    <label for="cfg-region-surfmin">Surface level min</label>
+                    <input type="number" id="cfg-region-surfmin" class="input" min="0" step="1" placeholder="e.g. 4">
+                  </div>
+                  <div class="form-group">
+                    <label for="cfg-region-surfmax">Surface level max</label>
+                    <input type="number" id="cfg-region-surfmax" class="input" min="0" step="1" placeholder="e.g. 6">
+                  </div>
+                  <div class="form-group">
+                    <label for="cfg-region-edge">Edge level</label>
+                    <input type="number" id="cfg-region-edge" class="input" min="0" step="1" placeholder="e.g. 7">
+                  </div>
+                  <div class="form-group">
+                    <span class="field-hint">&nbsp;</span>
+                    <button type="button" class="btn btn-outline" id="cfg-region-add">Apply override</button>
+                  </div>
+
                   <div class="form-group col-span-2">
                     <span id="cfg-layer-preview" class="field-hint"></span>
                   </div>

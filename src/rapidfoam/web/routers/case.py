@@ -22,7 +22,7 @@ from rapidfoam.web.schemas import (
     JobSubmitRequest,
 )
 from rapidfoam.web.services.downloads import _run_download
-from rapidfoam.web.services.geometry import _local_stl_exists, layer_preview
+from rapidfoam.web.services.geometry import _local_stl_exists, layer_preview, per_surface_preview
 from rapidfoam.web.state import (
     CASE_NAME_REGEX,
     JOB_ID_REGEX,
@@ -51,11 +51,14 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
     # (and bounds when the caller did not supply them), one streaming pass per file.
     feature_stats = EdgeStats()
     angle_stats = FeatureAngleStats()
+    stats_by_stem: dict[str, EdgeStats] = {}
+    extents_by_stem: dict[str, list[float]] = {}
     have_stats = False
     computed_min = [float("inf")] * 3
     computed_max = [float("-inf")] * 3
     for sname in cfg.get("stl_files", []):
         safe_sname = Path(sname).name
+        stem = safe_sname.rsplit(".", 1)[0] if "." in safe_sname else safe_sname
         p = find_stl(PROJECT_ROOT / "stl", safe_sname)
         if p and p.is_file():
             try:
@@ -64,6 +67,8 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
                 continue
             feature_stats.merge(stats)
             angle_stats.merge(angles)
+            stats_by_stem[stem] = stats
+            extents_by_stem[stem] = [b[1][i] - b[0][i] for i in range(3)]
             have_stats = True
             for i in range(3):
                 computed_min[i] = min(computed_min[i], b[0][i])
@@ -98,6 +103,10 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
             "auto_symmetry_plane": round(center_lateral, 4),
             "lateral_axis": "xyz"[lateral_idx],
             "layer_preview": layer_preview(merged, cfg, bounds_tuple, stats_for_sizing, stats_for_angle),
+            "per_surface": per_surface_preview(
+                merged, cfg, stats_by_stem, extents_by_stem,
+                list(cfg.get("stl_names") or [n.rsplit(".", 1)[0] if "." in n else n for n in cfg.get("stl_files", [])]),
+            ),
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))

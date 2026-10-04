@@ -615,6 +615,48 @@ test('renderLayerPreview shows the effective layer controls', async () => {
   assert.ok(text.includes('y+ fit off'), text);
 });
 
+// ------------------------------------------- Per-surface refinement
+test('renderPerSurface renders the table and marks sources', async () => {
+  const app = await makeApp(`
+    <table><tbody id="cfg-per-surface-tbody"></tbody></table>
+    <select id="cfg-region-stem"></select>
+  `);
+  installFormStubs(app);
+  app.renderPerSurface({
+    wing: { surface_level: [4, 7], edge_level: 8, n_layers: 12, source: 'auto' },
+    body: { surface_level: [4, 5], edge_level: 6, n_layers: 8, source: 'manual' },
+  });
+  const rows = app._window.document.getElementById('cfg-per-surface-tbody').innerHTML;
+  assert.ok(rows.includes('wing'));
+  assert.ok(rows.includes('4–7'));
+  assert.ok(rows.includes('auto'));
+  assert.ok(rows.includes('manual'));
+  const opts = app._window.document.getElementById('cfg-region-stem').innerHTML;
+  assert.ok(opts.includes('wing') && opts.includes('body'));
+});
+
+test('applyMeshRegionOverride writes overrides.mesh_regions', async () => {
+  const app = await makeApp(`
+    <select id="cfg-region-stem"><option value="wing">wing</option></select>
+    <input id="cfg-region-layers"><input id="cfg-region-surfmin"><input id="cfg-region-surfmax"><input id="cfg-region-edge">
+  `);
+  installFormStubs(app);
+  app.syncConfigToJsonDrawer = () => {};
+  app.updateDomainBoxVisualization = () => {};
+  app.activeConfig = { case_name: 'c' };
+  app.setVal('cfg-region-stem', 'wing');
+  app.setVal('cfg-region-layers', '0');
+  app.setVal('cfg-region-surfmin', '4');
+  app.setVal('cfg-region-surfmax', '6');
+  app.applyMeshRegionOverride();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(app.activeConfig.overrides.mesh_regions.wing)),
+    { n_layers: 0, surface_level: [4, 6] },
+  );
+  app.clearMeshRegionOverride('wing');
+  assert.equal(app.activeConfig.overrides, undefined);
+});
+
 // ------------------------------------------- Symmetry (full car)
 test('buildConfigFromVisualForm omits symmetry_plane for a blank field (full car)', async () => {
   const app = await makeApp(buildStubBody());

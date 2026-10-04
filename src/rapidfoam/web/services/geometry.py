@@ -7,7 +7,8 @@ from typing import Any
 
 from rapidfoam.config import find_stl, user_set
 from rapidfoam.meshing.plan import build_mesh_plan
-from rapidfoam.meshing.presets import apply_fidelity_preset
+from rapidfoam.meshing.presets import FIDELITY_PRESETS, apply_fidelity_preset
+from rapidfoam.meshing.sizing import apply_mesh_regions, resolve_per_surface_levels
 from rapidfoam.web.state import PROJECT_ROOT
 
 
@@ -51,4 +52,59 @@ def layer_preview(
     return resolved
 
 
-__all__ = ["layer_preview", "_local_stl_exists"]
+def per_surface_preview(
+    merged: dict[str, Any],
+    raw_cfg: dict[str, Any],
+    stats_by_stem: dict[str, Any],
+    extents_by_stem: dict[str, list[float]],
+    stl_names: list[str],
+) -> dict[str, Any]:
+    """Effective per-surface refinement for each STL (for the Studio readout).
+
+    Mirrors the builder: geometry-derived levels when ``auto_size`` is on, then
+    manual ``mesh_regions`` overrides on top. Returns
+    ``{stem: {surface_level, edge_level, n_layers, source}}``.
+    """
+    preview_cfg = copy.deepcopy(merged)
+    apply_fidelity_preset(preview_cfg, lambda section, key: user_set(raw_cfg, section, key))
+    mesh = preview_cfg.get("mesh_params", {})
+    global_level = mesh.get("surface_level", FIDELITY_PRESETS["standard"]["surface_level"])
+    global_edge = mesh.get("edge_level", FIDELITY_PRESETS["standard"]["edge_level"])
+    n_layers = preview_cfg.get("layers", {}).get("n_layers")
+
+    auto: dict[str, Any] = {}
+    if mesh.get("auto_size"):
+        base_cell = mesh.get("base_cell_size")
+        if isinstance(base_cell, (int, float)) and base_cell > 0 and stats_by_stem:
+            auto = resolve_per_surface_levels(
+                mesh,
+                FIDELITY_PRESETS.get(preview_cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"]),
+                float(base_cell),
+                list(global_level),
+                int(global_edge),
+                stats_by_stem,
+                extents_by_stem,
+            )
+    preview_cfg.setdefault("mesh_params", {})["surface_levels"] = auto
+    apply_mesh_regions(preview_cfg, stl_names)
+    resolved = preview_cfg["mesh_params"].get("surface_levels", {})
+    layer_overrides = preview_cfg["mesh_params"].get("layer_overrides", {})
+    # A manual override is anything present in the effective mesh_regions (top
+    # level or under overrides); effective_config has already merged both.
+    manual_regions = preview_cfg.get("mesh_regions") if isinstance(preview_cfg.get("mesh_regions"), dict) else {}
+
+    out: dict[str, Any] = {}
+    for stem in stl_names:
+        info = resolved.get(stem, {})
+        has_auto = bool(auto.get(stem))
+        has_manual = stem in manual_regions
+        out[stem] = {
+            "surface_level": info.get("surface_level", global_level),
+            "edge_level": info.get("edge_level", global_edge),
+            "n_layers": layer_overrides.get(stem, n_layers),
+            "source": "manual" if has_manual else ("auto" if has_auto else "preset"),
+        }
+    return out
+
+
+__all__ = ["layer_preview", "per_surface_preview", "_local_stl_exists"]

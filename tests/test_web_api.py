@@ -801,6 +801,38 @@ class TestWebAPI(unittest.TestCase):
         clamped = 0.5 * base_cell / 2 ** level1
         self.assertAlmostEqual(preview["first_layer_thickness"], min(unclamped, clamped), places=9)
 
+    def test_geometry_domain_box_per_surface_preview(self):
+        """The domain-box payload includes effective per-surface refinement."""
+        from rapidfoam.web.services.geometry import per_surface_preview
+        from rapidfoam.geometry.stl import EdgeStats
+
+        preset_stats = EdgeStats()
+        for _ in range(500):
+            preset_stats.add(0.05)
+        tiny_stats = EdgeStats()
+        for _ in range(500):
+            tiny_stats.add(0.004)
+        merged = {
+            "fidelity": "standard",
+            "flow": {"velocity": 16.67, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+            "layers": {"n_layers": 8},
+            "mesh_params": {"auto_size": True, "base_cell_size": 0.1,
+                            "surface_level": [4, 5], "edge_level": 6, "max_surface_level": 8},
+            "mesh_regions": {"bracket": {"n_layers": 0}},
+        }
+        out = per_surface_preview(
+            merged, merged,
+            {"body": preset_stats, "bracket": tiny_stats},
+            {"body": [3.0, 1.0, 5.0], "bracket": [0.3, 0.1, 0.4]},
+            ["body", "bracket"],
+        )
+        # bracket refines above body (auto), and its manual n_layers:0 wins.
+        self.assertEqual(out["body"]["source"], "auto")
+        self.assertGreater(out["bracket"]["surface_level"][1], out["body"]["surface_level"][1])
+        self.assertEqual(out["bracket"]["source"], "manual")
+        self.assertEqual(out["bracket"]["n_layers"], 0)
+
     def test_geometry_domain_box_layer_preview_explicit_absolute(self):
         """Explicit absolute thickness wins and reports its effective y+."""
         bounds = {"min": [-0.745, 0.0, -2.961], "max": [0.745, 1.145, 0.296]}
