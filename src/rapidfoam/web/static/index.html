@@ -182,8 +182,20 @@
               <!-- Run mode: the top-level choice for this case -->
               <div class="run-mode-bar">
                 <div class="segmented-control" id="cfg-run-mode" role="group" aria-label="Run mode">
-                  <button type="button" class="segment active" data-mode="normal">Normal simulation</button>
-                  <button type="button" class="segment" data-mode="grid">Grid independence study</button>
+                  <button type="button" class="segment active" data-mode="normal">
+                    <span class="segment-icon" aria-hidden="true">◈</span>
+                    <span class="segment-text">
+                      <span class="segment-title">Normal simulation</span>
+                      <span class="segment-sub">Single case at the chosen fidelity</span>
+                    </span>
+                  </button>
+                  <button type="button" class="segment" data-mode="grid">
+                    <span class="segment-icon" aria-hidden="true">▤</span>
+                    <span class="segment-text">
+                      <span class="segment-title">Grid independence study</span>
+                      <span class="segment-sub">Three meshes, one physics setup</span>
+                    </span>
+                  </button>
                 </div>
                 <span class="run-mode-hint" id="cfg-run-mode-hint">Generate a single case at the chosen fidelity.</span>
               </div>

@@ -2626,44 +2626,82 @@ body.dark-theme {
 .run-mode-bar {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 18px;
   flex-wrap: wrap;
-  padding: 10px 12px;
-  margin-bottom: 14px;
-  background: var(--bg-surface-raised, #151922);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(0, 0, 0, 0));
+  background-color: var(--bg-surface-raised, #151922);
   border: 1px solid var(--border-color, #2a3140);
-  border-radius: var(--radius-md, 7px);
+  border-radius: var(--radius-lg, 10px);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 .run-mode-hint {
   font-size: 12px;
   color: var(--text-tertiary, #64748b);
-  flex: 1 1 200px;
+  flex: 1 1 220px;
+  line-height: 1.5;
 }
 .segmented-control {
   display: inline-flex;
+  gap: 6px;
+  padding: 4px;
   border: 1px solid var(--border-color, #2a3140);
   border-radius: var(--radius-md, 7px);
-  overflow: hidden;
   background: var(--bg-input, #0c0e14);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 .segmented-control .segment {
   appearance: none;
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--text-secondary, #94a3b8);
-  padding: 8px 18px;
+  padding: 9px 16px;
+  border-radius: calc(var(--radius-md, 7px) - 3px);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.segmented-control .segment:hover {
+  color: var(--text-primary, #e2e8f0);
+  background: rgba(255, 255, 255, 0.03);
+}
+.segmented-control .segment .segment-icon {
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.75;
+}
+.segmented-control .segment .segment-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.segmented-control .segment .segment-title {
   font-size: 12.5px;
   font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  line-height: 1.2;
 }
-.segmented-control .segment:hover { color: var(--text-primary, #e2e8f0); }
-.segmented-control .segment + .segment { border-left: 1px solid var(--border-color, #2a3140); }
+.segmented-control .segment .segment-sub {
+  font-size: 10.5px;
+  font-weight: 500;
+  opacity: 0.65;
+  line-height: 1.2;
+}
 .segmented-control .segment.active {
-  background: var(--accent-primary, #2563eb);
+  background: linear-gradient(180deg, var(--accent-primary-hover, #1d4ed8), var(--accent-primary, #2563eb));
   color: #fff;
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 .segmented-control .segment.active:hover { color: #fff; }
+.segmented-control .segment.active .segment-icon { opacity: 1; }
+.segmented-control .segment:focus-visible {
+  outline: 2px solid var(--accent-primary, #2563eb);
+  outline-offset: 2px;
+}
 .study-banner {
   background: rgba(37, 99, 235, 0.08);
   border: 1px solid rgba(37, 99, 235, 0.35);
