@@ -273,6 +273,8 @@ async def api_case_refinement_study(req: RefinementStudyRequest) -> dict[str, An
     """
     import json as _json
     from rapidfoam.postproc.gridstudy import configure_refinement_study
+    from rapidfoam.config import effective_config
+    from rapidfoam.meshing.presets import FIDELITY_PRESETS
 
     cfg = req.config
     case_name = cfg.get("case_name", "").strip()
@@ -285,9 +287,12 @@ async def api_case_refinement_study(req: RefinementStudyRequest) -> dict[str, An
     base_path = cfg_dir / f"{case_name}.json"
     base_path.write_text(_json.dumps(cfg, indent=4) + "\n", encoding="utf-8")
 
+    fidelity = effective_config(cfg).get("fidelity", "standard")
+    preset = FIDELITY_PRESETS.get(fidelity, FIDELITY_PRESETS["standard"])
+
     variants = await asyncio.to_thread(
         configure_refinement_study, base_path, base_name=case_name, levels=tuple(levels),
-        out_dir=cfg_dir, co_refine_surface=req.co_refine_surface,
+        out_dir=cfg_dir, co_refine_surface=req.co_refine_surface, preset=preset,
     )
 
     results = []

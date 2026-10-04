@@ -59,8 +59,15 @@ Examples:
     if args.grid_refine:
         from rapidfoam.postproc.gridstudy import configure_refinement_study
         from rapidfoam.casegen.builder import CaseGenerationError, build_case
+        from rapidfoam.config import effective_config
+        from rapidfoam.meshing.presets import FIDELITY_PRESETS
 
-        variants = configure_refinement_study(Path(args.config), out_dir=Path("configs"))
+        base_cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
+        fidelity = effective_config(base_cfg).get("fidelity", "standard")
+        variants = configure_refinement_study(
+            Path(args.config), out_dir=Path("configs"),
+            preset=FIDELITY_PRESETS.get(fidelity, FIDELITY_PRESETS["standard"]),
+        )
         for v in variants:
             print(f"  ✓ Config: {v['config_path']}  (cells_per_length {v['cells_per_length']})")
         if args.run:

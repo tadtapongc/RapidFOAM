@@ -329,6 +329,7 @@ def configure_refinement_study(
     out_dir: str | Path | None = None,
     co_refine_surface: bool | None = None,
     slurm_scaling: dict[str, list[str]] | None = None,
+    preset: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Write three refinement-only configs from one base config.
 
@@ -343,11 +344,18 @@ def configure_refinement_study(
     config. With ``co_refine_surface`` the surface/edge level is also stepped
     +0/+1/+1 across the ladder (a stronger, less clean near-wall ladder).
 
+    ``preset`` is the fidelity preset block (from
+    :data:`rapidfoam.meshing.presets.FIDELITY_PRESETS`) used to pin the near-wall
+    and end-time values when the base config does not set them explicitly. It is
+    passed in by the caller because ``postproc`` may not import the meshing
+    presets (bounded-context rule); when omitted, the local ``_PRESET_FALLBACK``
+    table is used.
+
     Returns ``[{name, config_path, cells_per_length, label}]`` for each variant.
     """
     import json
 
-    from rapidfoam.config import DEFAULT_CONFIG, effective_config
+    from rapidfoam.config import DEFAULT_CONFIG, effective_config, user_set
 
     gs = DEFAULT_CONFIG.get("grid_study", {})
     if levels is None:
@@ -362,28 +370,49 @@ def configure_refinement_study(
     stem = base_name or raw.get("case_name") or base_path.stem
     out = Path(out_dir) if out_dir else base_path.parent
 
-    # Pin the physics explicitly so a later edit to a preset cannot drift the study.
+    # The effective fidelity of the base config. Preset values (from the caller
+    # or the local fallback) pin the near-wall layers and end time so a later
+    # edit to a preset cannot drift the study.
+    eff = effective_config(raw)
+    fidelity = eff.get("fidelity", "standard")
+    if preset is None:
+        preset = _PRESET_FALLBACK.get(fidelity, _PRESET_FALLBACK["standard"])
+
     overrides = dict(raw.get("overrides") or {})
     layers = dict(overrides.get("layers") or {})
     mesh = dict(overrides.get("mesh_params") or {})
     solver = dict(overrides.get("solver") or {})
 
-    # Resolve the base's pinned settings. Prefer explicit values (top-level or
-    # overrides); fall back to a small local default table so postproc does not
-    # depend on the meshing presets (bounded-context rule: postproc may import
-    # core only). The base's real preset values reach the variants in practice
-    # because the CLI/Studio pass an explicit layers/solver block, or the base
-    # config already carries them.
-    eff = effective_config(raw)
-    layers.setdefault("y_plus_target", eff["layers"].get("y_plus_target") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["y_plus_target"])
-    layers.setdefault("n_layers", eff["layers"].get("n_layers") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["n_layers"])
-    layers.setdefault("expansion_ratio", eff["layers"].get("expansion_ratio") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["expansion_ratio"])
-    solver.setdefault("end_time", eff["solver"].get("end_time") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["end_time"])
+    # A base value is authoritative only if the user set it explicitly. Values
+    # that merely leaked in from DEFAULT_CONFIG (e.g. n_layers 5, end_time 800)
+    # must not override the selected fidelity preset.
+    def _pinned(section: str, key: str) -> Any:
+        block = (raw.get(section) or {}) if isinstance(raw.get(section), dict) else {}
+        if key in block:
+            return block[key]
+        return None
+
+    def _resolve(current: dict[str, Any], section: str, key: str, preset_key: str) -> Any:
+        if key in current:
+            return current[key]
+        explicit = _pinned(section, key)
+        if explicit is not None:
+            return explicit
+        if user_set(raw, section, key):
+            return eff.get(section, {}).get(key)
+        return preset.get(preset_key)
+
+    layers["y_plus_target"] = _resolve(layers, "layers", "y_plus_target", "y_plus_target")
+    layers["n_layers"] = _resolve(layers, "layers", "n_layers", "n_layers")
+    layers["expansion_ratio"] = _resolve(layers, "layers", "expansion_ratio", "expansion_ratio")
+    solver["end_time"] = _resolve(solver, "solver", "end_time", "end_time")
     overrides["layers"] = layers
     overrides["solver"] = solver
 
-    base_surface = list(eff.get("mesh_params", {}).get("surface_level") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["surface_level"])
-    base_edge = int(eff.get("mesh_params", {}).get("edge_level") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["edge_level"])
+    base_surface = list(eff.get("mesh_params", {}).get("surface_level")
+                        or preset.get("surface_level") or [4, 5])
+    base_edge = int(eff.get("mesh_params", {}).get("edge_level")
+                    or preset.get("edge_level") or 6)
 
     times = list(slurm_scaling.get("time", []))
     mems = list(slurm_scaling.get("mem_per_cpu", []))

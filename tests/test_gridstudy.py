@@ -159,6 +159,102 @@ class RefinementStudyConfigTest(unittest.TestCase):
         self.assertIn("cpl20", report["per_fidelity"])
         self.assertTrue(report["pinned_consistent"])
 
+    def test_fidelity_preset_pins_when_base_has_no_overrides(self):
+        # A Studio config with fidelity 'standard' and no explicit layers/solver
+        # must pin the standard preset (y+30, 8 layers, 1500), not the global
+        # DEFAULT_CONFIG values (which match fast: 5 layers, 800).
+        import json
+        from rapidfoam.meshing.presets import FIDELITY_PRESETS
+
+        base = {
+            "case_name": "wing",
+            "stl_files": ["wing.stl"],
+            "fidelity": "standard",
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+        }
+        p = self.root / "wing_bare.json"
+        p.write_text(json.dumps(base))
+        variants = configure_refinement_study(
+            p, out_dir=self.root, preset=FIDELITY_PRESETS["standard"])
+        for v in variants:
+            cfg = json.loads(Path(v["config_path"]).read_text())
+            self.assertEqual(cfg["overrides"]["layers"]["y_plus_target"], 30)
+            self.assertEqual(cfg["overrides"]["layers"]["n_layers"], 8)
+            self.assertEqual(cfg["overrides"]["solver"]["end_time"], 1500)
+
+    def test_fast_preset_pins_when_base_has_no_overrides(self):
+        # Symmetrically, fidelity 'fast' must pin 5 layers / 800, not standard.
+        import json
+        from rapidfoam.meshing.presets import FIDELITY_PRESETS
+
+        base = {
+            "case_name": "wing",
+            "stl_files": ["wing.stl"],
+            "fidelity": "fast",
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+        }
+        p = self.root / "wing_fast.json"
+        p.write_text(json.dumps(base))
+        variants = configure_refinement_study(
+            p, out_dir=self.root, preset=FIDELITY_PRESETS["fast"])
+        for v in variants:
+            cfg = json.loads(Path(v["config_path"]).read_text())
+            self.assertEqual(cfg["overrides"]["layers"]["n_layers"], 5)
+            self.assertEqual(cfg["overrides"]["solver"]["end_time"], 800)
+
+    def test_explicit_override_beats_preset(self):
+        # A user's explicit layers/solver must win over the fidelity preset.
+        import json
+        from rapidfoam.meshing.presets import FIDELITY_PRESETS
+
+        base = {
+            "case_name": "wing",
+            "stl_files": ["wing.stl"],
+            "fidelity": "standard",
+            "overrides": {"layers": {"n_layers": 12}, "solver": {"end_time": 3000}},
+        }
+        p = self.root / "wing_override.json"
+        p.write_text(json.dumps(base))
+        variants = configure_refinement_study(
+            p, out_dir=self.root, preset=FIDELITY_PRESETS["standard"])
+        for v in variants:
+            cfg = json.loads(Path(v["config_path"]).read_text())
+            self.assertEqual(cfg["overrides"]["layers"]["n_layers"], 12)
+            self.assertEqual(cfg["overrides"]["solver"]["end_time"], 3000)
+
+    def test_only_cells_per_length_differs_from_bare_base(self):
+        import json
+        from rapidfoam.meshing.presets import FIDELITY_PRESETS
+
+        base = {
+            "case_name": "wing",
+            "stl_files": ["wing.stl"],
+            "fidelity": "standard",
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+        }
+        p = self.root / "wing_diff.json"
+        p.write_text(json.dumps(base))
+        variants = configure_refinement_study(
+            p, out_dir=self.root, preset=FIDELITY_PRESETS["standard"],
+            slurm_scaling={"time": [], "mem_per_cpu": []})
+
+        def flat(d, prefix=""):
+            out = {}
+            for k, val in d.items():
+                if isinstance(val, dict):
+                    out.update(flat(val, prefix + k + "."))
+                else:
+                    out[prefix + k] = val
+            return out
+
+        cfgs = [flat(json.loads(Path(v["config_path"]).read_text())) for v in variants]
+        keys = set().union(*(c.keys() for c in cfgs))
+        differing = {k for k in keys if len({json.dumps(c.get(k)) for c in cfgs}) > 1}
+        self.assertEqual(differing, {"case_name", "overrides.mesh_params.cells_per_length"})
+
 
 if __name__ == "__main__":
     unittest.main()
