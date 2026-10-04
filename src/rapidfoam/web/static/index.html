@@ -180,8 +180,10 @@
             <!-- SUB-TAB 1: General & Presets -->
             <div class="subtab-content active" id="subtab-general">
               <!-- Run mode: the top-level choice for this case -->
-              <div class="run-mode-bar">
-                <div class="fidelity-cards run-mode-cards">
+              <div class="run-mode-field">
+                <label>Run Mode</label>
+                <div class="run-mode-bar">
+                  <div class="fidelity-cards run-mode-cards">
                   <label class="fidelity-card selected" data-mode="normal">
                     <input type="radio" name="cfg-run-mode" value="normal" checked>
                     <div class="card-body">
@@ -198,6 +200,7 @@
                   </label>
                 </div>
                 <span class="run-mode-hint" id="cfg-run-mode-hint">Generate a single case at the chosen fidelity.</span>
+                </div>
               </div>
               <div class="form-grid">
                 <div class="form-group col-span-2">

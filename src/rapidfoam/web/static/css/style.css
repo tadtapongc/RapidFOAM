@@ -2623,12 +2623,18 @@ body.dark-theme {
 
 
 /* ---- Run mode bar + grid-study card ---- */
+.run-mode-field {
+  margin-bottom: 14px;
+}
+.run-mode-field > label {
+  display: block;
+  margin-bottom: 6px;
+}
 .run-mode-bar {
   display: flex;
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
 }
 .run-mode-cards {
   grid-template-columns: repeat(2, 1fr);
