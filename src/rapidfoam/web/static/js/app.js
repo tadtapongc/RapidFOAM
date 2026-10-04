@@ -477,6 +477,7 @@ class CFDApp {
     document.getElementById('btn-save-config')?.addEventListener('click', () => this.saveCurrentConfig(false));
     document.getElementById('btn-generate-local')?.addEventListener('click', () => this.generateCaseLocally());
     document.getElementById('cfg-study-levels')?.addEventListener('input', () => this.renderStudyPreview());
+    document.getElementById('cfg-case-name')?.addEventListener('input', () => this.renderStudyPreview());
     document.getElementById('cfg-study-corefine')?.addEventListener('change', () => this.renderStudyPreview());
     document.getElementById('cfg-study-base-preset')?.addEventListener('change', () => {
       const base = this.getVal('cfg-study-base-preset');
@@ -2075,7 +2076,9 @@ class CFDApp {
   renderStudyPreview() {
     const el = document.getElementById('cfg-study-preview');
     if (!el) return;
-    const base = (this.activeConfig && this.activeConfig.case_name) || 'my_case';
+    // Read the live case-name field so the preview follows what the user is
+    // typing, not the last config that was built from the form.
+    const base = this.getVal('cfg-case-name') || (this.activeConfig && this.activeConfig.case_name) || 'my_case';
     const raw = this.getVal('cfg-study-levels') || '20, 30, 45';
     const levels = raw.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0);
     el.textContent = levels.length

@@ -1228,3 +1228,19 @@ test('footer action buttons relabel for grid mode', async () => {
   assert.equal(app._window.document.getElementById('btn-generate-local').textContent, 'Generate Locally');
   assert.equal(app._window.document.getElementById('btn-submit-case').textContent, 'Launch Simulation on Cluster');
 });
+
+test('study preview follows the live case-name field', async () => {
+  const app = await makeApp(`
+    <input id="cfg-case-name" value="wing">
+    <input id="cfg-study-levels" value="20, 30, 45">
+    <span id="cfg-study-preview"></span>
+  `);
+  installFormStubs(app);
+  app.activeConfig = { case_name: 'stale_name' };
+  app.renderStudyPreview();
+  assert.ok(app._window.document.getElementById('cfg-study-preview').textContent.includes('wing_cpl20'));
+  app._window.document.getElementById('cfg-case-name').value = 'front_wing';
+  app.renderStudyPreview();
+  assert.ok(app._window.document.getElementById('cfg-study-preview').textContent.includes('front_wing_cpl45'));
+  assert.ok(!app._window.document.getElementById('cfg-study-preview').textContent.includes('stale_name'));
+});
