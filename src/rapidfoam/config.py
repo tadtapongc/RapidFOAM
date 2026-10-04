@@ -303,6 +303,23 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_unconnected_parts": 1,
     },
 
+    # Grid-independence study defaults (workflow, not a fidelity preset). A study
+    # builds three cases from one base config that differ ONLY in
+    # mesh_params.cells_per_length — physics, near-wall layers and end_time are
+    # pinned — so the resulting forces form a valid refinement ladder.
+    "grid_study": {
+        "levels": [20, 30, 45],            # cells_per_length, coarse -> fine
+        "co_refine_surface": False,        # true also steps surface_level/edge_level
+        "cd_threshold": 0.03,              # fine vs previous Cd tolerance
+        "cl_threshold": 0.05,              # fine vs previous Cl tolerance
+        # Per-level SLURM resources so the fine mesh is not starved by the base's
+        # (usually smaller) walltime/memory.
+        "slurm": {
+            "time": ["04:00:00", "08:00:00", "14:00:00"],
+            "mem_per_cpu": ["2G", "2G", "4G"],
+        },
+    },
+
     # potentialFoam
     "potential_flow": {
         "nNonOrthogonalCorrectors": 10,

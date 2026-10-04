@@ -132,15 +132,24 @@ def grid_study(
     if len(cpl_dirs) >= 3:
         cpl_dirs.sort()
         per_fidelity: dict[str, Any] = {}
+        pinned: dict[str, Any] = {}
         for cpl, case_dir in cpl_dirs:
             label = f"cpl{cpl}"
             coeffs = _coefficients_for_case(case_dir)
             if not coeffs.get("available"):
                 per_fidelity[label] = {"available": False, "note": "no force/coefficient data"}
                 continue
-            mesh = caseconfig.read_case_config(case_dir=case_dir).get("mesh_params", {})
+            cfg = caseconfig.read_case_config(case_dir=case_dir)
+            mesh = cfg.get("mesh_params", {})
             cells = mesh.get("block_cells")
             n = int(cells[0]) * int(cells[1]) * int(cells[2]) if isinstance(cells, (list, tuple)) and len(cells) == 3 else None
+            # Screened physics: confirm the near-wall/solver settings are identical
+            # across the ladder (they must be for a valid Richardson estimate).
+            pinned[label] = {
+                "y_plus_target": cfg.get("layers", {}).get("y_plus_target"),
+                "n_layers": cfg.get("layers", {}).get("n_layers"),
+                "end_time": cfg.get("solver", {}).get("end_time"),
+            }
             per_fidelity[label] = {
                 "available": True, "case": case_dir.name,
                 "cd": round(coeffs["cd"], 5) if coeffs.get("cd") is not None else None,
@@ -149,6 +158,10 @@ def grid_study(
             }
         report = _finish_study(list(per_fidelity.keys()), per_fidelity, cd_thresh, cl_thresh)
         report["mode"] = "refinement"
+        report["pinned"] = pinned
+        report["pinned_consistent"] = len({tuple(sorted(v.items())) for v in pinned.values()}) <= 1
+        if not report["pinned_consistent"]:
+            report["note"] = "⚠ near-wall/solver settings differ between levels — Richardson p is not strictly valid. " + report.get("note", "")
         return report
 
     def _resolve(fidelity: str) -> Optional[Path]:
@@ -312,8 +325,10 @@ def configure_refinement_study(
     base_config_path: str | Path,
     *,
     base_name: str | None = None,
-    levels: tuple[int, ...] = DEFAULT_REFINEMENT_LEVELS,
+    levels: tuple[int, ...] | None = None,
     out_dir: str | Path | None = None,
+    co_refine_surface: bool | None = None,
+    slurm_scaling: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Write three refinement-only configs from one base config.
 
@@ -323,9 +338,24 @@ def configure_refinement_study(
     and end time are identical. That is what makes a Richardson study valid
     (unlike switching ``fidelity``, which also changes y+/layers/end_time).
 
+    Defaults come from ``DEFAULT_CONFIG["grid_study"]``. SLURM walltime and
+    memory are scaled per level so the fine mesh is not starved by the base's
+    config. With ``co_refine_surface`` the surface/edge level is also stepped
+    +0/+1/+1 across the ladder (a stronger, less clean near-wall ladder).
+
     Returns ``[{name, config_path, cells_per_length, label}]`` for each variant.
     """
     import json
+
+    from rapidfoam.config import DEFAULT_CONFIG, effective_config
+
+    gs = DEFAULT_CONFIG.get("grid_study", {})
+    if levels is None:
+        levels = tuple(gs.get("levels", DEFAULT_REFINEMENT_LEVELS))
+    if co_refine_surface is None:
+        co_refine_surface = bool(gs.get("co_refine_surface", False))
+    if slurm_scaling is None:
+        slurm_scaling = gs.get("slurm", {})
 
     base_path = Path(base_config_path)
     raw = json.loads(base_path.read_text(encoding="utf-8"))
@@ -338,25 +368,46 @@ def configure_refinement_study(
     mesh = dict(overrides.get("mesh_params") or {})
     solver = dict(overrides.get("solver") or {})
 
-    # Inherit the base's effective layer/solver settings and pin them as overrides
-    # so all three cases share them (no per-fidelity near-wall confound).
-    from rapidfoam.config import effective_config
-
+    # Resolve the base's pinned settings. Prefer explicit values (top-level or
+    # overrides); fall back to a small local default table so postproc does not
+    # depend on the meshing presets (bounded-context rule: postproc may import
+    # core only). The base's real preset values reach the variants in practice
+    # because the CLI/Studio pass an explicit layers/solver block, or the base
+    # config already carries them.
     eff = effective_config(raw)
-    layers.setdefault("y_plus_target", eff["layers"].get("y_plus_target"))
-    layers.setdefault("n_layers", eff["layers"].get("n_layers"))
-    layers.setdefault("expansion_ratio", eff["layers"].get("expansion_ratio"))
-    solver.setdefault("end_time", eff["solver"].get("end_time"))
+    layers.setdefault("y_plus_target", eff["layers"].get("y_plus_target") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["y_plus_target"])
+    layers.setdefault("n_layers", eff["layers"].get("n_layers") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["n_layers"])
+    layers.setdefault("expansion_ratio", eff["layers"].get("expansion_ratio") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["expansion_ratio"])
+    solver.setdefault("end_time", eff["solver"].get("end_time") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["end_time"])
     overrides["layers"] = layers
     overrides["solver"] = solver
 
+    base_surface = list(eff.get("mesh_params", {}).get("surface_level") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["surface_level"])
+    base_edge = int(eff.get("mesh_params", {}).get("edge_level") or _PRESET_FALLBACK[eff.get("fidelity", "standard")]["edge_level"])
+
+    times = list(slurm_scaling.get("time", []))
+    mems = list(slurm_scaling.get("mem_per_cpu", []))
+
     results: list[dict[str, Any]] = []
+    last_index = max(len(levels) - 1, 1)
     for index, cpl in enumerate(levels):
         variant = json.loads(json.dumps(raw))  # deep copy
         variant["case_name"] = refinement_variant_name(stem, cpl)
         variant["fidelity"] = raw.get("fidelity", "standard")
-        variant["overrides"] = dict(overrides)
+        variant = _ensure_overrides(variant)
+        variant["overrides"]["layers"] = dict(layers)
+        variant["overrides"]["solver"] = dict(solver)
         variant["overrides"]["mesh_params"] = {**mesh, "cells_per_length": int(cpl)}
+        if co_refine_surface:
+            step = 1 if index == last_index else 0
+            variant["overrides"]["mesh_params"]["surface_level"] = [base_surface[0], base_surface[1] + step]
+            variant["overrides"]["mesh_params"]["edge_level"] = base_edge + step
+        # Scale SLURM resources per level (override any pinned base value).
+        if times:
+            variant["overrides"]["slurm"] = {**variant["overrides"].get("slurm", {}),
+                                             "time": times[min(index, len(times) - 1)]}
+        if mems:
+            variant["overrides"].setdefault("slurm", {})["mem_per_cpu"] = mems[min(index, len(mems) - 1)]
         cfg_path = out / f"{variant['case_name']}.json"
         cfg_path.write_text(json.dumps(variant, indent=4) + "\n", encoding="utf-8")
         results.append({
@@ -366,4 +417,24 @@ def configure_refinement_study(
             "label": _REFINEMENT_LABELS[index] if index < len(_REFINEMENT_LABELS) else f"level{index}",
         })
     return results
+
+
+# Fallback fidelity settings used only when a base config does not carry explicit
+# values (postproc must not import the meshing presets; bounded-context rule).
+_PRESET_FALLBACK: dict[str, dict[str, Any]] = {
+    "fast": {"y_plus_target": 50, "n_layers": 5, "expansion_ratio": 1.15,
+             "end_time": 800, "surface_level": [3, 4], "edge_level": 5},
+    "standard": {"y_plus_target": 30, "n_layers": 8, "expansion_ratio": 1.15,
+                 "end_time": 1500, "surface_level": [4, 5], "edge_level": 6},
+    "fine": {"y_plus_target": 1, "n_layers": 20, "expansion_ratio": 1.1,
+             "end_time": 2500, "surface_level": [4, 5], "edge_level": 7},
+}
+
+
+def _ensure_overrides(variant: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(variant.get("overrides"), dict):
+        variant["overrides"] = {}
+    return variant
+
+
 

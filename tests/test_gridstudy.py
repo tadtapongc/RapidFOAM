@@ -112,6 +112,27 @@ class RefinementStudyConfigTest(unittest.TestCase):
     def test_variant_naming(self):
         self.assertEqual(refinement_variant_name("wing", 30), "wing_cpl30")
 
+    def test_slurm_scaled_and_physics_pinned(self):
+        import json
+        variants = configure_refinement_study(self._base(), out_dir=self.root)
+        times = []
+        for v in variants:
+            cfg = json.loads(Path(v["config_path"]).read_text())
+            times.append(cfg["overrides"]["slurm"]["time"])
+            self.assertEqual(cfg["overrides"]["slurm"]["mem_per_cpu"], cfg["overrides"]["slurm"]["mem_per_cpu"])
+            self.assertEqual(cfg["overrides"]["layers"]["y_plus_target"], 30)
+            self.assertEqual(cfg["overrides"]["layers"]["n_layers"], 8)
+            self.assertEqual(cfg["overrides"]["solver"]["end_time"], 1500)
+        self.assertEqual(times, ["04:00:00", "08:00:00", "14:00:00"])
+
+    def test_co_refine_surface_steps_last_two(self):
+        import json
+        variants = configure_refinement_study(self._base(), out_dir=self.root, co_refine_surface=True)
+        surfaces = [json.loads(Path(v["config_path"]).read_text())["overrides"]["mesh_params"].get("surface_level")
+                    for v in variants]
+        self.assertTrue(all(s is not None for s in surfaces))
+        self.assertLess(surfaces[0][1], surfaces[-1][1])
+
     def test_grid_study_discovers_cpl_variants(self):
         import json
         variants = configure_refinement_study(self._base(), out_dir=self.root)
@@ -129,11 +150,14 @@ class RefinementStudyConfigTest(unittest.TestCase):
             (case / "case_config.json").write_text(json.dumps({
                 "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
                 "mesh_params": {"block_cells": [v["cells_per_length"], 100, 10]},
+                "layers": {"y_plus_target": 30, "n_layers": 8},
+                "solver": {"end_time": 1500},
             }))
         report = grid_study("wing", cases_root=self.root)
         self.assertEqual(report["mode"], "refinement")
         self.assertEqual(report["verdict"], "grid-independent")
         self.assertIn("cpl20", report["per_fidelity"])
+        self.assertTrue(report["pinned_consistent"])
 
 
 if __name__ == "__main__":
