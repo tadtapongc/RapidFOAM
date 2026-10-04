@@ -481,5 +481,31 @@ class TestYPlusFit(unittest.TestCase):
         self.assertIn(f"maxFaceThicknessRatio   {cfg['layers']['maxFaceThicknessRatio']:g}", text)
 
 
+class TestPerSurfaceLevelEmission(unittest.TestCase):
+    def _dict_text(self):
+        cfg = deep_merge(DEFAULT_CONFIG, {
+            "stl_files": ["body.stl", "wing.stl"],
+            "flow": {"velocity": U, "direction": "-z", "ground": True},
+        })
+        cfg["stl_names"] = ["body", "wing"]
+        cfg["domain_box"] = {"min": [0.0, 0.0, -2.0], "max": [4.0, 3.0, 6.0]}
+        cfg["mesh_params"] = compute_mesh_params(cfg, ((-0.5, 0.0, -1.5), (0.5, 1.0, 1.5)))
+        cfg["mesh_params"]["surface_levels"] = {
+            "wing": {"surface_level": [4, 7], "edge_level": 8},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / "system").mkdir()
+            emit_mesh_files_from_config(cfg, case)
+            return (case / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
+
+    def test_per_surface_level_emitted(self):
+        text = self._dict_text()
+        # body keeps the global level; wing uses its own.
+        self.assertIn("body { level (4 5);", text)
+        self.assertIn("wing { level (4 7);", text)
+        self.assertIn('file "wing.eMesh"; level 8;', text)
+
+
 if __name__ == "__main__":
     unittest.main()

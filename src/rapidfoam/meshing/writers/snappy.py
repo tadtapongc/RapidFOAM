@@ -122,6 +122,17 @@ def write_snappy_hex_mesh_dict(plan: MeshPlan, ctx: MeshContext, case_dir: Path)
     edge_level = mesh["edge_level"]
     regions = mesh["refinement_regions"]
     distance_levels = mesh.get("distance_levels", [])
+    # Optional geometry-derived per-surface levels (mesh_params.auto_size):
+    # {stem: {"surface_level": [l0, l1], "edge_level": int}}.
+    per_surface = mesh.get("surface_levels") or {}
+
+    def _surface_level_for(name):
+        info = per_surface.get(name)
+        return info.get("surface_level", surface_level) if isinstance(info, dict) else surface_level
+
+    def _edge_level_for(name):
+        info = per_surface.get(name)
+        return info.get("edge_level", edge_level) if isinstance(info, dict) else edge_level
 
     geo_lines = []
     for name in stl_names:
@@ -134,12 +145,13 @@ def write_snappy_hex_mesh_dict(plan: MeshPlan, ctx: MeshContext, case_dir: Path)
 
     feat_lines = []
     for name in stl_names:
-        feat_lines.append(f'        {{ file "{name}.eMesh"; level {edge_level}; }}')
+        feat_lines.append(f'        {{ file "{name}.eMesh"; level {_edge_level_for(name)}; }}')
 
     ref_surf_lines = []
     for name in stl_names:
+        level = _surface_level_for(name)
         ref_surf_lines.append(
-            f"        {name} {{ level ({surface_level[0]} {surface_level[1]});"
+            f"        {name} {{ level ({level[0]} {level[1]});"
             f" patchInfo {{ type wall; }} }}")
 
     ref_region_lines = []

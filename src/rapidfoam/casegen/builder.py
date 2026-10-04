@@ -49,7 +49,8 @@ def build_case(
     from rapidfoam.meshing.context import build_mesh_context
     from rapidfoam.meshing.pipeline import emit_mesh_files
     from rapidfoam.meshing.plan import apply_plan_to_cfg, build_mesh_plan
-    from rapidfoam.meshing.presets import apply_fidelity_preset
+    from rapidfoam.meshing.presets import FIDELITY_PRESETS, apply_fidelity_preset
+    from rapidfoam.meshing.sizing import resolve_per_surface_levels
     from rapidfoam.geometry.stl import EdgeStats, FeatureAngleStats, copy_stl, stl_analyze_full
 
     if not cfg_path.exists():
@@ -99,10 +100,12 @@ def build_case(
     stl_info_map: dict[str, tuple[str, int, tuple[tuple[float, float, float], tuple[float, float, float]]]] = {}
     edge_stats = EdgeStats()
     angle_stats = FeatureAngleStats()
+    edge_stats_by_stem: dict[str, EdgeStats] = {}
     for stem, path in stl_pairs:
         try:
             solid_name, n_triangles, bbox, stats, angles = stl_analyze_full(path)
             stl_info_map[stem] = (solid_name, n_triangles, bbox)
+            edge_stats_by_stem[stem] = stats
             edge_stats.merge(stats)
             angle_stats.merge(angles)
             smin, smax = bbox
@@ -173,6 +176,27 @@ def build_case(
     )
     apply_plan_to_cfg(cfg, plan)
     layer_resolution = dict(plan.layer_spec.resolved)
+
+    # Geometry-derived per-surface refinement (opt-in via mesh_params.auto_size):
+    # each STL gets its own surface/edge level from its feature size, so a large
+    # smooth part is coarse and a small intricate part is fine — no per-part
+    # naming. Stored on cfg["mesh_params"] for the writers to consume.
+    if cfg.get("mesh_params", {}).get("auto_size") and edge_stats_by_stem:
+        extents_by_stem = {
+            stem: [bbox[1][i] - bbox[0][i] for i in range(3)]
+            for stem, (_solid, _n, bbox) in stl_info_map.items()
+        }
+        per_surface = resolve_per_surface_levels(
+            cfg.get("mesh_params", {}),
+            FIDELITY_PRESETS.get(cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"]),
+            float(cfg["mesh_params"]["base_cell_size"]),
+            list(cfg["mesh_params"]["surface_level"]),
+            int(cfg["mesh_params"]["edge_level"]),
+            edge_stats_by_stem,
+            extents_by_stem,
+        )
+        if per_surface:
+            cfg["mesh_params"]["surface_levels"] = per_surface
     if layer_resolution.get("y_plus_target") is not None and _is_set("layers", "first_layer_thickness"):
         report("  ⚠  layers.first_layer_thickness overrides layers.y_plus_target")
 
@@ -228,6 +252,14 @@ def build_case(
         if sizing.get("capped"):
             report(f"    ⚠  capped at max_surface_level {sizing['max_surface_level']} — "
                    f"smallest features may be under-resolved")
+
+    per_surface = mesh.get("surface_levels")
+    if per_surface:
+        report("  Per-surface levels (geometry-derived):")
+        for stem in sorted(per_surface):
+            info = per_surface[stem]
+            report(f"    {stem}: surface {info['surface_level']}, edge {info['edge_level']}"
+                   + (" (capped)" if info.get("capped") else ""))
 
     fangle = mesh.get("feature_angle")
     if fangle:

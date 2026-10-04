@@ -133,4 +133,46 @@ def _resolve_feature_angle(
     }
 
 
-__all__ = ["_resolve_feature_sizing", "_resolve_feature_angle"]
+def resolve_per_surface_levels(
+    user_mesh: dict[str, Any],
+    preset: dict[str, Any],
+    base_cell: float,
+    global_surface_level: list[int],
+    global_edge_level: int,
+    stats_by_stem: dict[str, EdgeStats],
+    extents_by_stem: dict[str, list[float]],
+) -> dict[str, dict[str, Any]]:
+    """Derive a surface/edge refinement level per STL from its own feature size.
+
+    Geometry-derived (like a size function): a part with small features gets a
+    finer level, a large smooth part a coarser one — no per-part naming. Each
+    part's level is computed the same way as the global auto-size, only ever
+    raising above the preset and capped by ``max_surface_level``.
+
+    Returns ``{stem: {"surface_level": [l0, l1], "edge_level": int,
+    "required_level": int, "capped": bool}}``; empty when there are no per-part
+    stats.
+    """
+    if not stats_by_stem:
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for stem, stats in stats_by_stem.items():
+        info = _resolve_feature_sizing(
+            user_mesh,
+            preset,
+            base_cell,
+            list(global_surface_level),
+            int(global_edge_level),
+            stats,
+            extents_by_stem.get(stem, []),
+        )
+        result[stem] = {
+            "surface_level": list(info["surface_level"]),
+            "edge_level": int(info["edge_level"]),
+            "required_level": info["required_level"],
+            "capped": bool(info.get("capped")),
+        }
+    return result
+
+
+__all__ = ["_resolve_feature_sizing", "_resolve_feature_angle", "resolve_per_surface_levels"]

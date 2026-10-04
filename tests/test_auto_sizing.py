@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from rapidfoam.config import DEFAULT_CONFIG, deep_merge, load_config, validate
 from rapidfoam.meshing.params import compute_mesh_params
 from rapidfoam.meshing.presets import FIDELITY_PRESETS
+from rapidfoam.meshing.sizing import resolve_per_surface_levels
 from rapidfoam.geometry.stl import (
     EdgeStats,
     FeatureAngleStats,
@@ -414,6 +415,67 @@ class TestAutoSizeValidation(unittest.TestCase):
             "layers": {"relativeSizes": False, "first_layer_thickness": 1e-5},
         })
         self.assertFalse(any("finest" in w for w in warnings))
+
+
+class TestPerSurfaceSizing(unittest.TestCase):
+    """Geometry-derived per-surface levels (auto_size): size follows features."""
+
+    def _stats(self, length, count=500):
+        stats = EdgeStats()
+        for _ in range(count):
+            stats.add(length)
+        return stats
+
+    def test_small_part_finer_than_large_part(self):
+        preset = FIDELITY_PRESETS["standard"]
+        res = resolve_per_surface_levels(
+            {"auto_size": True},
+            preset,
+            base_cell=0.1,
+            global_surface_level=list(preset["surface_level"]),
+            global_edge_level=preset["edge_level"],
+            stats_by_stem={"big": self._stats(0.2), "small": self._stats(0.005)},
+            extents_by_stem={"big": [3.0, 1.0, 5.0], "small": [0.3, 0.1, 0.4]},
+        )
+        self.assertGreater(res["small"]["surface_level"][1], res["big"]["surface_level"][1])
+        self.assertGreaterEqual(res["small"]["edge_level"], res["big"]["edge_level"])
+
+    def test_large_part_never_coarsens_below_preset(self):
+        preset = FIDELITY_PRESETS["standard"]
+        res = resolve_per_surface_levels(
+            {"auto_size": True},
+            preset,
+            base_cell=0.1,
+            global_surface_level=list(preset["surface_level"]),
+            global_edge_level=preset["edge_level"],
+            stats_by_stem={"big": self._stats(0.2)},
+            extents_by_stem={"big": [3.0, 1.0, 5.0]},
+        )
+        self.assertEqual(res["big"]["surface_level"][1], preset["surface_level"][1])
+
+    def test_capped_at_max_surface_level(self):
+        preset = FIDELITY_PRESETS["standard"]
+        res = resolve_per_surface_levels(
+            {"auto_size": True, "max_surface_level": 5},
+            preset,
+            base_cell=0.1,
+            global_surface_level=list(preset["surface_level"]),
+            global_edge_level=preset["edge_level"],
+            stats_by_stem={"tiny": self._stats(0.0005)},
+            extents_by_stem={"tiny": [0.05, 0.05, 0.05]},
+        )
+        self.assertLessEqual(res["tiny"]["surface_level"][1], 5)
+        self.assertTrue(res["tiny"]["capped"])
+
+    def test_empty_stats_returns_empty(self):
+        preset = FIDELITY_PRESETS["standard"]
+        self.assertEqual(
+            resolve_per_surface_levels(
+                {"auto_size": True}, preset, 0.1, list(preset["surface_level"]),
+                preset["edge_level"], {}, {},
+            ),
+            {},
+        )
 
 
 if __name__ == "__main__":
