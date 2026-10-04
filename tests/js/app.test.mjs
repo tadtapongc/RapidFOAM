@@ -1244,3 +1244,27 @@ test('study preview follows the live case-name field', async () => {
   assert.ok(app._window.document.getElementById('cfg-study-preview').textContent.includes('front_wing_cpl45'));
   assert.ok(!app._window.document.getElementById('cfg-study-preview').textContent.includes('stale_name'));
 });
+
+test('changing the study base preset clears shadowing layer/solver overrides', async () => {
+  const app = await makeApp(`
+    <input id="cfg-case-name" value="wing">
+    <div id="fidelity-cards-group"><label class="fidelity-card selected" data-fidelity="standard"></label></div>
+    <select id="cfg-study-base-preset"><option value="fast">f</option><option value="standard" selected>s</option><option value="fine">x</option></select>
+    <input id="cfg-override-solver-endtime" value="1500">
+    <input id="cfg-override-layer-nlayers" value="8">
+    <input id="cfg-override-layer-yplus" value="30">
+    <input id="cfg-override-layer-expansion" value="1.15">
+  ` + buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = { case_name: 'wing', fidelity: 'standard', overrides: {} };
+  app.runMode = 'grid';
+  app.bindConfigFormInputs();
+  const el = app._window.document.getElementById('cfg-study-base-preset');
+  el.value = 'fast';
+  el.dispatchEvent(new app._window.Event('change'));
+  assert.equal(app._window.document.getElementById('cfg-override-solver-endtime').value, '');
+  assert.equal(app._window.document.getElementById('cfg-override-layer-nlayers').value, '');
+  assert.equal(app._window.document.getElementById('cfg-override-layer-yplus').value, '');
+  assert.equal(app._window.document.getElementById('cfg-override-layer-expansion').value, '');
+});

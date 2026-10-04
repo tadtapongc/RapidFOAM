@@ -482,6 +482,16 @@ class CFDApp {
     document.getElementById('cfg-study-base-preset')?.addEventListener('change', () => {
       const base = this.getVal('cfg-study-base-preset');
       if (base) this.activeConfig.fidelity = base;
+      // The preset governs the pinned near-wall layers and end time for the
+      // study. Clear any layer/solver override fields that would otherwise
+      // shadow the newly selected preset in the generated overrides block.
+      const shadowed = [
+        'cfg-override-solver-endtime',
+        'cfg-override-layer-nlayers',
+        'cfg-override-layer-yplus',
+        'cfg-override-layer-expansion',
+      ];
+      shadowed.forEach((id) => this.setVal(id, ''));
     });
     document.getElementById('btn-submit-case')?.addEventListener('click', () => this.saveCurrentConfig(true));
 
