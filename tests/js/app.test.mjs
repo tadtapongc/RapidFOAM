@@ -1099,3 +1099,35 @@ test('updateDomainBoxVisualization refreshes the auto-size preview from the payl
   assert.ok(auto.includes('9.50 mm'), auto);
   assert.ok(auto.includes('level 6'), auto);
 });
+
+// ------------------------------------------- Grid independence
+test('runGridStudy renders the fidelity table and verdict', async () => {
+  const app = await makeApp(`
+    <table><tbody id="grid-tbody"></tbody></table>
+    <p id="grid-verdict"></p>
+    <input id="grid-base-input">
+    <select id="telemetry-case-select"><option value="wing_standard" selected>wing_standard</option></select>
+  `);
+  installFormStubs(app);
+  app._window.fetch = async (url) => {
+    assert.ok(url.includes('base=wing'), url);
+    return { ok: true, json: async () => ({
+      verdict: 'grid-independent',
+      converged: true,
+      deltas: { cd_std_fine_pct: 1.33, cl_std_fine_pct: 0.71 },
+      richardson: { p: 1.886 },
+      note: 'std->fine close',
+      per_fidelity: {
+        fast: { available: true, cd: 0.312, cl: 1.44, cells: 4000000 },
+        fine: { available: true, cd: 0.297, cl: 1.39, cells: 20000000 },
+      },
+    }) };
+  };
+  await app.runGridStudy();
+  const rows = app._window.document.getElementById('grid-tbody').innerHTML;
+  assert.ok(rows.includes('fast') && rows.includes('0.31200'), rows);
+  assert.ok(rows.includes('20,000,000'), rows);
+  const verdict = app._window.document.getElementById('grid-verdict').textContent;
+  assert.ok(verdict.includes('grid-independent'), verdict);
+  assert.ok(verdict.includes('Richardson'), verdict);
+});

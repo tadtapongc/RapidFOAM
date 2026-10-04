@@ -29,6 +29,7 @@ from rapidfoam.web.routers.stl import api_get_stl_file, api_stl_check_exists, ap
 from rapidfoam.web.routers.telemetry import (
     api_telemetry_export,
     api_telemetry_forces,
+    api_telemetry_grid,
     api_telemetry_logs,
     api_telemetry_mesh,
     api_telemetry_residuals,
@@ -648,6 +649,29 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(res["downforce_axis"], "-z")
         self.assertAlmostEqual(res["drag_avg"], 10.0, places=1)
         self.assertAlmostEqual(res["downforce_avg"], 5.0, places=1)
+
+    def test_telemetry_grid_endpoint(self):
+        """The grid endpoint runs a study over <base>_fast/_standard/_fine."""
+        import json as _json
+        base = "gridcase"
+        for fid, cd, cl, cells in (
+            ("fast", 0.312, 1.44, 4_000_000),
+            ("standard", 0.301, 1.40, 9_000_000),
+            ("fine", 0.297, 1.39, 20_000_000),
+        ):
+            coeff = Path(f"cases/{base}_{fid}/postProcessing/forceCoeffs/0")
+            coeff.mkdir(parents=True, exist_ok=True)
+            self.addCleanup(lambda p=Path(f"cases/{base}_{fid}"): shutil.rmtree(p, ignore_errors=True))
+            coeff.joinpath("coefficient.dat").write_text(
+                "# Time Cd Cl\n" + "".join(f"{i} {cd} {cl}\n" for i in range(1, 30))
+            )
+            (Path(f"cases/{base}_{fid}") / "case_config.json").write_text(_json.dumps({
+                "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+                "mesh_params": {"block_cells": [max(1, cells // 100000), 100, 10]},
+            }))
+        res = asyncio.run(api_telemetry_grid(base))
+        self.assertEqual(res["verdict"], "grid-independent")
+        self.assertIn("richardson", res)
 
     def test_telemetry_residuals_alignment(self):
         """Test telemetry residuals alignment where variable arrays have equal length."""

@@ -115,6 +115,15 @@ const TELEMETRY_HELP = {
         <li>Forces are full-car (symmetry-corrected). Use <strong>Scale</strong> to resize the arrows.</li>
       </ul>`,
   },
+  gridstudy: {
+    title: 'Grid Independence',
+    html: `<p>Compares the <code>fast</code>, <code>standard</code> and <code>fine</code> meshes of a case to check the forces are mesh-converged.</p>
+      <ul>
+        <li>Enter the case <strong>base</strong> name (e.g. <code>wing</code>) and Run; it looks for <code>wing_fast</code>, <code>wing_standard</code>, <code>wing_fine</code>.</li>
+        <li>Reports the trailing-window Cd/Cl per fidelity, the standard→fine deltas, and a Richardson order <em>p</em>.</li>
+        <li>Verdict: <strong>grid-independent</strong> when Cd changes &lt; 3% and Cl &lt; 5% between standard and fine.</li>
+      </ul>`,
+  },
 };
 
 class CFDApp {
@@ -2618,6 +2627,10 @@ class CFDApp {
   // -------------------------------------------------------------
   bindTelemetryEvents() {
     document.getElementById('btn-refresh-telemetry')?.addEventListener('click', () => this.pollTelemetry());
+    document.getElementById('btn-run-grid')?.addEventListener('click', () => this.runGridStudy());
+    document.getElementById('grid-base-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.runGridStudy();
+    });
     document.getElementById('telemetry-case-select')?.addEventListener('change', () => this.onTelemetryCaseChange());
     document.getElementById('btn-tail-log')?.addEventListener('click', () => this.fetchLogTail());
     document.getElementById('select-log-type')?.addEventListener('change', () => this.fetchLogTail());
@@ -3943,6 +3956,48 @@ class CFDApp {
       refEl.textContent = `ρ ${ref.rho ?? '--'} kg/m³ · U ${ref.velocity ?? '--'} m/s · Aref ${ref.Aref ?? '--'} m² · q ${ref.dynamic_pressure ?? '--'} Pa`;
     }
     this.renderReferencePlaceholders(ref);
+  }
+
+  async runGridStudy() {
+    const tbody = document.getElementById('grid-tbody');
+    const verdictEl = document.getElementById('grid-verdict');
+    const input = document.getElementById('grid-base-input');
+    if (!tbody) return;
+    // Default the base name to the selected case, stripped of a fidelity suffix.
+    let base = (input && input.value.trim()) || (document.getElementById('telemetry-case-select') || {}).value || '';
+    base = base.replace(/_(fast|standard|fine)$/i, '');
+    if (!base) {
+      if (verdictEl) verdictEl.textContent = 'Enter a case base name (e.g. wing).';
+      return;
+    }
+    if (input && !input.value.trim()) input.value = base;
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Running…</td></tr>';
+    try {
+      const res = await this.fetchWithTimeout(`/api/telemetry/grid?base=${encodeURIComponent(base)}`, 20000);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const fmt = (v, d = 5) => (v === null || v === undefined) ? '--' : Number(v).toFixed(d);
+      const rows = Object.entries(data.per_fidelity || {}).map(([fid, info]) => {
+        if (!info || !info.available) {
+          return `<tr><td>${this.escapeHtml(fid)}</td><td colspan="3" class="text-muted">${this.escapeHtml((info && info.note) || 'unavailable')}</td></tr>`;
+        }
+        const cells = info.cells ? Number(info.cells).toLocaleString() : '--';
+        return `<tr><td>${this.escapeHtml(fid)}</td><td class="monospace">${fmt(info.cd)}</td>`
+          + `<td class="monospace">${fmt(info.cl)}</td><td class="monospace">${cells}</td></tr>`;
+      });
+      tbody.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="4" class="text-center text-muted">No fidelities found.</td></tr>';
+      if (verdictEl) {
+        let text = `Verdict: ${data.verdict || '--'}`;
+        if (data.deltas) text += ` — std→fine Cd ${data.deltas.cd_std_fine_pct}%, Cl ${data.deltas.cl_std_fine_pct}%`;
+        if (data.richardson) text += ` — Richardson p = ${data.richardson.p}`;
+        if (data.note) text += ` — ${data.note}`;
+        verdictEl.textContent = text;
+        verdictEl.className = `field-hint ${data.converged ? 'mesh-metric-pass' : 'mesh-metric-usable'}`;
+      }
+    } catch (err) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Study failed.</td></tr>';
+      if (verdictEl) verdictEl.textContent = `Grid study failed: ${err.message}`;
+    }
   }
 
   renderReferencePlaceholders(ref) {

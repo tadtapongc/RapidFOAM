@@ -878,6 +878,19 @@ async def api_telemetry_surface(case_name: str) -> dict[str, Any]:
     return {"has_data": True, "case_name": case_name, **summary}
 
 
+@router.get("/api/telemetry/grid")
+async def api_telemetry_grid(base: str) -> dict[str, Any]:
+    """Grid-independence study across <base>_fast/_standard/_fine (local cases)."""
+    if not CASE_NAME_REGEX.match(base):
+        raise HTTPException(status_code=400, detail="Invalid base name")
+    from rapidfoam.postproc.gridstudy import grid_study
+
+    report = await asyncio.to_thread(
+        grid_study, base, cases_root=PROJECT_ROOT / "cases"
+    )
+    return {"base": base, **report}
+
+
 @router.get("/api/telemetry/logs")
 async def api_telemetry_logs(case_name: str, log_type: str = "simpleFoam", lines: int = 100) -> dict[str, Any]:
     """Tail log files with strict type whitelisting and length limits."""
