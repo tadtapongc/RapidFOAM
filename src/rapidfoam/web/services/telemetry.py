@@ -366,6 +366,23 @@ def remote_telemetry_status(case_name: str) -> dict[str, Any]:
     return dict(_remote_telemetry_status.get(_remote_telemetry_key(case_name), {}))
 
 
+def should_read_remote(case_name: str, local_dir: "Path | str | None") -> bool:
+    """Whether a telemetry request should hit the cluster.
+
+    A case that exists locally is served from local files even while connected,
+    so connecting to a cluster never makes a local view block on SSH. The remote
+    bundle is only fetched for cluster-only cases.
+    """
+    if not ssh_client.is_connected:
+        return False
+    if local_dir is None:
+        return True
+    try:
+        return not Path(local_dir).is_dir()
+    except Exception:
+        return True
+
+
 async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
     """Read every telemetry file for a case in one SSH command (cached ~2.5s).
 

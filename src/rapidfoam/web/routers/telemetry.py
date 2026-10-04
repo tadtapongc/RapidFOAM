@@ -68,6 +68,7 @@ from rapidfoam.web.services.telemetry import (
     _read_text_tail_lines,
     _read_yplus_texts,
     remote_telemetry_status,
+    should_read_remote,
     _shift_moment_columns,
     _sorted_segments,
     _subsample_indices,
@@ -113,10 +114,11 @@ async def api_telemetry_forces(
 
     # Fetch the remote bundle first (single SSH command, shared 2.5 s cache) so
     # axis mapping / symmetry can use the *remote* case_config.json when the case
-    # lives only on the cluster. Falls back to the local files otherwise.
+    # lives only on the cluster. A case that exists locally is served from local
+    # files even while connected, so a local view never blocks on SSH.
     remote_bundle: dict[str, str] = {}
     remote_status: dict[str, Any] = {}
-    if ssh_client.is_connected:
+    if should_read_remote(case_name, local_case):
         remote_bundle = await _read_remote_telemetry(case_name)
         remote_status = remote_telemetry_status(case_name)
 
@@ -492,8 +494,8 @@ async def api_telemetry_residuals(case_name: str) -> dict[str, Any]:
 
     rows: dict[float, dict[str, float]] = {}
 
-    # 1. Check remote cluster first if connected
-    if ssh_client.is_connected:
+    # 1. Check remote cluster first (only when the case is cluster-only)
+    if should_read_remote(case_name, PROJECT_ROOT / "cases" / case_name):
         bundle = await _read_remote_telemetry(case_name)
         solverinfo = _sorted_segments(bundle, "/solverInfo.dat") or _sorted_segments(
             bundle, "/residuals.dat"
@@ -604,14 +606,14 @@ async def api_telemetry_solver(case_name: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Invalid case_name")
 
     content = ""
-    if ssh_client.is_connected:
+    local_case = PROJECT_ROOT / "cases" / case_name
+    if should_read_remote(case_name, local_case):
         bundle = await _read_remote_telemetry(case_name)
         content = next(
             (value for path, value in bundle.items() if path.endswith("/log.simpleFoam")),
             "",
         )
 
-    local_case = PROJECT_ROOT / "cases" / case_name
     if not content and local_case.is_dir():
         local_log = local_case / "log.simpleFoam"
         if local_log.is_file():
@@ -699,8 +701,9 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
     yplus_data: dict[str, dict[str, float]] = {}
     field_min_max: dict[str, Any] = {}
 
-    # 1. Remote cluster first if connected (shared telemetry bundle).
-    if ssh_client.is_connected:
+    # 1. Remote cluster first (only when the case is cluster-only).
+    local_case = PROJECT_ROOT / "cases" / case_name
+    if should_read_remote(case_name, local_case):
         bundle = await _read_remote_telemetry(case_name)
         checkmesh_text = next(
             (value for path, value in bundle.items() if path.endswith("/log.checkMesh")), ""
@@ -724,7 +727,6 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
                 config_dict = None
 
     # 2. Local case directory fallback.
-    local_case = PROJECT_ROOT / "cases" / case_name
     if not checkmesh_text and (local_case / "log.checkMesh").is_file():
         checkmesh_text = _read_text_tail_lines(local_case / "log.checkMesh")
     if not snappy_text:
@@ -786,9 +788,10 @@ async def api_telemetry_surface(case_name: str) -> dict[str, Any]:
 
     surface_text = ""
     config_dict: Optional[dict[str, Any]] = None
+    local_case = PROJECT_ROOT / "cases" / case_name
 
-    # 1. Remote cluster first if connected (shared telemetry bundle).
-    if ssh_client.is_connected:
+    # 1. Remote cluster first (only when the case is cluster-only).
+    if should_read_remote(case_name, local_case):
         bundle = await _read_remote_telemetry(case_name)
         surface_text = "\n".join(
             value for path, value in bundle.items() if "/log.surfaceCheck" in path
@@ -805,7 +808,6 @@ async def api_telemetry_surface(case_name: str) -> dict[str, Any]:
                 config_dict = None
 
     # 2. Local case directory fallback.
-    local_case = PROJECT_ROOT / "cases" / case_name
     if not surface_text:
         surface_logs = find_surfacecheck_logs(local_case)
         if surface_logs:
@@ -842,20 +844,19 @@ async def api_telemetry_logs(case_name: str, log_type: str = "simpleFoam", lines
     safe_lines = max(1, min(int(lines), 2000))
     filename = f"log.{log_type}"
     content = ""
+    local_file = PROJECT_ROOT / "cases" / case_name / filename
 
-    if ssh_client.is_connected:
+    if should_read_remote(case_name, PROJECT_ROOT / "cases" / case_name):
         remote_path = f"{ssh_client.remote_repo_path}/cases/{case_name}/{filename}"
         content = await asyncio.to_thread(ssh_client.read_remote_text, remote_path, max_lines=safe_lines)
 
-    if not content:
-        local_file = PROJECT_ROOT / "cases" / case_name / filename
-        if local_file.is_file():
-            try:
-                with open(local_file, encoding="utf-8", errors="replace") as f:
-                    raw_lines = f.readlines()
-                    content = "".join(raw_lines[-safe_lines:])
-            except Exception:
-                pass
+    if not content and local_file.is_file():
+        try:
+            with open(local_file, encoding="utf-8", errors="replace") as f:
+                raw_lines = f.readlines()
+                content = "".join(raw_lines[-safe_lines:])
+        except Exception:
+            pass
 
     return {
         "case_name": case_name,

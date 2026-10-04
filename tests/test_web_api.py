@@ -309,6 +309,35 @@ class TestWebAPI(unittest.TestCase):
         self.assertAlmostEqual(res["per_part"]["rear_wing"]["drag"], 15.0, places=1)
         self.assertAlmostEqual(res["per_part"]["rear_wing"]["downforce"], 40.0, places=1)
 
+    def test_local_case_does_not_hit_remote_when_connected(self):
+        """A case that exists locally is served locally even while connected, so
+        the live-telemetry poll never blocks on SSH for a local view."""
+        from rapidfoam.web.services import telemetry as svc
+
+        case_name = "test_case_local_present"
+        case_dir = Path(f"cases/{case_name}")
+        forces_dir = case_dir / "postProcessing" / "forces" / "0"
+        forces_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+        lines = ["# Time total(fx fy fz) pressure(fx fy fz) viscous(fx fy fz)\n"]
+        for i in range(1, 40):
+            lines.append(f"{i} (0.0 -100.0 -20.0) (0 0 0) (0 0 0)\n")
+        (forces_dir / "force.dat").write_text("".join(lines))
+
+        calls = {"n": 0}
+
+        def fake_bundle(specs, report=None, timeout=10.0):
+            calls["n"] += 1
+            return {}
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
+                patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
+            svc._remote_telemetry_cache.clear()
+            res = asyncio.run(api_telemetry_forces(case_name))
+
+        self.assertTrue(res["has_data"])
+        self.assertEqual(calls["n"], 0, "local case must not read the remote bundle")
+
     def test_telemetry_mesh_quality(self):
         """Mesh endpoint parses checkMesh metrics and boundary-layer coverage."""
         case_name = "test_case_mesh_quality"
