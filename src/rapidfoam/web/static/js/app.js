@@ -1339,6 +1339,7 @@ class CFDApp {
       }
       const data = await res.json();
       this.renderLayerPreview(data.layer_preview);
+      if (data.per_surface) this.renderPerSurface(data.per_surface);
     } catch (err) {
       el.textContent = '';
     }
@@ -1595,7 +1596,6 @@ class CFDApp {
   }
 
   async updateDomainBoxVisualization(autoFit = false) {
-    if (!this.viewer) return;
     try {
       const res = await fetch('/api/geometry/domain-box', {
         method: 'POST',
@@ -1609,8 +1609,11 @@ class CFDApp {
       const data = await res.json();
       // A domain-box refresh happens whenever the geometry/config changes, so
       // refresh the layer + feature auto-sizing preview from the same payload.
+      // This runs even when the 3D viewer is unavailable, so the per-surface and
+      // layer readouts still update.
       if (data.layer_preview) this.renderLayerPreview(data.layer_preview);
       if (data.per_surface) this.renderPerSurface(data.per_surface);
+      if (!this.viewer) return;
       if (data.domain_box && data.domain_box.min && data.domain_box.max) {
         const faces = this.activeConfig.domain_faces || {};
         const hasSymmetry = Object.values(faces).some((f) => String(f).toLowerCase().includes('symmetry'));
