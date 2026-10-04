@@ -221,6 +221,21 @@
                     </label>
                   </div>
                 </div>
+
+                <!-- Refinement study (grid independence workflow) -->
+                <div class="form-group col-span-2 overrides-section-header">
+                  <h4 class="section-subtitle">Refinement Study (Grid Independence)</h4>
+                  <span class="field-hint">Create a valid grid study: three cases that differ only in mesh density (<code>cells_per_length</code>); physics, near-wall layers and end time are held fixed. Then run them and compare in the Telemetry tab's Grid Independence panel.</span>
+                </div>
+                <div class="form-group">
+                  <label for="cfg-study-levels">Refinement Levels (cells/length)</label>
+                  <input type="text" id="cfg-study-levels" class="input" value="20, 30, 45" placeholder="20, 30, 45">
+                  <span class="field-hint">Coarse, medium, fine background resolution (comma-separated, ascending).</span>
+                </div>
+                <div class="form-group">
+                  <span class="field-hint">&nbsp;</span>
+                  <button type="button" class="btn btn-outline" id="btn-refinement-study">Generate Refinement Study (3 cases)</button>
+                </div>
               </div>
             </div>
 

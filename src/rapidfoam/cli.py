@@ -33,6 +33,10 @@ Examples:
                         help="Preview settings without generating files")
     parser.add_argument("--init", action="store_true",
                         help="Create starter project structure")
+    parser.add_argument("--grid-refine", action="store_true",
+                        help="Generate a 3-case refinement study (coarse/medium/fine) from the config")
+    parser.add_argument("--run", action="store_true",
+                        help="With --grid-refine: also generate the 3 cases locally")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Verbose output")
     args = parser.parse_args()
@@ -51,6 +55,21 @@ Examples:
     if not args.config:
         parser.print_help()
         sys.exit(1)
+
+    if args.grid_refine:
+        from rapidfoam.postproc.gridstudy import configure_refinement_study
+        from rapidfoam.casegen.builder import CaseGenerationError, build_case
+
+        variants = configure_refinement_study(Path(args.config), out_dir=Path("configs"))
+        for v in variants:
+            print(f"  ✓ Config: {v['config_path']}  (cells_per_length {v['cells_per_length']})")
+        if args.run:
+            for v in variants:
+                try:
+                    build_case(Path(v["config_path"]), project_dir)
+                except CaseGenerationError as exc:
+                    sys.exit(1 if str(exc) == "" else str(exc))
+        return
 
     _do_generate(Path(args.config), project_dir, dry_run=args.dry_run)
 

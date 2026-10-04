@@ -122,6 +122,35 @@ def grid_study(
     """
     root = Path(cases_root) if cases_root else Path("cases")
 
+    # Refinement study (configure_refinement_study) writes <base>_cpl<N> variants;
+    # if present, use those ordered coarse->fine — a valid refinement-only ladder.
+    cpl_dirs: list[tuple[int, Path]] = []
+    for d in root.glob(f"{base}_cpl*"):
+        suffix = d.name[len(base) + 4:]
+        if d.is_dir() and suffix.isdigit():
+            cpl_dirs.append((int(suffix), d))
+    if len(cpl_dirs) >= 3:
+        cpl_dirs.sort()
+        per_fidelity: dict[str, Any] = {}
+        for cpl, case_dir in cpl_dirs:
+            label = f"cpl{cpl}"
+            coeffs = _coefficients_for_case(case_dir)
+            if not coeffs.get("available"):
+                per_fidelity[label] = {"available": False, "note": "no force/coefficient data"}
+                continue
+            mesh = caseconfig.read_case_config(case_dir=case_dir).get("mesh_params", {})
+            cells = mesh.get("block_cells")
+            n = int(cells[0]) * int(cells[1]) * int(cells[2]) if isinstance(cells, (list, tuple)) and len(cells) == 3 else None
+            per_fidelity[label] = {
+                "available": True, "case": case_dir.name,
+                "cd": round(coeffs["cd"], 5) if coeffs.get("cd") is not None else None,
+                "cl": round(coeffs["cl"], 5) if coeffs.get("cl") is not None else None,
+                "source": coeffs.get("source"), "cells": n,
+            }
+        report = _finish_study(list(per_fidelity.keys()), per_fidelity, cd_thresh, cl_thresh)
+        report["mode"] = "refinement"
+        return report
+
     def _resolve(fidelity: str) -> Optional[Path]:
         candidates = []
         if name_for is not None:
@@ -159,17 +188,27 @@ def grid_study(
         }
 
     available = [f for f in fidelities if per_fidelity.get(f, {}).get("available")]
+    result = _finish_study(available, per_fidelity, cd_thresh, cl_thresh)
+    result["mode"] = "fidelity"
+    return result
+
+
+def _finish_study(
+    available: list[str],
+    per_fidelity: dict[str, Any],
+    cd_thresh: float,
+    cl_thresh: float,
+) -> dict[str, Any]:
+    """Compute deltas, Richardson p and the verdict for a list of levels."""
     result: dict[str, Any] = {"available": len(available) >= 3, "per_fidelity": per_fidelity}
 
     if len(available) < 3:
         result["verdict"] = "insufficient-data"
         result["converged"] = False
-        result["note"] = (
-            f"need at least three fidelities with data; found {len(available)}"
-        )
+        result["note"] = f"need at least three levels with data; found {len(available)}"
         return result
 
-    # Use the coarsest three available, in fidelity order.
+    # Coarsest three, in the provided order.
     f_fast, f_std, f_fine = available[-3], available[-2], available[-1]
     cd_fast, cd_std, cd_fine = (per_fidelity[f]["cd"] for f in (f_fast, f_std, f_fine))
     cl_fast, cl_std, cl_fine = (per_fidelity[f]["cl"] for f in (f_fast, f_std, f_fine))
@@ -177,7 +216,7 @@ def grid_study(
     if None in (cd_fast, cd_std, cd_fine, cl_std, cl_fine):
         result["verdict"] = "insufficient-data"
         result["converged"] = False
-        result["note"] = "coefficients unavailable for one or more fidelities"
+        result["note"] = "coefficients unavailable for one or more levels"
         return result
 
     cd_sf = abs(cd_fine - cd_std) / abs(cd_std) if cd_std else None
@@ -187,7 +226,7 @@ def grid_study(
         "cl_std_fine_pct": round((cl_sf or 0.0) * 100, 3),
     }
 
-    # Refinement ratio (coarse->fine) from cell counts if available, else 1.5 default.
+    # Refinement ratio (coarse->fine) from cell counts if available, else 1.5.
     n_fast = per_fidelity[f_fast].get("cells")
     n_fine = per_fidelity[f_fine].get("cells")
     r = 1.5
@@ -213,19 +252,15 @@ def grid_study(
     if converged:
         result["verdict"] = "grid-independent"
         result["note"] = (
-            f"std->fine: Cd {cd_sf * 100:.2f}% (< {cd_thresh * 100:.0f}%), "
+            f"fine-level vs previous: Cd {cd_sf * 100:.2f}% (< {cd_thresh * 100:.0f}%), "
             f"Cl {cl_sf * 100:.2f}% (< {cl_thresh * 100:.0f}%)"
         )
     elif (cd_sf is not None and cd_sf < 2 * cd_thresh and cl_sf is not None and cl_sf < 2 * cl_thresh):
         result["verdict"] = "marginal"
-        result["note"] = (
-            f"near convergent: Cd {cd_sf * 100:.2f}%, Cl {cl_sf * 100:.2f}%"
-        )
+        result["note"] = f"near convergent: Cd {cd_sf * 100:.2f}%, Cl {cl_sf * 100:.2f}%"
     else:
         result["verdict"] = "not-converged"
-        result["note"] = (
-            f"forces still move with refinement: Cd {cd_sf * 100:.2f}%, Cl {cl_sf * 100:.2f}%"
-        )
+        result["note"] = f"forces still move with refinement: Cd {cd_sf * 100:.2f}%, Cl {cl_sf * 100:.2f}%"
     return result
 
 
@@ -253,4 +288,82 @@ def print_grid_study(report: dict[str, Any]) -> None:
     print(f"    verdict: {report.get('verdict')} — {report.get('note')}")
 
 
-__all__ = ["grid_study", "print_grid_study", "CD_THRESHOLD", "CL_THRESHOLD"]
+__all__ = [
+    "grid_study", "print_grid_study", "configure_refinement_study",
+    "CD_THRESHOLD", "CL_THRESHOLD",
+]
+
+
+# ---------------------------------------------------------------------------
+# Refinement-study config generation
+# ---------------------------------------------------------------------------
+
+# Coarse -> fine background resolution. Ratios ~1.5 give a usable Richardson p.
+DEFAULT_REFINEMENT_LEVELS = (20, 30, 45)
+_REFINEMENT_LABELS = ("coarse", "medium", "fine")
+
+
+def refinement_variant_name(base: str, cells_per_length: int) -> str:
+    """Case name for one refinement level, e.g. ``wing_coarse`` history-safe."""
+    return f"{base}_cpl{cells_per_length}"
+
+
+def configure_refinement_study(
+    base_config_path: str | Path,
+    *,
+    base_name: str | None = None,
+    levels: tuple[int, ...] = DEFAULT_REFINEMENT_LEVELS,
+    out_dir: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Write three refinement-only configs from one base config.
+
+    Every field is inherited from the base **except** ``mesh_params
+    .cells_per_length`` (and ``case_name``), so the three cases differ only in
+    background mesh density — the physics, near-wall layer target/count, solver
+    and end time are identical. That is what makes a Richardson study valid
+    (unlike switching ``fidelity``, which also changes y+/layers/end_time).
+
+    Returns ``[{name, config_path, cells_per_length, label}]`` for each variant.
+    """
+    import json
+
+    base_path = Path(base_config_path)
+    raw = json.loads(base_path.read_text(encoding="utf-8"))
+    stem = base_name or raw.get("case_name") or base_path.stem
+    out = Path(out_dir) if out_dir else base_path.parent
+
+    # Pin the physics explicitly so a later edit to a preset cannot drift the study.
+    overrides = dict(raw.get("overrides") or {})
+    layers = dict(overrides.get("layers") or {})
+    mesh = dict(overrides.get("mesh_params") or {})
+    solver = dict(overrides.get("solver") or {})
+
+    # Inherit the base's effective layer/solver settings and pin them as overrides
+    # so all three cases share them (no per-fidelity near-wall confound).
+    from rapidfoam.config import effective_config
+
+    eff = effective_config(raw)
+    layers.setdefault("y_plus_target", eff["layers"].get("y_plus_target"))
+    layers.setdefault("n_layers", eff["layers"].get("n_layers"))
+    layers.setdefault("expansion_ratio", eff["layers"].get("expansion_ratio"))
+    solver.setdefault("end_time", eff["solver"].get("end_time"))
+    overrides["layers"] = layers
+    overrides["solver"] = solver
+
+    results: list[dict[str, Any]] = []
+    for index, cpl in enumerate(levels):
+        variant = json.loads(json.dumps(raw))  # deep copy
+        variant["case_name"] = refinement_variant_name(stem, cpl)
+        variant["fidelity"] = raw.get("fidelity", "standard")
+        variant["overrides"] = dict(overrides)
+        variant["overrides"]["mesh_params"] = {**mesh, "cells_per_length": int(cpl)}
+        cfg_path = out / f"{variant['case_name']}.json"
+        cfg_path.write_text(json.dumps(variant, indent=4) + "\n", encoding="utf-8")
+        results.append({
+            "name": variant["case_name"],
+            "config_path": str(cfg_path),
+            "cells_per_length": int(cpl),
+            "label": _REFINEMENT_LABELS[index] if index < len(_REFINEMENT_LABELS) else f"level{index}",
+        })
+    return results
+

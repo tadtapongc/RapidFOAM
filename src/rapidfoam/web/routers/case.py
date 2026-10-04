@@ -20,6 +20,7 @@ from rapidfoam.web.schemas import (
     GenerateCaseRequest,
     JobCancelRequest,
     JobSubmitRequest,
+    RefinementStudyRequest,
 )
 from rapidfoam.web.services.downloads import _run_download
 from rapidfoam.web.services.geometry import _local_stl_exists, layer_preview, per_surface_preview
@@ -259,6 +260,49 @@ async def api_case_generate_and_submit(req: GenerateCaseRequest) -> dict[str, An
         "local_actions": local_actions,
         "cluster_actions": cluster_actions,
     }
+
+
+@router.post("/api/case/refinement-study")
+async def api_case_refinement_study(req: RefinementStudyRequest) -> dict[str, Any]:
+    """Create a 3-case refinement study (coarse/medium/fine) from one config.
+
+    The variants differ only in ``mesh_params.cells_per_length`` — physics,
+    near-wall layers and end time are pinned to the base — so the resulting forces
+    form a valid grid-independence ladder. Optionally generates locally and/or
+    uploads + submits all three.
+    """
+    import json as _json
+    from rapidfoam.postproc.gridstudy import configure_refinement_study
+
+    cfg = req.config
+    case_name = cfg.get("case_name", "").strip()
+    if not case_name or not CASE_NAME_REGEX.match(case_name):
+        raise HTTPException(status_code=400, detail="A valid case_name is required")
+    levels = [int(x) for x in req.levels if isinstance(x, int) and x > 0] or [20, 30, 45]
+
+    cfg_dir = PROJECT_ROOT / "configs"
+    cfg_dir.mkdir(exist_ok=True)
+    base_path = cfg_dir / f"{case_name}.json"
+    base_path.write_text(_json.dumps(cfg, indent=4) + "\n", encoding="utf-8")
+
+    variants = await asyncio.to_thread(
+        configure_refinement_study, base_path, base_name=case_name, levels=tuple(levels), out_dir=cfg_dir
+    )
+
+    results = []
+    for v in variants:
+        variant_cfg = _json.loads(Path(v["config_path"]).read_text(encoding="utf-8"))
+        try:
+            res = await api_case_generate_and_submit(GenerateCaseRequest(
+                config=variant_cfg,
+                generate_locally=req.generate_locally,
+                upload_to_cluster=req.upload_to_cluster,
+                submit_slurm=req.submit_slurm,
+            ))
+            results.append({"case_name": v["name"], "ok": True, "result": res})
+        except HTTPException as exc:
+            results.append({"case_name": v["name"], "ok": False, "error": exc.detail})
+    return {"base": case_name, "levels": levels, "variants": results}
 
 
 @router.post("/api/case/submit")

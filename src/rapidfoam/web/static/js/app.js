@@ -468,6 +468,7 @@ class CFDApp {
     document.getElementById('btn-validate-config')?.addEventListener('click', () => this.validateCurrentConfig());
     document.getElementById('btn-save-config')?.addEventListener('click', () => this.saveCurrentConfig(false));
     document.getElementById('btn-generate-local')?.addEventListener('click', () => this.generateCaseLocally());
+    document.getElementById('btn-refinement-study')?.addEventListener('click', () => this.generateRefinementStudy());
     document.getElementById('btn-submit-case')?.addEventListener('click', () => this.saveCurrentConfig(true));
     document.getElementById('btn-quick-run')?.addEventListener('click', () => this.saveCurrentConfig(true));
 
@@ -2001,10 +2002,58 @@ class CFDApp {
     }
   }
 
-  async saveCurrentConfig(submitToCluster = false) {
+  async generateRefinementStudy() {
     this.buildConfigFromVisualForm();
+    const base = this.activeConfig.case_name || 'my_case';
+    const levelsRaw = this.getVal('cfg-study-levels') || '20, 30, 45';
+    const levels = levelsRaw.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0);
+    if (levels.length < 3) {
+      this.showToast('Enter at least three positive refinement levels.', 'warning');
+      return;
+    }
+    const willSubmit = this.clusterConnected;
+    const decision = await this.showConfirmDialog({
+      title: `Refinement study: ${base}`,
+      message: `Generate ${levels.length} cases (${levels.join(', ')} cells/length) that differ only in mesh density.`,
+      warning: willSubmit
+        ? 'Connected to the cluster: this will also upload and submit all three SLURM jobs (expensive). Use Cancel to generate locally only.'
+        : 'Cases are generated locally. Run them, then compare in the Grid Independence panel.',
+      severity: 'warning',
+      allowRename: false,
+      confirmText: willSubmit ? 'Generate + Submit All' : 'Generate All',
+      confirmClass: 'btn-warning',
+      cancelText: 'Cancel',
+    });
+    if (decision.action === 'cancel') return;
 
-    if (submitToCluster && !this.clusterConnected) {
+    const btn = document.getElementById('btn-refinement-study');
+    if (btn) { btn.disabled = true; btn.textContent = 'Working?'; }
+    try {
+      const res = await this.fetchWithTimeout('/api/case/refinement-study', 120000, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          config: this.activeConfig,
+          levels,
+          generate_locally: true,
+          upload_to_cluster: willSubmit,
+          submit_slurm: willSubmit,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Study failed');
+      const ok = (data.variants || []).filter((v) => v.ok).length;
+      this.showToast(`Refinement study: ${ok}/${levels.length} cases ready.`, 'success');
+      await this.loadCasesArchive();
+    } catch (err) {
+      this.showToast(`Refinement study failed: ${err.message}`, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Generate Refinement Study (3 cases)'; }
+    }
+  }
+
+  async saveCurrentConfig(submitToCluster = false) {
+    this.buildConfigFromVisualForm();    if (submitToCluster && !this.clusterConnected) {
       this.showToast('Please connect to the cluster via SSH first!', 'error');
       this.openSSHModal();
       return;
@@ -3492,11 +3541,11 @@ class CFDApp {
 
   // Fetch with an AbortController timeout, so a hung request cannot block the
   // telemetry poll forever.
-  async fetchWithTimeout(url, timeoutMs = 15000) {
+  async fetchWithTimeout(url, timeoutMs = 15000, options = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(url, { signal: controller.signal });
+      return await fetch(url, { ...options, signal: controller.signal });
     } finally {
       clearTimeout(timer);
     }

@@ -71,9 +71,25 @@ Rules:
 
 - CLI: `read_forces.py <case> --grid` (or `--grid base`), exit 0 converged, 2
   not-converged, 3 insufficient.
-- Studio: a **"Grid Independence"** panel on the Telemetry tab — a table
-  (fidelity / Cd / Cl / cells), the deltas, the Richardson estimate and the
-  verdict. New endpoint `GET /api/telemetry/grid?case_name=&base=`.
+- CLI (generate): `setup_case.py <config> --grid-refine [--run]` writes three
+  `<base>_cpl<N>` configs that differ **only** in `mesh_params.cells_per_length`
+  (physics, near-wall layers and end time pinned to the base) — the valid
+  refinement ladder — and optionally generates them.
+- Studio: a **"Refinement Study"** control in **Case Setup → General**
+  (levels + Generate) creates the three cases and, when connected, offers to
+  submit all three (confirmed first). A **"Grid Independence"** panel on the
+  Telemetry tab reads them (or `<base>_fast/_standard/_fine`) and reports the
+  deltas, the Richardson estimate and the verdict.
+  Endpoint: `GET /api/telemetry/grid?base=` (study) and
+  `POST /api/case/refinement-study` (generate/submit the ladder).
+
+**Why a separate workflow, not a preset.** A fidelity preset bundles mesh *and*
+near-wall layers (`n_layers` 5/8/20) *and* `end_time`. Switching `fast` →
+`fine` therefore changes the near-wall model too, so a Cd difference is **not**
+pure discretisation error and Richardson `p` is invalid. The refinement study
+holds all of that fixed and varies only mesh density, which is what makes the
+study rigorous. (`grid_study` still accepts preset variants for a quick
+sensitivity check, reporting `mode: fidelity` vs `mode: refinement`.)
 
 ### 1.4 Out of scope (v1)
 

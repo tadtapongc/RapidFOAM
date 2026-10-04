@@ -45,6 +45,14 @@ class GenerateCaseRequest(BaseModel):
     generate_locally: bool = False
 
 
+class RefinementStudyRequest(BaseModel):
+    config: dict[str, Any]
+    levels: list[int] = [20, 30, 45]
+    generate_locally: bool = True
+    upload_to_cluster: bool = False
+    submit_slurm: bool = False
+
+
 __all__ = [
     "SSHConnectRequest",
     "JobSubmitRequest",
@@ -52,4 +60,5 @@ __all__ = [
     "CaseDownloadRequest",
     "DomainBoxRequest",
     "GenerateCaseRequest",
+    "RefinementStudyRequest",
 ]

@@ -673,6 +673,28 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(res["verdict"], "grid-independent")
         self.assertIn("richardson", res)
 
+    def test_refinement_study_endpoint(self):
+        """The refinement-study endpoint writes 3 cpl-variant configs."""
+        from rapidfoam.web.routers.case import api_case_refinement_study
+        from rapidfoam.web.schemas import RefinementStudyRequest
+
+        cfg = {
+            "case_name": "studycase",
+            "stl_files": ["geometry.stl"],
+            "fidelity": "standard",
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+        }
+        for name in ("studycase", "studycase_cpl20", "studycase_cpl30", "studycase_cpl45"):
+            self.addCleanup(lambda n=name: (Path("configs") / f"{n}.json").unlink(missing_ok=True))
+        res = asyncio.run(api_case_refinement_study(
+            RefinementStudyRequest(config=cfg, levels=[20, 30, 45], generate_locally=False)
+        ))
+        names = [v["case_name"] for v in res["variants"]]
+        self.assertEqual(names, ["studycase_cpl20", "studycase_cpl30", "studycase_cpl45"])
+        for name in names:
+            self.assertTrue((Path("configs") / f"{name}.json").is_file())
+
     def test_telemetry_residuals_alignment(self):
         """Test telemetry residuals alignment where variable arrays have equal length."""
         case_name = "test_case_residuals"

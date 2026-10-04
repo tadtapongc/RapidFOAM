@@ -7,7 +7,12 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rapidfoam.postproc.gridstudy import _richardson_p, grid_study
+from rapidfoam.postproc.gridstudy import (
+    _richardson_p,
+    configure_refinement_study,
+    grid_study,
+    refinement_variant_name,
+)
 
 
 def _write_case(root: Path, name: str, cd: float, cl: float, cells: int = 1_000_000):
@@ -69,6 +74,66 @@ class GridStudyTest(unittest.TestCase):
     def test_richardson_handles_degenerate(self):
         self.assertIsNone(_richardson_p(0.3, 0.3, 0.3, 1.5))   # no change
         self.assertIsNone(_richardson_p(0.3, 0.2, 0.1, 1.0))   # r <= 1
+
+
+class RefinementStudyConfigTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def _base(self):
+        import json
+        base = {
+            "case_name": "wing",
+            "stl_files": ["wing.stl"],
+            "fidelity": "standard",
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+            "overrides": {"layers": {"y_plus_target": 30, "n_layers": 8}, "solver": {"end_time": 1500}},
+        }
+        p = self.root / "wing.json"
+        p.write_text(json.dumps(base))
+        return p
+
+    def test_variants_only_change_cells_per_length(self):
+        import json
+        variants = configure_refinement_study(self._base(), out_dir=self.root)
+        self.assertEqual([v["cells_per_length"] for v in variants], [20, 30, 45])
+        cpls = {v["cells_per_length"] for v in variants}
+        self.assertEqual(len(cpls), 3)
+        for v in variants:
+            cfg = json.loads(Path(v["config_path"]).read_text())
+            self.assertEqual(cfg["overrides"]["layers"]["y_plus_target"], 30)
+            self.assertEqual(cfg["overrides"]["layers"]["n_layers"], 8)
+            self.assertEqual(cfg["overrides"]["solver"]["end_time"], 1500)
+            self.assertEqual(cfg["flow"], {"velocity": 20.0, "direction": "-z", "ground": True})
+
+    def test_variant_naming(self):
+        self.assertEqual(refinement_variant_name("wing", 30), "wing_cpl30")
+
+    def test_grid_study_discovers_cpl_variants(self):
+        import json
+        variants = configure_refinement_study(self._base(), out_dir=self.root)
+        # Fabricate solved results for the three variant names (pinned Cd/Cl).
+        cds = {"cpl20": 0.312, "cpl30": 0.301, "cpl45": 0.297}
+        cls = {"cpl20": 1.44, "cpl30": 1.40, "cpl45": 1.39}
+        for v in variants:
+            label = f"cpl{v['cells_per_length']}"
+            case = self.root / v["name"]
+            coeff = case / "postProcessing" / "forceCoeffs" / "0"
+            coeff.mkdir(parents=True)
+            coeff.joinpath("coefficient.dat").write_text(
+                "# Time Cd Cl\n" + "".join(f"{i} {cds[label]} {cls[label]}\n" for i in range(1, 30))
+            )
+            (case / "case_config.json").write_text(json.dumps({
+                "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+                "mesh_params": {"block_cells": [v["cells_per_length"], 100, 10]},
+            }))
+        report = grid_study("wing", cases_root=self.root)
+        self.assertEqual(report["mode"], "refinement")
+        self.assertEqual(report["verdict"], "grid-independent")
+        self.assertIn("cpl20", report["per_fidelity"])
 
 
 if __name__ == "__main__":
