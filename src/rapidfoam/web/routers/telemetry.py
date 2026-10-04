@@ -86,6 +86,82 @@ log = logging.getLogger("rapidfoam.web")
 router = APIRouter()
 
 
+def _assemble_force_segments(
+    remote_bundle: dict[str, str],
+    local_case: Path,
+    drag_idx: int,
+    drag_sign: int,
+    df_idx: int,
+    df_sign: int,
+):
+    """Gather and parse force/moment/coefficient segments (sync; runs in a thread).
+
+    Returns the raw parsed histories so the caller can apply symmetry scaling and
+    build the response. Heavy file reads + tabular parsing stay off the loop.
+    """
+    force_segments: list[str] = []
+    moment_segments: list[str] = []
+    coeff_segments: list[str] = []
+    parts_segments: dict[str, list[str]] = {}
+
+    if remote_bundle:
+        force_segments = _sorted_segments(remote_bundle, "/force.dat", "/forces/")
+        moment_segments = _sorted_segments(remote_bundle, "/moment.dat")
+        coeff_segments = _sorted_segments(remote_bundle, "/coefficient.dat")
+        part_items: dict[str, list[tuple[str, str]]] = {}
+        for path, text in remote_bundle.items():
+            if not path.endswith("/force.dat") or "/forces_" not in path:
+                continue
+            for segment in path.split("/"):
+                if segment.startswith("forces_"):
+                    part_items.setdefault(segment[len("forces_"):], []).append((path, text))
+                    break
+        for part, items in part_items.items():
+            items.sort(key=lambda item: _time_dir_key(item[0]))
+            parts_segments[part] = [text for _, text in items]
+
+    is_local = local_case.is_dir()
+    if not force_segments and is_local:
+        force_segments = _read_text_files(find_force_files(local_case))
+        moment_segments = _read_text_files(find_moment_files(local_case))
+        coeff_segments = _read_text_files(find_coefficient_files(local_case))
+    if not parts_segments and is_local:
+        for part, files in find_per_part_force_files(local_case).items():
+            parts_segments[part] = _read_text_files(files)
+
+    times, force_rows, force_header = parse_tabular_dat(force_segments)
+    force_cols = normalize_component_columns(force_rows, force_header)
+
+    raw_drags: list[float] = []
+    raw_downforces: list[float] = []
+    if times:
+        drag_key = f"total_{'xyz'[drag_idx]}"
+        df_key = f"total_{'xyz'[df_idx]}"
+        if drag_key in force_cols and df_key in force_cols:
+            raw_drags = [v * drag_sign for v in force_cols[drag_key]]
+            raw_downforces = [v * df_sign for v in force_cols[df_key]]
+        else:
+            legacy_files = find_force_files(local_case) if is_local else []
+            if legacy_files:
+                try:
+                    times, raw_drags, raw_downforces = read_forces(
+                        legacy_files, drag_idx, drag_sign, df_idx, df_sign
+                    )
+                except Exception as exc:
+                    log.warning("Could not read forces: %s", exc)
+
+    return (
+        force_segments,
+        moment_segments,
+        coeff_segments,
+        parts_segments,
+        times,
+        force_cols,
+        raw_drags,
+        raw_downforces,
+    )
+
+
 @router.get("/api/telemetry/forces")
 async def api_telemetry_forces(
     case_name: str,
@@ -179,57 +255,28 @@ async def api_telemetry_forces(
         0.5 * reference["rho"] * reference["velocity"] * reference["velocity"], 4
     )
 
-    force_segments: list[str] = []
-    moment_segments: list[str] = []
-    coeff_segments: list[str] = []
-    parts_segments: dict[str, list[str]] = {}
-
-    if remote_bundle:
-        force_segments = _sorted_segments(remote_bundle, "/force.dat", "/forces/")
-        moment_segments = _sorted_segments(remote_bundle, "/moment.dat")
-        coeff_segments = _sorted_segments(remote_bundle, "/coefficient.dat")
-        part_items: dict[str, list[tuple[str, str]]] = {}
-        for path, text in remote_bundle.items():
-            if not path.endswith("/force.dat") or "/forces_" not in path:
-                continue
-            for segment in path.split("/"):
-                if segment.startswith("forces_"):
-                    part_items.setdefault(segment[len("forces_"):], []).append((path, text))
-                    break
-        for part, items in part_items.items():
-            items.sort(key=lambda item: _time_dir_key(item[0]))
-            parts_segments[part] = [text for _, text in items]
-
-    if not force_segments and local_case.is_dir():
-        force_segments = _read_text_files(find_force_files(local_case))
-        moment_segments = _read_text_files(find_moment_files(local_case))
-        coeff_segments = _read_text_files(find_coefficient_files(local_case))
-    if not parts_segments and local_case.is_dir():
-        for part, files in find_per_part_force_files(local_case).items():
-            parts_segments[part] = _read_text_files(files)
+    # Reading + parsing the force/moment/coefficient files is CPU/IO heavy for a
+    # long run; run it off the event loop.
+    (
+        force_segments,
+        moment_segments,
+        coeff_segments,
+        parts_segments,
+        times,
+        force_cols,
+        raw_drags,
+        raw_downforces,
+    ) = await asyncio.to_thread(
+        _assemble_force_segments,
+        remote_bundle,
+        local_case,
+        drag_idx,
+        drag_sign,
+        df_idx,
+        df_sign,
+    )
 
     per_part = _per_part_forces(parts_segments, drag_idx, drag_sign, df_idx, df_sign, sym_scale)
-
-    times, force_rows, force_header = parse_tabular_dat(force_segments)
-    force_cols = normalize_component_columns(force_rows, force_header)
-
-    raw_drags: list[float] = []
-    raw_downforces: list[float] = []
-    if times:
-        drag_key = f"total_{'xyz'[drag_idx]}"
-        df_key = f"total_{'xyz'[df_idx]}"
-        if drag_key in force_cols and df_key in force_cols:
-            raw_drags = [v * drag_sign for v in force_cols[drag_key]]
-            raw_downforces = [v * df_sign for v in force_cols[df_key]]
-        else:
-            legacy_files = find_force_files(local_case) if local_case.is_dir() else []
-            if legacy_files:
-                try:
-                    times, raw_drags, raw_downforces = read_forces(
-                        legacy_files, drag_idx, drag_sign, df_idx, df_sign
-                    )
-                except Exception as exc:
-                    log.warning("Could not read forces for %s: %s", case_name, exc)
 
     if not times:
         case_stage = "Generated"
