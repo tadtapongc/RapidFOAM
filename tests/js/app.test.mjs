@@ -1182,3 +1182,26 @@ test('grid mode uses the study Base Preset for the pinned fidelity', async () =>
   app.setRunMode('normal');
   assert.ok(app._window.document.querySelector('.fidelity-card[data-fidelity="standard"]').classList.contains('selected'));
 });
+
+test('Launch on Cluster delegates to the grid study in grid mode', async () => {
+  const app = await makeApp(`
+    <div id="fidelity-cards-group">
+      <label class="fidelity-card selected" data-fidelity="standard"></label>
+      <label class="fidelity-card" data-mode="grid"></label>
+    </div>
+    <div id="grid-study-settings"></div>
+    <span id="cfg-run-mode-hint"></span>
+    <input id="cfg-study-levels" value="20, 30, 45">
+    <span id="cfg-study-preview"></span>
+    <span id="grid-study-result"></span>
+  `);
+  installFormStubs(app);
+  app.activeConfig = { case_name: 'wing', fidelity: 'standard' };
+  app.runMode = 'grid';
+  let calledWith = null;
+  app.generateRefinementStudy = (submit) => { calledWith = submit; };
+  await app.saveCurrentConfig(true);
+  assert.equal(calledWith, true);
+  await app.generateCaseLocally();
+  assert.equal(calledWith, false);
+});

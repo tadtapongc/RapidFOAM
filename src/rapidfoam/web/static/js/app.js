@@ -1969,6 +1969,10 @@ class CFDApp {
 
   async generateCaseLocally() {
     this.buildConfigFromVisualForm();
+    // In grid-study mode generate all three variants locally.
+    if (this.runMode === 'grid') {
+      return this.generateRefinementStudy(false);
+    }
     const caseName = this.activeConfig.case_name || 'my_case';
 
     // Check if case already exists locally or on cluster
@@ -2139,6 +2143,11 @@ class CFDApp {
 
   async saveCurrentConfig(submitToCluster = false) {
     this.buildConfigFromVisualForm();
+    // In grid-study mode this button runs the study (3 cases) instead of a
+    // single case, so the mode is never silently ignored.
+    if (this.runMode === 'grid') {
+      return this.generateRefinementStudy(submitToCluster);
+    }
     if (submitToCluster && !this.clusterConnected) {
       this.showToast('Please connect to the cluster via SSH first!', 'error');
       this.openSSHModal();
