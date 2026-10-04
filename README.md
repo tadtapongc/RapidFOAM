@@ -334,6 +334,28 @@ python read_forces.py --yplus
 This reads the `yPlus` function object output and reports per-patch min/max/average
 against the target, flagging patches that miss it.
 
+### Per-surface refinement (geometry-derived)
+
+With `mesh_params.auto_size` enabled, each STL part's **surface and edge refinement
+is derived from that part's own feature size** (an edge-length percentile plus the
+thinnest extent) — a large smooth part stays coarse while a small intricate bracket
+refines automatically. This is feature-driven, not name-driven: no per-part labels.
+
+For cases automation can't express, an optional `mesh_regions` block overrides per
+STL stem (extension stripped):
+
+```json
+"mesh_regions": {
+  "rear_wing":        { "surface_level": [4, 6], "edge_level": 7, "n_layers": 12 },
+  "internal_bracket": { "n_layers": 0 }
+}
+```
+
+`surface_level`/`edge_level` override the refinement; `n_layers` sets the per-patch
+layer count (`0` = no layers, the clean way to silence a fully-internal part).
+Manual overrides win over `auto_size` and the preset. Both are off/absent by
+default, so output is unchanged unless you opt in.
+
 ---
 
 ## Mesh Quality & Remediation

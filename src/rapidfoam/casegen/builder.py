@@ -50,7 +50,7 @@ def build_case(
     from rapidfoam.meshing.pipeline import emit_mesh_files
     from rapidfoam.meshing.plan import apply_plan_to_cfg, build_mesh_plan
     from rapidfoam.meshing.presets import FIDELITY_PRESETS, apply_fidelity_preset
-    from rapidfoam.meshing.sizing import resolve_per_surface_levels
+    from rapidfoam.meshing.sizing import apply_mesh_regions, resolve_per_surface_levels
     from rapidfoam.geometry.stl import EdgeStats, FeatureAngleStats, copy_stl, stl_analyze_full
 
     if not cfg_path.exists():
@@ -197,6 +197,9 @@ def build_case(
         )
         if per_surface:
             cfg["mesh_params"]["surface_levels"] = per_surface
+    # Manual per-surface overrides (mesh_regions: {stem: {surface_level, edge_level,
+    # n_layers}}); explicit user intent wins over the geometry-derived/global value.
+    apply_mesh_regions(cfg, stl_names)
     if layer_resolution.get("y_plus_target") is not None and _is_set("layers", "first_layer_thickness"):
         report("  ⚠  layers.first_layer_thickness overrides layers.y_plus_target")
 

@@ -557,6 +557,32 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
                     errors.append(
                         f"mesh_quality.verdict_bands.{metric}.good/caution must be finite numbers"
                     )
+    regions = cfg.get("mesh_regions")
+    if regions is not None:
+        if not isinstance(regions, dict):
+            errors.append("mesh_regions must be an object mapping STL stems to overrides")
+        else:
+            known_stems = {n.rsplit(".", 1)[0] if "." in n else n for n in stl_files}
+            for stem, spec in regions.items():
+                if stem not in known_stems:
+                    warnings.append(f"mesh_regions: '{stem}' is not one of stl_files {sorted(known_stems)}")
+                if not isinstance(spec, dict):
+                    errors.append(f"mesh_regions.{stem} must be an object")
+                    continue
+                extra = set(spec) - {"surface_level", "edge_level", "n_layers"}
+                if extra:
+                    errors.append(f"mesh_regions.{stem} has unknown keys: {sorted(extra)}")
+                level = spec.get("surface_level")
+                if level is not None and (
+                        not isinstance(level, (list, tuple)) or len(level) != 2
+                        or not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in level)
+                        or level[0] > level[1]):
+                    errors.append(f"mesh_regions.{stem}.surface_level must be two ordered nonnegative integers")
+                for key in ("edge_level", "n_layers"):
+                    value = spec.get(key)
+                    if value is not None and (
+                            not isinstance(value, int) or isinstance(value, bool) or value < 0):
+                        errors.append(f"mesh_regions.{stem}.{key} must be a nonnegative integer")
     layering_relaxed = cfg.get("mesh_quality", {}).get("layering_relaxed")
     if layering_relaxed is not None:
         if not isinstance(layering_relaxed, dict):

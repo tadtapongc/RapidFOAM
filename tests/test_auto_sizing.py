@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from rapidfoam.config import DEFAULT_CONFIG, deep_merge, load_config, validate
 from rapidfoam.meshing.params import compute_mesh_params
 from rapidfoam.meshing.presets import FIDELITY_PRESETS
-from rapidfoam.meshing.sizing import resolve_per_surface_levels
+from rapidfoam.meshing.sizing import apply_mesh_regions, resolve_per_surface_levels
 from rapidfoam.geometry.stl import (
     EdgeStats,
     FeatureAngleStats,
@@ -476,6 +476,41 @@ class TestPerSurfaceSizing(unittest.TestCase):
             ),
             {},
         )
+
+
+class TestMeshRegions(unittest.TestCase):
+    """Manual per-surface overrides (mesh_regions) folded into mesh_params."""
+
+    def test_apply_mesh_regions_sets_levels_and_layers(self):
+        cfg = {"mesh_regions": {"wing": {"surface_level": [4, 7], "edge_level": 8, "n_layers": 12}}}
+        apply_mesh_regions(cfg, ["body", "wing"])
+        self.assertEqual(cfg["mesh_params"]["surface_levels"]["wing"]["surface_level"], [4, 7])
+        self.assertEqual(cfg["mesh_params"]["surface_levels"]["wing"]["edge_level"], 8)
+        self.assertEqual(cfg["mesh_params"]["layer_overrides"]["wing"], 12)
+
+    def test_unknown_stem_ignored(self):
+        cfg = {"mesh_regions": {"not_a_part": {"n_layers": 0}}}
+        apply_mesh_regions(cfg, ["body"])
+        self.assertEqual(cfg["mesh_params"]["layer_overrides"], {})
+
+    def test_manual_overrides_geometry_derived(self):
+        cfg = {
+            "mesh_regions": {"wing": {"surface_level": [2, 3]}},
+            "mesh_params": {"surface_levels": {"wing": {"surface_level": [4, 7], "edge_level": 8}}},
+        }
+        apply_mesh_regions(cfg, ["wing"])
+        self.assertEqual(cfg["mesh_params"]["surface_levels"]["wing"]["surface_level"], [2, 3])
+        # edge_level from the auto pass survives when the manual block omits it.
+        self.assertEqual(cfg["mesh_params"]["surface_levels"]["wing"]["edge_level"], 8)
+
+    def test_validation(self):
+        cfg = deep_merge(DEFAULT_CONFIG, {"stl_files": ["body.stl"]})
+        cfg["mesh_regions"] = {"body": {"surface_level": [5, 4]}}
+        errors, _ = validate(cfg, Path("."))
+        self.assertTrue(any("surface_level" in e for e in errors))
+        cfg["mesh_regions"] = {"body": {"bogus": 1}}
+        errors, _ = validate(cfg, Path("."))
+        self.assertTrue(any("unknown keys" in e for e in errors))
 
 
 if __name__ == "__main__":

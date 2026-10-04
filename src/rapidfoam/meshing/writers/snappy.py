@@ -166,8 +166,17 @@ def write_snappy_hex_mesh_dict(plan: MeshPlan, ctx: MeshContext, case_dir: Path)
 
     layer_lines = []
     n_layers = layers["n_layers"]
+    # Optional per-surface layer-count overrides (mesh_regions): {stem: int}.
+    layer_overrides = mesh.get("layer_overrides") or {}
+
+    def _n_layers_for(name):
+        value = layer_overrides.get(name)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+        return n_layers
+
     for name in stl_names:
-        layer_lines.append(f'        "{name}" {{ nSurfaceLayers {n_layers}; }}')
+        layer_lines.append(f'        "{name}" {{ nSurfaceLayers {_n_layers_for(name)}; }}')
     active_patches = set(ctx.faces.values())
     if layers.get("ground_layers", False) and patches["ground"] in active_patches:
         try:

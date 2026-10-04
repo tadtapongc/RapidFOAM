@@ -506,6 +506,24 @@ class TestPerSurfaceLevelEmission(unittest.TestCase):
         self.assertIn("wing { level (4 7);", text)
         self.assertIn('file "wing.eMesh"; level 8;', text)
 
+    def test_per_surface_layer_override_emitted(self):
+        cfg = deep_merge(DEFAULT_CONFIG, {
+            "stl_files": ["body.stl", "bracket.stl"],
+            "flow": {"velocity": U, "direction": "-z", "ground": True},
+        })
+        cfg["stl_names"] = ["body", "bracket"]
+        cfg["domain_box"] = {"min": [0.0, 0.0, -2.0], "max": [4.0, 3.0, 6.0]}
+        cfg["layers"] = dict(cfg["layers"], n_layers=8, y_plus_target=30)
+        cfg["mesh_params"] = compute_mesh_params(cfg, ((-0.5, 0.0, -1.5), (0.5, 1.0, 1.5)))
+        cfg["mesh_params"]["layer_overrides"] = {"bracket": 0}
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / "system").mkdir()
+            emit_mesh_files_from_config(cfg, case)
+            text = (case / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
+        self.assertIn('"body" { nSurfaceLayers 8; }', text)
+        self.assertIn('"bracket" { nSurfaceLayers 0; }', text)
+
 
 if __name__ == "__main__":
     unittest.main()

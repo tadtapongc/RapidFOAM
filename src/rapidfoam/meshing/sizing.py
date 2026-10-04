@@ -175,4 +175,33 @@ def resolve_per_surface_levels(
     return result
 
 
-__all__ = ["_resolve_feature_sizing", "_resolve_feature_angle", "resolve_per_surface_levels"]
+def apply_mesh_regions(cfg: dict[str, Any], stl_names: list[str]) -> dict[str, Any]:
+    """Fold manual ``mesh_regions`` overrides into ``cfg["mesh_params"]``.
+
+    ``mesh_regions`` maps an STL stem to ``{surface_level, edge_level, n_layers}``.
+    Surface/edge levels are merged into ``mesh_params["surface_levels"]`` (winning
+    over the geometry-derived value); per-surface layer counts go to
+    ``mesh_params["layer_overrides"]``. Unknown stems are ignored.
+    """
+    regions = cfg.get("mesh_regions")
+    if not isinstance(regions, dict) or not regions:
+        return cfg
+    known = set(stl_names)
+    mesh = cfg.setdefault("mesh_params", {})
+    surface_levels = mesh.setdefault("surface_levels", {})
+    layer_overrides = mesh.setdefault("layer_overrides", {})
+    for stem, spec in regions.items():
+        if stem not in known or not isinstance(spec, dict):
+            continue
+        entry = surface_levels.setdefault(stem, {})
+        if isinstance(spec.get("surface_level"), (list, tuple)) and len(spec["surface_level"]) == 2:
+            entry["surface_level"] = [int(spec["surface_level"][0]), int(spec["surface_level"][1])]
+        if isinstance(spec.get("edge_level"), int) and not isinstance(spec["edge_level"], bool):
+            entry["edge_level"] = int(spec["edge_level"])
+        n = spec.get("n_layers")
+        if isinstance(n, int) and not isinstance(n, bool) and n >= 0:
+            layer_overrides[stem] = int(n)
+    return cfg
+
+
+__all__ = ["_resolve_feature_sizing", "_resolve_feature_angle", "resolve_per_surface_levels", "apply_mesh_regions"]

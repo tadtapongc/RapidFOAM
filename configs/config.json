@@ -117,7 +117,15 @@
         "openfoam_source": "$HOME/OpenFOAM/OpenFOAM-v2606/etc/bashrc"
     },
 
-    "_section_overrides": "--- 7. Expert Overrides (Optional) ---",
+    "_section_mesh_regions": "--- 7. Per-Surface Mesh Overrides (Optional) ---",
+    "_auto_size_note": "preferred: with mesh_params.auto_size=true, each STL's surface/edge level is derived from its OWN feature size (large smooth parts stay coarse, small intricate parts refine) -- like a size function, no part naming.",
+    "_mesh_regions_note": "Optional manual escape hatch keyed by STL stem (extension stripped). surface_level/edge_level override, n_layers sets the per-patch layer count (0 = no layers, useful for fully-internal parts). Manual wins over auto-size and the preset.",
+    "_mesh_regions_example": {
+        "rear_wing": { "surface_level": [4, 6], "edge_level": 7, "n_layers": 12 },
+        "internal_bracket": { "n_layers": 0 }
+    },
+
+    "_section_overrides": "--- 8. Expert Overrides (Optional) ---",
     "_overrides_note": "All fields below have built-in defaults in fidelity presets. Uncomment only if manual tuning is needed.",
     "_expert_defaults_note": "Solver-coupled sections (schemes, relaxation, linear_solvers, simple, wall_functions, snap, and the snappy layer/mesh_quality knobs) are intentionally NOT shown here: the generator sets them per fidelity preset and overriding them can destabilise the solve. The complete default set lives in DEFAULT_CONFIG in src/rapidfoam/config.py.",
     "_optional_overrides_example": {
