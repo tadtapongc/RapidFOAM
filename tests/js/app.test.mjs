@@ -1135,9 +1135,9 @@ test('runGridStudy renders the fidelity table and verdict', async () => {
 // ------------------------------------------- Run mode / grid study
 test('setRunMode toggles the grid-study settings and hint', async () => {
   const app = await makeApp(`
-    <div id="cfg-run-mode">
-      <button class="segment active" data-mode="normal"></button>
-      <button class="segment" data-mode="grid"></button>
+    <div class="run-mode-cards">
+      <label class="fidelity-card selected" data-mode="normal"><input type="radio" name="cfg-run-mode" value="normal" checked></label>
+      <label class="fidelity-card" data-mode="grid"><input type="radio" name="cfg-run-mode" value="grid"></label>
     </div>
     <div id="grid-study-settings" style="display:none;"></div>
     <span id="cfg-run-mode-hint"></span>
@@ -1156,9 +1156,9 @@ test('setRunMode toggles the grid-study settings and hint', async () => {
 
 test('grid mode hides the fidelity cards and uses the study Base Preset', async () => {
   const app = await makeApp(`
-    <div id="cfg-run-mode">
-      <button class="segment active" data-mode="normal"></button>
-      <button class="segment" data-mode="grid"></button>
+    <div class="run-mode-cards">
+      <label class="fidelity-card selected" data-mode="normal"><input type="radio" name="cfg-run-mode" value="normal" checked></label>
+      <label class="fidelity-card" data-mode="grid"><input type="radio" name="cfg-run-mode" value="grid"></label>
     </div>
     <div id="fidelity-cards-group"><label class="fidelity-card selected" data-fidelity="standard"><input name="cfg-fidelity" checked></label></div>
     <div id="grid-study-settings" style="display:none;">

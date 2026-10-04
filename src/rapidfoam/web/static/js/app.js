@@ -472,9 +472,9 @@ class CFDApp {
     document.getElementById('btn-generate-local')?.addEventListener('click', () => this.generateCaseLocally());
     document.getElementById('btn-refinement-study')?.addEventListener('click', () => this.generateRefinementStudy(false));
     document.getElementById('btn-refinement-study-submit')?.addEventListener('click', () => this.generateRefinementStudy(true));
-    // Run-mode segmented control: switch between normal and grid-study modes.
-    document.querySelectorAll('#cfg-run-mode .segment').forEach((btn) => {
-      btn.addEventListener('click', () => this.setRunMode(btn.getAttribute('data-mode')));
+    // Run mode: card pair switching between normal and grid-study modes.
+    document.querySelectorAll('.run-mode-cards .fidelity-card').forEach((card) => {
+      card.addEventListener('click', () => this.setRunMode(card.getAttribute('data-mode')));
     });
     document.getElementById('cfg-study-levels')?.addEventListener('input', () => this.renderStudyPreview());
     document.getElementById('cfg-study-corefine')?.addEventListener('change', () => this.renderStudyPreview());
@@ -2029,8 +2029,11 @@ class CFDApp {
 
   setRunMode(mode) {
     this.runMode = mode === 'grid' ? 'grid' : 'normal';
-    document.querySelectorAll('#cfg-run-mode .segment').forEach((btn) => {
-      btn.classList.toggle('active', btn.getAttribute('data-mode') === this.runMode);
+    document.querySelectorAll('.run-mode-cards .fidelity-card').forEach((card) => {
+      const on = card.getAttribute('data-mode') === this.runMode;
+      card.classList.toggle('selected', on);
+      const radio = card.querySelector('input[type="radio"]');
+      if (radio) radio.checked = on;
     });
     const settings = document.getElementById('grid-study-settings');
     if (settings) settings.style.display = this.runMode === 'grid' ? 'block' : 'none';
