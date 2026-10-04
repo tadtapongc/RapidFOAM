@@ -1,299 +1,64 @@
 {
   "case_name": "golden_test",
-  "domain_box": {
-    "max": [
-      5.0,
-      5.0,
-      15.0
-    ],
-    "min": [
-      0.0,
-      0.0,
-      -24.0
-    ]
-  },
-  "domain_faces": {
-    "+x": "farField",
-    "+y": "farField",
-    "+z": "inlet",
-    "-x": "symmetry",
-    "-y": "ground",
-    "-z": "outlet"
-  },
-  "feature_extract": {
-    "extractionMethod": "extractFromSurface",
-    "includedAngle": 140
-  },
-  "fidelity": "standard",
-  "field_outputs": {
-    "field_min_max": true,
-    "surface_field_value": false,
-    "vorticity": false,
-    "wall_shear_stress": true,
-    "y_plus": true
-  },
+  "stl_files": [
+    "body.stl"
+  ],
   "flow": {
+    "velocity": 20.0,
     "direction": "-z",
-    "ground": true,
-    "velocity": 20.0
+    "ground": true
+  },
+  "outputs": {
+    "drag_axis": "-z",
+    "downforce_axis": "-y"
   },
   "fluid": {
     "nu": 1.516e-05,
     "rho": 1.225
   },
+  "turbulence": {
+    "model": "kOmegaSST",
+    "intensity": 0.005,
+    "nut_ratio": 10
+  },
+  "patches": {
+    "inlet": "inlet",
+    "outlet": "outlet",
+    "ground": "ground",
+    "walls": "farField",
+    "symmetry": "symmetry"
+  },
   "force_refs": {
+    "lRef": 1.0,
     "Aref": 1.0,
     "CofR": [
       0,
       0,
       0
-    ],
-    "lRef": 1.0
-  },
-  "layers": {
-    "_resolved": {
-      "clamp_cell_m": 0.003125,
-      "clamp_level": 5,
-      "clamped": false,
-      "first_layer_thickness": 0.0011805798182942158,
-      "fit_applied": false,
-      "fit_level": null,
-      "fit_mode": null,
-      "fit_ratio": null,
-      "ground_clearance": 0.0,
-      "ground_layers": false,
-      "ground_layers_note": "",
-      "ground_n_layers": 2,
-      "min_thickness": 0.0011805798182942158,
-      "mode": "absolute",
-      "requested_thickness": 0.0011805798182942158,
-      "stack": 0.019478486535204852,
-      "thickness_max": 0.0015625,
-      "u_tau": 0.7704688712316408,
-      "y_plus_effective": 30.0,
-      "y_plus_target": 30
-    },
-    "detectExtrusionIsland": true,
-    "expansion_ratio": 1.2,
-    "featureAngle": 170,
-    "first_layer_thickness": 0.0011805798182942158,
-    "ground_layers": false,
-    "ground_n_layers": 2,
-    "maxAlignedCells": 200000,
-    "maxFaceThicknessRatio": 0.5,
-    "maxThicknessToMedialRatio": 0.3,
-    "minMedialAxisAngle": 90,
-    "min_thickness": 0.0011805798182942158,
-    "nBufferCellsNoExtrude": 0,
-    "nGrow": 0,
-    "nLayerIter": 50,
-    "nMedialAxisIter": 10,
-    "nRelaxIter": 10,
-    "nRelaxedIter": 20,
-    "nSmoothDisplacement": 0,
-    "nSmoothNormals": 3,
-    "nSmoothSurfaceNormals": 3,
-    "nSmoothThickness": 15,
-    "n_layers": 8,
-    "relativeSizes": false,
-    "slipFeatureAngle": 30,
-    "two_pass": false,
-    "y_plus_fit": false,
-    "y_plus_target": 30
-  },
-  "linear_solvers": {
-    "U": {
-      "minIter": 1,
-      "preconditioner": "DILU",
-      "relTol": 0.01,
-      "solver": "PBiCGStab",
-      "tolerance": 1e-08
-    },
-    "p": {
-      "agglomerator": "faceAreaPair",
-      "cacheAgglomeration": true,
-      "mergeLevels": 2,
-      "nCellsInCoarsestLevel": 500,
-      "nPostSweeps": 2,
-      "nPreSweeps": 0,
-      "relTol": 0.01,
-      "smoother": "DICGaussSeidel",
-      "solver": "GAMG",
-      "tolerance": 1e-07
-    }
-  },
-  "mesh_params": {
-    "allowFreeStandingZoneFaces": true,
-    "base_cell_size": 0.1,
-    "block_cells": [
-      50,
-      50,
-      390
-    ],
-    "distance_levels": [
-      [
-        0.025,
-        4
-      ],
-      [
-        0.08,
-        3
-      ]
-    ],
-    "edge_level": 6,
-    "grading": [
-      1.0,
-      1.0,
-      1.0
-    ],
-    "grading_info": {
-      "axes": {},
-      "block_cells": [
-        50,
-        50,
-        390
-      ],
-      "cell_reduction": 0.0,
-      "grading": [
-        1.0,
-        1.0,
-        1.0
-      ],
-      "mode": "off",
-      "ratio": null,
-      "uniform_cells": [
-        50,
-        50,
-        390
-      ]
-    },
-    "maxGlobalCells": 20000000,
-    "maxLocalCells": 2000000,
-    "minRefinementCells": 10,
-    "nCellsBetweenLevels": 2,
-    "refinement_regions": [
-      {
-        "level": 3,
-        "max": [
-          1.15,
-          1.25,
-          1.2
-        ],
-        "min": [
-          0.0,
-          -0.01,
-          -3.6
-        ],
-        "name": "nearWakeBox"
-      },
-      {
-        "level": 1,
-        "max": [
-          1.3,
-          1.4,
-          0.0
-        ],
-        "min": [
-          0.0,
-          -0.01,
-          -10.5
-        ],
-        "name": "farWakeBox"
-      }
-    ],
-    "resolveFeatureAngle": 35,
-    "surface_level": [
-      4,
-      5
     ]
   },
-  "mesh_quality": {
-    "errorReduction": 0.75,
-    "maxBoundarySkewness": 20,
-    "maxConcave": 80,
-    "maxInternalSkewness": 3.5,
-    "maxNonOrtho": 60,
-    "minArea": -1,
-    "minDeterminant": 0.001,
-    "minFaceWeight": 0.05,
-    "minTetQuality": 1e-15,
-    "minTriangleTwist": -1,
-    "minTwist": 0.02,
-    "minVol": 1e-13,
-    "minVolRatio": 0.01,
-    "nSmoothScale": 6,
-    "relaxed": {
-      "maxBoundarySkewness": 25,
-      "maxConcave": 85,
-      "maxInternalSkewness": 5,
-      "maxNonOrtho": 70,
-      "minArea": -1,
-      "minDeterminant": 0.0005,
-      "minFaceWeight": 0.02,
-      "minTetQuality": 1e-30,
-      "minTriangleTwist": -1,
-      "minTwist": 0.001,
-      "minVol": 1e-13,
-      "minVolRatio": 0.005
-    },
-    "verdict_bands": {
-      "concave_cells": {
-        "caution": 0.0,
-        "good": 0.0
-      },
-      "max_aspect_ratio": {
-        "caution": 100.0,
-        "good": 50.0
-      },
-      "max_non_ortho": {
-        "caution": 70.0,
-        "good": 60.0
-      },
-      "max_skewness": {
-        "caution": 4.0,
-        "good": 2.0
-      },
-      "min_determinant": {
-        "caution": 0.001,
-        "good": 0.05
-      },
-      "min_interp_weight": {
-        "caution": 0.01,
-        "good": 0.1
-      },
-      "min_volume_ratio": {
-        "caution": 0.01,
-        "good": 0.05
-      }
-    }
-  },
-  "outputs": {
-    "downforce_axis": "-y",
-    "drag_axis": "-z"
+  "vehicle": {
+    "wheelbase": null,
+    "front_weight_pct": null
   },
   "parallel": {
-    "method": "scotch",
-    "n_procs": 10
+    "n_procs": 10,
+    "method": "scotch"
   },
-  "patches": {
-    "ground": "ground",
-    "inlet": "inlet",
-    "outlet": "outlet",
-    "symmetry": "symmetry",
-    "walls": "farField"
+  "slurm": {
+    "qos": "cu_hpc",
+    "partition": "cpu",
+    "nodes": 1,
+    "time": "08:00:00",
+    "mem_per_cpu": "2G",
+    "cpus_per_task": 1,
+    "openfoam_module": null,
+    "openfoam_source": "$HOME/OpenFOAM/OpenFOAM-v2606/etc/bashrc"
   },
-  "potential_flow": {
-    "nNonOrthogonalCorrectors": 10
-  },
-  "relaxation": {
-    "equations": {
-      "U": 0.7,
-      "k": 0.5,
-      "omega": 0.5
-    },
-    "fields": {
-      "p": 0.7
-    }
+  "solver": {
+    "end_time": 1500,
+    "write_interval": 500,
+    "purge_write": 2
   },
   "schemes": {
     "div_U": "bounded Gauss limitedLinear 1",
@@ -304,61 +69,301 @@
     "snGrad": "limited corrected 0.5",
     "wallDist": "meshWave"
   },
-  "simple": {
-    "consistent": true,
-    "nNonOrthogonalCorrectors": 2
+  "linear_solvers": {
+    "p": {
+      "solver": "GAMG",
+      "smoother": "DICGaussSeidel",
+      "tolerance": 1e-07,
+      "relTol": 0.01,
+      "nPreSweeps": 0,
+      "nPostSweeps": 2,
+      "cacheAgglomeration": true,
+      "agglomerator": "faceAreaPair",
+      "nCellsInCoarsestLevel": 500,
+      "mergeLevels": 2
+    },
+    "U": {
+      "solver": "PBiCGStab",
+      "preconditioner": "DILU",
+      "tolerance": 1e-08,
+      "relTol": 0.01,
+      "minIter": 1
+    }
   },
-  "slurm": {
-    "cpus_per_task": 1,
-    "mem_per_cpu": "2G",
-    "nodes": 1,
-    "openfoam_module": null,
-    "openfoam_source": "$HOME/OpenFOAM/OpenFOAM-v2606/etc/bashrc",
-    "partition": "cpu",
-    "qos": "cu_hpc",
-    "time": "08:00:00"
+  "simple": {
+    "nNonOrthogonalCorrectors": 2,
+    "consistent": true
+  },
+  "relaxation": {
+    "fields": {
+      "p": 0.7
+    },
+    "equations": {
+      "U": 0.7,
+      "k": 0.5,
+      "omega": 0.5
+    }
+  },
+  "wall_functions": {
+    "nut": "nutUSpaldingWallFunction",
+    "k": "kqRWallFunction",
+    "omega": "omegaWallFunction"
   },
   "snap": {
-    "explicitFeatureSnap": true,
-    "implicitFeatureSnap": true,
-    "multiRegionFeatureSnap": false,
-    "nFeatureSnapIter": 15,
-    "nRelaxIter": 10,
     "nSmoothPatch": 5,
+    "tolerance": 2.0,
     "nSolveIter": 200,
-    "tolerance": 2.0
+    "nRelaxIter": 10,
+    "nFeatureSnapIter": 15,
+    "implicitFeatureSnap": true,
+    "explicitFeatureSnap": true,
+    "multiRegionFeatureSnap": false
   },
-  "solver": {
-    "end_time": 1500,
-    "purge_write": 2,
-    "write_interval": 500
+  "layers": {
+    "n_layers": 8,
+    "expansion_ratio": 1.15,
+    "relativeSizes": false,
+    "first_layer_thickness": 0.0011805798182942158,
+    "min_thickness": 0.0004132029364029755,
+    "min_thickness_ratio": 0.35,
+    "y_plus_target": 30,
+    "featureAngle": 170,
+    "slipFeatureAngle": 30,
+    "nGrow": 0,
+    "maxFaceThicknessRatio": 0.7,
+    "nSmoothSurfaceNormals": 3,
+    "nSmoothThickness": 20,
+    "nSmoothNormals": 3,
+    "nRelaxIter": 15,
+    "nBufferCellsNoExtrude": 0,
+    "nLayerIter": 75,
+    "maxAlignedCells": 200000,
+    "minMedialAxisAngle": 90,
+    "maxThicknessToMedialRatio": 0.3,
+    "nMedialAxisIter": 10,
+    "nSmoothDisplacement": 0,
+    "detectExtrusionIsland": true,
+    "nRelaxedIter": 20,
+    "ground_layers": false,
+    "ground_n_layers": 2,
+    "two_pass": true,
+    "y_plus_fit": false,
+    "_resolved": {
+      "u_tau": 0.7704688712316408,
+      "y_plus_target": 30,
+      "y_plus_effective": 30.0,
+      "first_layer_thickness": 0.0011805798182942158,
+      "min_thickness": 0.0004132029364029755,
+      "stack": 0.016205605579466677,
+      "mode": "absolute",
+      "clamped": false,
+      "requested_thickness": 0.0011805798182942158,
+      "thickness_max": 0.0021874999999999998,
+      "clamp_level": 5,
+      "clamp_cell_m": 0.003125,
+      "fit_applied": false,
+      "fit_mode": null,
+      "fit_ratio": null,
+      "fit_level": null,
+      "ground_layers": false,
+      "ground_n_layers": 2,
+      "ground_clearance": 0.0,
+      "ground_layers_note": ""
+    }
   },
-  "stl_files": [
-    "body.stl"
-  ],
-  "stl_names": [
-    "body"
-  ],
+  "feature_extract": {
+    "extractionMethod": "extractFromSurface",
+    "includedAngle": 140
+  },
+  "field_outputs": {
+    "wall_shear_stress": true,
+    "y_plus": true,
+    "field_min_max": true,
+    "surface_field_value": false,
+    "vorticity": false
+  },
+  "mesh_quality": {
+    "maxNonOrtho": 60,
+    "maxBoundarySkewness": 20,
+    "maxInternalSkewness": 3.5,
+    "maxConcave": 80,
+    "minVol": 1e-13,
+    "minTetQuality": 1e-15,
+    "minArea": -1,
+    "minTwist": 0.02,
+    "minDeterminant": 0.001,
+    "minFaceWeight": 0.05,
+    "minVolRatio": 0.01,
+    "minTriangleTwist": -1,
+    "nSmoothScale": 6,
+    "errorReduction": 0.75,
+    "verdict_bands": {
+      "max_non_ortho": {
+        "good": 60.0,
+        "caution": 70.0
+      },
+      "max_skewness": {
+        "good": 2.0,
+        "caution": 4.0
+      },
+      "max_aspect_ratio": {
+        "good": 50.0,
+        "caution": 100.0
+      },
+      "min_determinant": {
+        "good": 0.05,
+        "caution": 0.001
+      },
+      "min_interp_weight": {
+        "good": 0.1,
+        "caution": 0.01
+      },
+      "min_volume_ratio": {
+        "good": 0.05,
+        "caution": 0.01
+      },
+      "concave_cells": {
+        "good": 0.0,
+        "caution": 0.0
+      }
+    },
+    "relaxed": {
+      "maxNonOrtho": 70,
+      "maxBoundarySkewness": 25,
+      "maxInternalSkewness": 5,
+      "maxConcave": 85,
+      "minVol": 1e-13,
+      "minTetQuality": 1e-30,
+      "minArea": -1,
+      "minTwist": 0.001,
+      "minDeterminant": 0.0005,
+      "minFaceWeight": 0.02,
+      "minVolRatio": 0.005,
+      "minTriangleTwist": -1
+    },
+    "layering_relaxed": {
+      "maxNonOrtho": 80,
+      "maxInternalSkewness": 8
+    }
+  },
   "surface_check": {
-    "allow_open": false,
-    "check_self_intersection": true,
     "enabled": true,
     "enforce": false,
+    "check_self_intersection": true,
+    "allow_open": false,
     "max_illegal_triangles": 0,
     "max_unconnected_parts": 1
   },
-  "turbulence": {
-    "intensity": 0.005,
-    "model": "kOmegaSST",
-    "nut_ratio": 10
+  "potential_flow": {
+    "nNonOrthogonalCorrectors": 10
   },
-  "vehicle": {
-    "front_weight_pct": null,
-    "wheelbase": null
+  "fidelity": "standard",
+  "stl_names": [
+    "body"
+  ],
+  "domain_faces": {
+    "-x": "symmetry",
+    "+x": "farField",
+    "-y": "ground",
+    "+y": "farField",
+    "-z": "outlet",
+    "+z": "inlet"
   },
-  "wall_functions": {
-    "k": "kqRWallFunction",
-    "nut": "nutUSpaldingWallFunction",
-    "omega": "omegaWallFunction"
+  "domain_box": {
+    "min": [
+      0.0,
+      0.0,
+      -24.0
+    ],
+    "max": [
+      5.0,
+      5.0,
+      15.0
+    ]
+  },
+  "mesh_params": {
+    "base_cell_size": 0.1,
+    "surface_level": [
+      4,
+      5
+    ],
+    "edge_level": 6,
+    "distance_levels": [
+      [
+        0.025,
+        4
+      ],
+      [
+        0.08,
+        3
+      ]
+    ],
+    "refinement_regions": [
+      {
+        "name": "nearWakeBox",
+        "min": [
+          0.0,
+          -0.01,
+          -3.6
+        ],
+        "max": [
+          1.15,
+          1.25,
+          1.2
+        ],
+        "level": 3
+      },
+      {
+        "name": "farWakeBox",
+        "min": [
+          0.0,
+          -0.01,
+          -10.5
+        ],
+        "max": [
+          1.3,
+          1.4,
+          0.0
+        ],
+        "level": 1
+      }
+    ],
+    "grading": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "block_cells": [
+      50,
+      50,
+      390
+    ],
+    "nCellsBetweenLevels": 2,
+    "maxGlobalCells": 20000000,
+    "maxLocalCells": 2000000,
+    "minRefinementCells": 10,
+    "resolveFeatureAngle": 35,
+    "allowFreeStandingZoneFaces": true,
+    "grading_info": {
+      "mode": "off",
+      "grading": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "block_cells": [
+        50,
+        50,
+        390
+      ],
+      "uniform_cells": [
+        50,
+        50,
+        390
+      ],
+      "ratio": null,
+      "axes": {},
+      "cell_reduction": 0.0
+    }
   }
 }

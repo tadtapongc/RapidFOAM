@@ -167,26 +167,33 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "multiRegionFeatureSnap": False,
     },
 
-    # Boundary layers
+    # Boundary layers. The defaults below are tuned for robust boundary-layer
+    # coverage on real, complex geometry (multi-part cars): keep partial stacks
+    # (min_thickness_ratio < 1), allow a thicker layer (maxFaceThicknessRatio),
+    # a shorter stack (expansion_ratio) and a dedicated layer pass (two_pass).
     "layers": {
         "n_layers": 5,
-        "expansion_ratio": 1.2,
+        "expansion_ratio": 1.15,
         # relativeSizes=true: thicknesses are fractions of the local cell size
         # relativeSizes=false: thicknesses are absolute, in metres
         "relativeSizes": True,
         "first_layer_thickness": 0.3,   # fraction of cell (or metres if relativeSizes=false)
         "min_thickness": 0.05,          # same units as first_layer_thickness
+        # Fraction of the derived first layer used as minThickness. <1 lets snappy
+        # keep partial layer stacks instead of dropping them entirely, which is
+        # the main coverage lever on hard geometry.
+        "min_thickness_ratio": 0.35,
         "y_plus_target": None,          # absolute near-wall target; overrides first_layer_thickness
         "featureAngle": 170,
         "slipFeatureAngle": 30,
         "nGrow": 0,
-        "maxFaceThicknessRatio": 0.5,
+        "maxFaceThicknessRatio": 0.7,
         "nSmoothSurfaceNormals": 3,
-        "nSmoothThickness": 15,
+        "nSmoothThickness": 20,
         "nSmoothNormals": 3,
-        "nRelaxIter": 10,
+        "nRelaxIter": 15,
         "nBufferCellsNoExtrude": 0,
-        "nLayerIter": 50,
+        "nLayerIter": 75,
         "maxAlignedCells": 200000,
         "minMedialAxisAngle": 90,
         "maxThicknessToMedialRatio": 0.3,
@@ -196,16 +203,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "nRelaxedIter": 20,
         "ground_layers": False,
         "ground_n_layers": 2,
-        # Two-pass meshing: when true, the first snappyHexMesh run only
-        # castellates and snaps, and a second pass adds layers with the quality
-        # gate relaxed (system/snappyHexMeshDict_layering). Reaches much higher
-        # boundary-layer coverage on complex geometry at some quality cost.
-        "two_pass": False,
-        # Opt-in: when true and the requested y+ target cannot be built at the
-        # current surface resolution (snappy caps a layer at
-        # maxFaceThicknessRatio x the local face), raise maxFaceThicknessRatio
-        # and, if still needed, coarsen the finest surface level so the target
-        # is met instead of being clamped. Off by default (predictable).
+        # Two-pass meshing: pass 1 castellates and snaps, pass 2 adds layers with
+        # the quality gate relaxed (system/snappyHexMeshDict_layering) to reach
+        # much higher boundary-layer coverage on complex geometry. On by default
+        # (it costs ~30-80% more meshing time); set false for a single pass.
+        "two_pass": True,
+        # Opt-in target-matching tool: when true and the requested y+ target
+        # cannot be built at the current surface resolution, raise
+        # maxFaceThicknessRatio ('ratio') or also coarsen the finest surface
+        # level ('full') so the target is met instead of being clamped. Off by
+        # default (it is a coverage/target trade-off, not a coverage lever).
         "y_plus_fit": False,
     },
 
@@ -275,6 +282,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "minFaceWeight": 0.02,
             "minVolRatio": 0.005,
             "minTriangleTwist": -1,
+        },
+        # meshQualityControls for the two-pass layering pass
+        # (system/snappyHexMeshDict_layering). Bounded above the normal limits to
+        # recover coverage without the "disable everything" collapse. Override
+        # per case with mesh_quality.layering_relaxed.
+        "layering_relaxed": {
+            "maxNonOrtho": 80,
+            "maxInternalSkewness": 8,
         },
     },
 
@@ -527,10 +542,10 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         errors.append('layers.y_plus_fit must be false, "ratio", or "full"')
     if cfg.get("layers", {}).get("two_pass") is True:
         warnings.append(
-            "layers.two_pass is experimental: the layering pass disables the "
-            "mesh-quality gate, which can produce highly skewed cells. Taper the "
-            "limits in system/snappyHexMeshDict_layering against checkMesh before "
-            "production use."
+            "layers.two_pass is enabled: the layering pass uses a relaxed mesh-quality "
+            "gate (mesh_quality.layering_relaxed, default maxNonOrtho 80 / "
+            "maxInternalSkewness 8) to reach higher boundary-layer coverage. Verify the "
+            "result with checkMesh and taper the limits back if quality degrades."
         )
     verdict_bands = cfg.get("mesh_quality", {}).get("verdict_bands")
     if verdict_bands is not None:

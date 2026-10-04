@@ -351,8 +351,10 @@ so the mesh stays predictable:
 | `mesh_params.auto_size` | `false` | Raise surface/edge refinement so the smallest STL feature is resolved (capped by `max_surface_level`) |
 | `mesh_params.auto_feature_angle` | `false` | Derive `resolveFeatureAngle` from the STL crease (normal-angle) distribution |
 | `mesh_params.grading` | `"off"` | Grade the background grid toward the ground/symmetry planes (fewer cells, slightly higher non-orthogonality/aspect ratio) |
-| `layers.two_pass` | `false` | Two-pass layering: a second `snappyHexMesh` pass adds layers with the *relaxed* quality limits (`system/snappyHexMeshDict_layering`, defaulting to `mesh_quality.relaxed`; tune with `mesh_quality.layering_relaxed`) — higher boundary-layer coverage at some quality cost. Verify with `checkMesh` |
-| `layers.y_plus_fit` | `false` | Recalculate a clamped y+ target instead of clamping: `"ratio"` raises `maxFaceThicknessRatio` only; `"full"` also coarsens the finest surface level |
+| `layers.two_pass` | **`true`** | Two-pass layering: a second `snappyHexMesh` pass adds layers with the relaxed layering gate (`system/snappyHexMeshDict_layering`, default `{maxNonOrtho 80, maxInternalSkewness 8}`; tune with `mesh_quality.layering_relaxed`) — much higher boundary-layer coverage on complex geometry. Costs ~30–80% more meshing time; set `false` for a single pass |
+| `layers.min_thickness_ratio` | **`0.35`** | Fraction of the derived first layer used as `minThickness`. Below 1.0 lets snappy keep partial layer stacks instead of dropping them — the main coverage lever on hard geometry (thinner/partial prisms). `1.0` restores the all-or-nothing full-first-layer gate |
+| `layers.maxFaceThicknessRatio` | **`0.7`** | Maximum layer thickness as a fraction of the local face. Higher = thicker allowed layer = better coverage and y+ reachability |
+| `layers.y_plus_fit` | `false` | Recalculate a clamped y+ target instead of clamping: `"ratio"` raises `maxFaceThicknessRatio` only; `"full"` also coarsens the finest surface level. Note this is a *target-matching* tool: it can raise the `min_thickness` floor and reduce coverage, so it is off by default and kept separate from the coverage knobs |
 
 When `checkMesh` flags a metric, change **one** thing and re-mesh:
 

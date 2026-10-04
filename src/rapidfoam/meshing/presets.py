@@ -19,7 +19,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "surface_level": [3, 4],       # 18.75mm - 9.38mm surface cells at ~3m model
         "edge_level": 5,               # 4.69mm at edges
         "n_layers": 5,
-        "expansion_ratio": 1.2,
+        "expansion_ratio": 1.15,
         "y_plus_target": 50,
         "ground_layers": False,
         "end_time": 800,
@@ -29,8 +29,8 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "resolveFeatureAngle": 35,
         "nSolveIter": 100,             # snap iterations
         "nFeatureSnapIter": 10,
-        "nLayerIter": 50,
-        "nRelaxIter_layers": 10,
+        "nLayerIter": 75,
+        "nRelaxIter_layers": 15,
         "slurm_time": "04:00:00",
         "slurm_mem_per_cpu": "2G",
         # Feature-based auto-sizing: refine until the smallest feature spans
@@ -61,7 +61,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "surface_level": [4, 5],       # 6.25mm bodywork, 3.125mm fine features
         "edge_level": 6,               # 1.56mm at sharp aero edges (wings/gurneys)
         "n_layers": 8,
-        "expansion_ratio": 1.2,
+        "expansion_ratio": 1.15,
         "y_plus_target": 30,
         "ground_layers": False,
         "end_time": 1500,
@@ -71,8 +71,8 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "resolveFeatureAngle": 35,     # Prevents general body curvature from ballooning to max level
         "nSolveIter": 200,
         "nFeatureSnapIter": 15,
-        "nLayerIter": 50,
-        "nRelaxIter_layers": 10,
+        "nLayerIter": 75,
+        "nRelaxIter_layers": 15,
         "slurm_time": "08:00:00",
         "slurm_mem_per_cpu": "2G",
         # Feature-based auto-sizing: refine until the smallest feature spans
@@ -113,8 +113,8 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "resolveFeatureAngle": 30,
         "nSolveIter": 300,
         "nFeatureSnapIter": 20,
-        "nLayerIter": 50,
-        "nRelaxIter_layers": 10,
+        "nLayerIter": 75,
+        "nRelaxIter_layers": 15,
         "slurm_time": "14:00:00",
         "slurm_mem_per_cpu": "4G",
         # Feature-based auto-sizing: refine until the smallest feature spans
@@ -180,9 +180,9 @@ def apply_fidelity_preset(
         )
 
     if not is_set("layers", "nLayerIter"):
-        layers["nLayerIter"] = preset.get("nLayerIter", 50)
+        layers["nLayerIter"] = preset.get("nLayerIter", 75)
     if not is_set("layers", "nRelaxIter"):
-        layers["nRelaxIter"] = preset.get("nRelaxIter_layers", 10)
+        layers["nRelaxIter"] = preset.get("nRelaxIter_layers", 15)
     if not is_set("layers", "ground_layers"):
         layers["ground_layers"] = preset.get("ground_layers", False)
     if not is_set("solver", "write_interval"):

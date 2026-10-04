@@ -192,15 +192,19 @@ The universal default tree. Sections: `case_name`, `stl_files`, `flow` (`velocit
 `relaxation`, `wall_functions`, `snap`, `layers`, `feature_extract`, **`field_outputs`**
 (222, [dev]), `mesh_quality`, `surface_check`, `potential_flow`.
 
-Notable `layers` defaults include `ground_layers False`, `ground_n_layers 2`, `two_pass
-False` (203), and **[dev]** `y_plus_fit False` (209). The **[dev]** `field_outputs` block is:
+Notable `layers` defaults (**[dev]** coverage-first tuning): `expansion_ratio 1.15`,
+`min_thickness_ratio 0.35`, `maxFaceThicknessRatio 0.7`, `nSmoothThickness 20`,
+`nRelaxIter 15`, `nLayerIter 75`, `ground_layers False`, `ground_n_layers 2`,
+`two_pass True`, `y_plus_fit False`. `mesh_quality.layering_relaxed` defaults to
+`{"maxNonOrtho": 80, "maxInternalSkewness": 8}` (the two-pass layer gate). The **[dev]**
+`field_outputs` block is:
 
 ```python
 "field_outputs": {
     "wall_shear_stress": True,
     "y_plus": True,
     "field_min_max": True,
-    "surface_field_value": True,
+    "surface_field_value": False,   # opt-in: aborts if a patch is missing
     "vorticity": False,
 },
 ```
@@ -581,15 +585,28 @@ insufficient. `true` is an alias for `"full"`. Provenance: `fit_applied`, `fit_m
 `fit_ratio`, `fit_level`. CLI dry-run prints `y+ fit (<mode>): …`.
 
 ### 13.3 Two-pass layering gate
-`layers.two_pass` writes `system/snappyHexMeshDict_layering` whose `meshQualityControls`
-now use the configured `mesh_quality.relaxed` values (a real relaxation), overridable per case
-with `mesh_quality.layering_relaxed`. The single-pass dict is unchanged.
+`layers.two_pass` is **on by default**. It writes `system/snappyHexMeshDict_layering` whose
+`meshQualityControls` use `mesh_quality.layering_relaxed` `{maxNonOrtho 80,
+maxInternalSkewness 8}` (a bounded relaxation, not a disable), overridable per case. The
+single-pass `snappyHexMeshDict` is unchanged.
 
-### 13.4 Interpreting the diagnostics
+### 13.4 Coverage-first layer defaults
+The shipped defaults are tuned for boundary-layer coverage on real, complex geometry:
+`min_thickness_ratio 0.35` (keep partial stacks), `maxFaceThicknessRatio 0.7` (thicker allowed
+layer), `expansion_ratio 1.15` (shorter stack), `nSmoothThickness 20` / `nRelaxIter 15` /
+`nLayerIter 75`, `two_pass true`. `y_plus_fit` is deliberately **off**: it is a
+*target-matching* tool that raises `maxFaceThicknessRatio` only as needed to hit y+ and can
+lift the `min_thickness` floor, so it trades coverage for the target rather than raising it.
+
+### 13.5 Interpreting the diagnostics
 - `p` and `wallShearStress` are **kinematic** (×ρ for Pa); `Cp = p / (½U∞²)`.
 - `fieldMinMax` gives the max-y+ **coordinate** (the tail location); the per-patch min–max
   comes from `yPlus.dat`; the `y+ range` column shows the spread.
-- A thicker first layer (fit-on) generally **lowers** layer coverage on hard geometry.
+- Coverage drives the y+ tail: a face with **no layers** gets a coarse first cell, so its local
+  y+ is far above target. Raising coverage shrinks the max y+.
+- **Coverage vs y+ trade:** both scale with the first-layer thickness δ₁. `min_thickness_ratio`
+  and `maxFaceThicknessRatio` let you raise coverage *without* moving y+; `y_plus_fit` /
+  `surface_level` move the target and thus trade against coverage.
 
 ---
 

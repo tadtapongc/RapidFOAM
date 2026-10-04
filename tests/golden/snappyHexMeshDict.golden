@@ -15,7 +15,7 @@ FoamFile
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 castellatedMesh true;
 snap            true;
-addLayers       true;
+addLayers       false;
 
 geometry
 {
@@ -74,19 +74,19 @@ addLayersControls
     {
         "body" { nSurfaceLayers 8; }
     }
-    expansionRatio          1.2;
+    expansionRatio          1.15;
     firstLayerThickness     0.0011805798182942158;
-    minThickness            0.0011805798182942158;
+    minThickness            0.0004132029364029755;
     nGrow                   0;
     featureAngle            170;
     slipFeatureAngle        30;
-    maxFaceThicknessRatio   0.5;
+    maxFaceThicknessRatio   0.7;
     nSmoothSurfaceNormals   3;
-    nSmoothThickness        15;
+    nSmoothThickness        20;
     nSmoothNormals          3;
-    nRelaxIter              10;
+    nRelaxIter              15;
     nBufferCellsNoExtrude   0;
-    nLayerIter              50;
+    nLayerIter              75;
     maxAlignedCells         200000;
     minMedialAxisAngle      90;
     maxThicknessToMedialRatio 0.3;
