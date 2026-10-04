@@ -769,11 +769,10 @@
                     <label for="cfg-override-layer-yplusfit">Fit y+ to Target</label>
                     <select id="cfg-override-layer-yplusfit" class="input">
                       <option value="auto" selected>Auto (preset: off)</option>
-                      <option value="full">On — ratio + surface level</option>
-                      <option value="ratio">On — ratio only (keep surface level)</option>
+                      <option value="on">On</option>
                       <option value="off">Off</option>
                     </select>
-                    <span class="field-hint">When the target y+ is unreachable at the current surface resolution: "ratio" raises maxFaceThicknessRatio (up to 0.8) only; "full" also coarsens the finest surface level if the cap is not enough. Falls back to the plain clamp when still unreachable.</span>
+                    <span class="field-hint">When the target y+ is unreachable because snappy caps a layer at maxFaceThicknessRatio x the local face, raise maxFaceThicknessRatio (up to 0.8, surface resolution untouched) so the target is met. Falls back to the plain clamp when still unreachable.</span>
                   </div>
 
                   <div class="form-group col-span-2">
@@ -850,7 +849,6 @@
                   <div class="form-group"><label><input type="checkbox" id="cfg-field-wall-shear" checked> Wall shear stress field</label></div>
                   <div class="form-group"><label><input type="checkbox" id="cfg-field-yplus" checked> y+ field</label></div>
                   <div class="form-group"><label><input type="checkbox" id="cfg-field-minmax" checked> Field min/max reductions (max y+ location)</label></div>
-                  <div class="form-group"><label><input type="checkbox" id="cfg-field-surfacevalue"> Per-patch wall-pressure stats (patch must exist)</label></div>
                   <div class="form-group"><label><input type="checkbox" id="cfg-field-vorticity"> Vorticity field (opt-in)</label></div>
 
                 </div>

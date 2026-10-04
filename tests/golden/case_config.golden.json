@@ -162,7 +162,6 @@
       "clamp_level": 5,
       "clamp_cell_m": 0.003125,
       "fit_applied": false,
-      "fit_mode": null,
       "fit_ratio": null,
       "fit_level": null,
       "ground_layers": false,
@@ -179,7 +178,6 @@
     "wall_shear_stress": true,
     "y_plus": true,
     "field_min_max": true,
-    "surface_field_value": false,
     "vorticity": false
   },
   "mesh_quality": {

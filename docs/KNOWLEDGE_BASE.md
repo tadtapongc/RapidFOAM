@@ -204,7 +204,6 @@ Notable `layers` defaults (**[dev]** coverage-first tuning): `expansion_ratio 1.
     "wall_shear_stress": True,
     "y_plus": True,
     "field_min_max": True,
-    "surface_field_value": False,   # opt-in: aborts if a patch is missing
     "vorticity": False,
 },
 ```
@@ -220,7 +219,7 @@ Imports `core.axes`, `core.faces`, `meshing.presets` lazily. Checks containers; 
 `stl_files`/`case_name`/`fidelity`; axis independence; `domain_faces` completeness and
 ground/symmetry axis placement; numeric bounds across all sections; `surface_level` ordering;
 mesh-quality `verdict_bands` shape. **[dev]** additions:
-- `layers.y_plus_fit` (516-520) must be `bool` or `"ratio"`/`"full"`.
+- `layers.y_plus_fit` must be a `bool`.
 - two-pass (521) emits the experimental warning.
 - `mesh_quality.layering_relaxed` (543-550) must be an object of finite numbers.
 - `field_outputs` (560-567) must be an object of booleans.
@@ -368,8 +367,6 @@ At solve time the time dirs also receive the optional diagnostic fields (`wallSh
   - `yPlus { writeFields <y_plus>; }`
   - `wallShearStress` (surface field, restricted to the body patches)
   - `fieldMinMax { fields (yPlus); mode component; writeLocation true; }` → max + location
-  - `wallPressure_{min,max,average}_<patch>` (`surfaceFieldValue` on `p`; **requires
-    `writeFields false;`** or OpenFOAM v2606 aborts)
   - `vorticity` (opt-in)
   There is **no `wallPressure` function object** — the type does not exist in v2606; wall
   pressure is the `p` boundary.
@@ -437,10 +434,6 @@ fields.
 - `find_field_min_max_files` (32); `parse_field_min_max` (40) — v2606 columns
   `Time field min location(min) [processor] max location(max) [processor]`; `location` is the
   max location; later rows win. `read_field_min_max` (94).
-- `find_surface_field_value_files` (105); `surface_field_value_name` (113) — object directory
-  name; `parse_surface_field_value(text, object_name)` (119) — object name encodes
-  `wallPressure_<op>_<patch>`; value is the last numeric token. `read_surface_field_value`
-  (148).
 
 ---
 
@@ -489,7 +482,7 @@ is side-effect-free).
   per-component drag/downforce from parsed tabular segments. `_read_remote_telemetry` (300)
   globs `log.snappyHexMesh*` (so two-pass `log.snappyHexMesh.layering` is fetched),
   `postProcessing/forces_*/*/force.dat`, `postProcessing/fieldMinMax/*/fieldMinMax.dat` and
-  `postProcessing/*/*/surfaceFieldValue.dat`.
+  
 - `services/geometry.py` (46) — `_local_stl_exists`; `layer_preview` (19) builds a plan and
   returns `layer_spec.resolved` (+ `auto_size`/`feature_angle`/`surface_level`/`edge_level`,
   and the **[dev]** fit provenance).
@@ -502,7 +495,7 @@ is side-effect-free).
 | `GET /api/telemetry/export` | 397 | CSV/JSON; full history (`max_points=0`) |
 | `GET /api/telemetry/residuals` | 456 | |
 | `GET /api/telemetry/solver` | 569 | continuity, linear iters, rate, ETA |
-| `GET /api/telemetry/mesh` | 654 | checkMesh + layers + y+; **[dev]** adds `field_min_max`, `surface_values`, `failures` |
+| `GET /api/telemetry/mesh` | 654 | checkMesh + layers + y+; adds `field_min_max`, `failures` |
 | `GET /api/telemetry/surface` | 756 | surfaceCheck |
 | `GET /api/telemetry/logs` | 814 | whitelisted `log_type`, ≤2000 lines |
 
@@ -570,19 +563,18 @@ markers), `read_remote_bundle`, connect (key data → key_path → password → 
 | `wall_shear_stress` | true | `wallShearStress` surface field | skin friction + separation |
 | `y_plus` | true | `yPlus` field (`writeFields true`) | near-wall map |
 | `field_min_max` | true | `fieldMinMax` on `yPlus` | max value **+ location** |
-| `surface_field_value` | true | `wallPressure_{min,max,average}_<patch>` | per-patch `p` stats |
 | `vorticity` | false | `vorticity` volume field | wake/vortex structure |
 
-`surfaceFieldValue` requires `writeFields false;` in v2606. There is no `wallPressure` FO
-(unknown type in v2606 — historically caused a load error). `fieldMinMax`/`surfaceFieldValue`
-are parsed by `postproc/fielddata.py` and surfaced through `/api/telemetry/mesh`
-(`field_min_max`, `surface_values`) and the Studio mesh panel.
+There is no `wallPressure` FO (unknown type in v2606 — historically caused a load error) and
+no `surfaceFieldValue` wall-pressure stats (removed: it aborted the solve on a missing patch).
+`fieldMinMax` is parsed by `postproc/fielddata.py` and surfaced through `/api/telemetry/mesh`
+(`field_min_max`) and the Studio mesh panel (max-y+ location).
 
 ### 13.2 `layers.y_plus_fit`
-`false` (default) → clamp + warn. `"ratio"` → raise `maxFaceThicknessRatio` up to 0.8, never
-touch `surface_level`. `"full"` → also coarsen the finest surface level if the cap is
-insufficient. `true` is an alias for `"full"`. Provenance: `fit_applied`, `fit_mode`,
-`fit_ratio`, `fit_level`. CLI dry-run prints `y+ fit (<mode>): …`.
+`false` (default) → clamp + warn. `true` → raise `maxFaceThicknessRatio` up to 0.8 (surface
+resolution untouched) so the target is met; falls back to the plain clamp when the cap still
+cannot build the layer. Provenance: `fit_applied`, `fit_ratio`, `fit_level`. CLI dry-run prints
+`y+ fit: maxFaceThicknessRatio -> …`.
 
 ### 13.3 Two-pass layering gate
 `layers.two_pass` is **on by default**. It writes `system/snappyHexMeshDict_layering` whose
@@ -623,8 +615,8 @@ lift the `min_thickness` floor, so it trades coverage for the target rather than
 | **Symmetry / half model** | `domain_faces` symmetry; forces double in-plane, normal cancels | `core/caseconfig.py:75` |
 | **GROUND_EMBED** | 0.01 m below the configured ground plane | `meshing/domain.py:14` |
 | **Two-pass layering** | pass 1 castellate+snap, pass 2 add layers with the relaxed gate | `writers/snappy.py` |
-| **y+ fit** | recalculate a clamped y+ target (`ratio`/`full`) | `meshing/layers.py:24` |
-| **fieldMinMax / surfaceFieldValue** | small text reductions read by the telemetry | `postproc/fielddata.py` |
+| **y+ fit** | recalculate a clamped y+ target by raising `maxFaceThicknessRatio` | `meshing/layers.py` |
+| **fieldMinMax** | small text reduction (max y+ value + location) read by the telemetry | `postproc/fielddata.py` |
 | **Convergence band** | ±0.5% relative stdev over the last 200 iters after ≥300 | `postproc/forces.py:473` |
 | **Force layouts** | ESI tabular (9 cols) vs classic pressure+viscous (12 cols) | `postproc/forces.py:126` |
 
@@ -677,7 +669,7 @@ README table for the full list, including the **[dev]** `layers.y_plus_fit`, `la
 | `test_casegen_builder.py` | `build_case` + **[dev]** solver field-output FO blocks |
 | `test_casegen_golden.py` | Golden snapshot contract |
 | `test_checkmesh.py` | checkMesh parsing/verdicts + **[dev]** failure reasons |
-| `test_fielddata.py` | **[dev]** fieldMinMax/surfaceFieldValue parsers |
+| `test_fielddata.py` | `fieldMinMax` parser |
 | `test_grading.py` | blockMesh grading |
 | `test_layers.py` | y+ → layers, ground policy, two-pass gate, **[dev]** y+ fit |
 | `test_mesh_plan.py` | plan purity/determinism |
@@ -746,8 +738,8 @@ scaling, unavailable viewer and `dispose`.
 - Untrusted STL parsing in the browser (Three.js `STLLoader` trusts the binary face count).
 - `load_axis_config` / `_load_case_configs` read raw JSON, not the override-aware reader.
 - Architecture test blind spot: relative/dynamic imports are not scanned.
-- **[dev]** `surfaceFieldValue` requires `writeFields`; `fieldMinMax`/`wallPressure` FO types
-  are version-sensitive (wallPressure absent in v2606).
+- `fieldMinMax`/`wallPressure` FO types are version-sensitive (wallPressure absent in v2606);
+  `surfaceFieldValue` was removed (aborted the solve on a missing patch).
 
 ### 19.2 Edge cases baked in
 - Restart/re-queue: parsers clear samples when `Time` decreases.
@@ -793,10 +785,10 @@ scaling, unavailable viewer and `dispose`.
   `min_thickness_ratio` removed; architecture refactor into bounded contexts; SLURM time/mem
   follow the preset; full-car symmetry fix; telemetry honours overrides and exports full
   history.
-- **`dev` (unreleased)**: **[dev]** opt-in `layers.y_plus_fit` (`ratio`/`full`); two-pass
+- **`dev` (unreleased)**: opt-in `layers.y_plus_fit` (boolean); two-pass
   layering gate softened to `mesh_quality.relaxed` (+ `layering_relaxed` override); diagnostic
   `field_outputs` (wall shear, y+ field, `fieldMinMax` max-y+ location, per-patch wall-pressure
-  `surfaceFieldValue`, opt-in `vorticity`); Studio "Diagnostic Field Outputs" controls; per-part
+  opt-in `vorticity`); Studio "Diagnostic Field Outputs" controls; per-part
   `forces_<part>` build-up table; checkMesh failure-reason detail; per-patch y+ min–max range;
   remote bundle now fetches the layering log and the field reductions; `wallPressure` FO removed
   (unknown in v2606).

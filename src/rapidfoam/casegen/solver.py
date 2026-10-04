@@ -77,31 +77,6 @@ def write_control_dict(cfg: dict[str, Any], case_dir: Path) -> None:
             "        writeLocation   true;\n"
             "    }\n"
         )
-    # Per-patch wall-pressure statistics (min/max/average). surfaceFieldValue is
-    # the correct reduction for a surface field, but it ABORTS the run if a
-    # referenced patch does not exist (e.g. a fully-internal STL part), so this
-    # is opt-in: true = all STL patches, or an explicit list of existing patches.
-    sfv = field_outputs.get("surface_field_value", False)
-    if sfv is True:
-        sfv_patches = list(stl_names)
-    elif isinstance(sfv, (list, tuple)):
-        sfv_patches = [str(p) for p in sfv]
-    else:
-        sfv_patches = []
-    for _patch in sfv_patches:
-        for _op in ("min", "max", "average"):
-            wall_fields += (
-                f"\n    wallPressure_{_op}_{_patch}\n    {{\n"
-                "        type            surfaceFieldValue;\n"
-                "        libs            (fieldFunctionObjects);\n"
-                "        writeControl    writeTime;\n"
-                "        writeFields     false;\n"
-                f"        operation       {_op};\n"
-                "        fields          (p);\n"
-                "        regionType      patch;\n"
-                f"        name            {_patch};\n"
-                "    }\n"
-            )
     # Opt-in volume field for wake/vortex visualization in ParaView.
     if bool(field_outputs.get("vorticity", False)):
         wall_fields += (

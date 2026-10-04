@@ -526,20 +526,16 @@ test('buildConfigFromVisualForm emits two_pass on/off/auto', async () => {
 });
 
 // ------------------------------------------- y+ fit
-test('buildConfigFromVisualForm emits y_plus_fit full/ratio/off/auto', async () => {
+test('buildConfigFromVisualForm emits y_plus_fit on/off/auto', async () => {
   const app = await makeApp(buildStubBody());
   installFormStubs(app);
   seedForm(app);
   const sel = app._window.document.getElementById('cfg-override-layer-yplusfit');
 
-  sel.value = 'full';
+  sel.value = 'on';
   app.activeConfig = { case_name: 'c' };
   app.buildConfigFromVisualForm();
-  assert.equal(app.activeConfig.overrides.layers.y_plus_fit, 'full');
-
-  sel.value = 'ratio';
-  app.buildConfigFromVisualForm();
-  assert.equal(app.activeConfig.overrides.layers.y_plus_fit, 'ratio');
+  assert.equal(app.activeConfig.overrides.layers.y_plus_fit, true);
 
   sel.value = 'off';
   app.buildConfigFromVisualForm();
@@ -556,7 +552,6 @@ test('buildConfigFromVisualForm writes field_outputs from the checkboxes', async
     <input type="checkbox" id="cfg-field-wall-shear" checked>
     <input type="checkbox" id="cfg-field-yplus" checked>
     <input type="checkbox" id="cfg-field-minmax">
-    <input type="checkbox" id="cfg-field-surfacevalue" checked>
     <input type="checkbox" id="cfg-field-vorticity" checked>
   `);
   installFormStubs(app);
@@ -567,7 +562,6 @@ test('buildConfigFromVisualForm writes field_outputs from the checkboxes', async
     wall_shear_stress: true,
     y_plus: true,
     field_min_max: false,
-    surface_field_value: true,
     vorticity: true,
   });
 });
@@ -589,16 +583,12 @@ test('renderLayerPreview reports an applied y+ fit', async () => {
     y_plus_effective: 30,
     stack: 0.01,
     fit_applied: true,
-    fit_mode: 'ratio',
     fit_ratio: 0.69,
     fit_level: 4,
   });
   const text = app._window.document.getElementById('cfg-layer-preview').textContent;
   assert.ok(text.includes('y+ fit'), text);
-  assert.ok(text.includes('ratio'), text);
   assert.ok(text.includes('0.69'), text);
-  assert.ok(text.includes('level 4'), text);
-  assert.ok(text.includes('surface level 4'), text);
 });
 
 test('renderLayerPreview shows the effective layer controls', async () => {
@@ -738,7 +728,7 @@ test('renderMeshQuality shows metrics, coverage and an OK badge', async () => {
   assert.ok(ct.includes('98.6%'));
 });
 
-test('renderMeshQuality surfaces field diagnostics (max y+ location, wall pressure)', async () => {
+test('renderMeshQuality surfaces field diagnostics (max y+ location)', async () => {
   const app = await makeApp(MESH_BODY);
   app.renderMeshQuality({
     ok: true,
@@ -751,14 +741,12 @@ test('renderMeshQuality surfaces field diagnostics (max y+ location, wall pressu
     cell_types: {},
     y_plus: { available: true, target: 50, patches: {}, missed: [], note: 'all patches met' },
     field_min_max: { yPlus: { max: 242.0, location: [1.0, 0.2, -0.3] } },
-    surface_values: { max_geometry: { operation: 'max', patch: 'geometry', value: 0.85 } },
     note: 'mesh quality OK',
   });
   const text = app._window.document.getElementById('mesh-quality-note-yplus').textContent;
   assert.ok(text.includes('Field diagnostics'), text);
   assert.ok(text.includes('max y+ 242.0'), text);
   assert.ok(text.includes('(1.00, 0.20, -0.30)'), text);
-  assert.ok(text.includes('wall p max geometry 0.850'), text);
 });
 
 test('renderMeshQuality surfaces failed-check detail', async () => {

@@ -44,11 +44,8 @@ from rapidfoam.postproc.surfacecheck import (
 from rapidfoam.postproc.yplus import find_yplus_files, read_yplus
 from rapidfoam.postproc.fielddata import (
     find_field_min_max_files,
-    find_surface_field_value_files,
     parse_field_min_max,
-    parse_surface_field_value,
     read_field_min_max,
-    read_surface_field_value,
 )
 from rapidfoam.core import caseconfig
 from rapidfoam.web.services.telemetry import (
@@ -701,7 +698,6 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
     yplus_files: list[Path] = []
     yplus_data: dict[str, dict[str, float]] = {}
     field_min_max: dict[str, Any] = {}
-    surface_values: dict[str, Any] = {}
 
     # 1. Remote cluster first if connected (shared telemetry bundle).
     if ssh_client.is_connected:
@@ -716,12 +712,6 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
         for path, text in bundle.items():
             if path.endswith("/fieldMinMax.dat"):
                 field_min_max.update(parse_field_min_max(text))
-            elif path.endswith("/surfaceFieldValue.dat"):
-                parts = path.split("/")
-                object_name = parts[-3] if len(parts) >= 3 else ""
-                parsed = parse_surface_field_value(text, object_name)
-                if parsed is not None:
-                    surface_values[f"{parsed['operation']}_{parsed['patch']}"] = parsed
         cfg_text = next(
             (value for path, value in bundle.items() if path.endswith("/case_config.json")), ""
         )
@@ -745,11 +735,8 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
         yplus_files = find_yplus_files(local_case)
         if yplus_files:
             yplus_data = read_yplus(yplus_files)
-    if local_case.is_dir():
-        if not field_min_max:
-            field_min_max = read_field_min_max(find_field_min_max_files(local_case))
-        if not surface_values:
-            surface_values = read_surface_field_value(find_surface_field_value_files(local_case))
+    if local_case.is_dir() and not field_min_max:
+        field_min_max = read_field_min_max(find_field_min_max_files(local_case))
     if config_dict is None:
         config_dict = caseconfig.read_case_config(
             config_path=str(PROJECT_ROOT / "configs" / f"{case_name}.json"),
@@ -782,7 +769,6 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
     yplus_target = _yplus_target_from_config(config_dict)
     summary["y_plus"] = _summarise_yplus(yplus_data, yplus_target)
     summary["field_min_max"] = field_min_max
-    summary["surface_values"] = surface_values
 
     return {"has_data": True, "case_name": case_name, **summary}
 

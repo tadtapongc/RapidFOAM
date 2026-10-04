@@ -224,16 +224,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # Diagnostic surface/field outputs for ParaView inspection of the spatial
     # load map (wall shear stress, the wall pressure as the p boundary) and the
-    # y+ field, plus small text reductions (fieldMinMax, surfaceFieldValue) the
-    # telemetry can read. Cheap enough to leave on; set a flag false to suppress.
+    # y+ field, plus the fieldMinMax text reduction (max y+ value + location)
+    # the telemetry can read. Cheap enough to leave on; set a flag false to
+    # suppress.
     "field_outputs": {
         "wall_shear_stress": True,
         "y_plus": True,
         "field_min_max": True,
-        # Opt-in: surfaceFieldValue aborts the solve if a referenced patch does
-        # not exist (e.g. a fully-internal STL part), so this is off by default.
-        # Set to true (all STL patches) or a list of patch names that exist.
-        "surface_field_value": False,
         "vorticity": False,
     },
 
@@ -536,10 +533,8 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         if not finite(min_ratio) or min_ratio <= 0 or min_ratio > 1.0:
             errors.append("layers.min_thickness_ratio must be a finite number in (0, 1]")
     y_plus_fit = cfg.get("layers", {}).get("y_plus_fit")
-    if y_plus_fit is not None and not (
-            isinstance(y_plus_fit, bool)
-            or (isinstance(y_plus_fit, str) and y_plus_fit.strip().lower() in ("ratio", "full"))):
-        errors.append('layers.y_plus_fit must be false, "ratio", or "full"')
+    if y_plus_fit is not None and not isinstance(y_plus_fit, bool):
+        errors.append("layers.y_plus_fit must be true or false")
     if cfg.get("layers", {}).get("two_pass") is True:
         warnings.append(
             "layers.two_pass is enabled: the layering pass uses a relaxed mesh-quality "
@@ -586,10 +581,6 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         for key in ("wall_shear_stress", "y_plus", "field_min_max", "vorticity"):
             if key in field_outputs and not isinstance(field_outputs[key], bool):
                 errors.append(f"field_outputs.{key} must be true or false")
-        sfv = field_outputs.get("surface_field_value")
-        if sfv is not None and not isinstance(sfv, bool) and not (
-                isinstance(sfv, (list, tuple)) and all(isinstance(p, str) for p in sfv)):
-            errors.append("field_outputs.surface_field_value must be true, false, or a list of patch names")
     for section, keys in {
         "parallel": ("n_procs",), "slurm": ("nodes", "cpus_per_task"),
         "mesh_params": ("maxGlobalCells", "maxLocalCells", "nCellsBetweenLevels"),

@@ -437,7 +437,6 @@ async def _do_remote_telemetry_read(case_name: str, key: str) -> dict[str, str]:
         # Field diagnostics (small text reductions): max y+ location and
         # per-patch wall-pressure stats.
         (f"cases/{case_name}/postProcessing/fieldMinMax/*/fieldMinMax.dat", None),
-        (f"cases/{case_name}/postProcessing/*/*/surfaceFieldValue.dat", None),
         (f"cases/{case_name}/case_config.json", None),
     ], report=report)
     _remote_telemetry_status[key] = report

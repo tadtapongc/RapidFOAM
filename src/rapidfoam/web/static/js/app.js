@@ -665,9 +665,7 @@ class CFDApp {
     const twoPassMode = layers?.two_pass === true ? 'on' : (layers?.two_pass === false ? 'off' : 'auto');
     this.setSelectValue('cfg-override-layer-twopass', twoPassMode);
     const yPlusFitValue = layers?.y_plus_fit;
-    const yPlusFitMode = (yPlusFitValue === true || yPlusFitValue === 'full')
-      ? 'full'
-      : (yPlusFitValue === 'ratio' ? 'ratio' : (yPlusFitValue === false ? 'off' : 'auto'));
+    const yPlusFitMode = yPlusFitValue === true ? 'on' : (yPlusFitValue === false ? 'off' : 'auto');
     this.setSelectValue('cfg-override-layer-yplusfit', yPlusFitMode);
     this.setVal('cfg-override-layer-yplus', layers?.y_plus_target ?? '');
     this.setVal('cfg-override-layer-nlayers', layers?.n_layers ?? '');
@@ -691,7 +689,6 @@ class CFDApp {
     this.setCheck('cfg-field-wall-shear', fieldOut.wall_shear_stress !== false);
     this.setCheck('cfg-field-yplus', fieldOut.y_plus !== false);
     this.setCheck('cfg-field-minmax', fieldOut.field_min_max !== false);
-    this.setCheck('cfg-field-surfacevalue', fieldOut.surface_field_value === true);
     this.setCheck('cfg-field-vorticity', fieldOut.vorticity === true);
 
     this.updateOverridePlaceholders(fidelity);
@@ -969,8 +966,7 @@ class CFDApp {
     else if (twoPassMode === 'off') layersOverrides.two_pass = false;
     else delete layersOverrides.two_pass;
     const yPlusFitMode = this.getVal('cfg-override-layer-yplusfit') || 'auto';
-    if (yPlusFitMode === 'full') layersOverrides.y_plus_fit = 'full';
-    else if (yPlusFitMode === 'ratio') layersOverrides.y_plus_fit = 'ratio';
+    if (yPlusFitMode === 'on') layersOverrides.y_plus_fit = true;
     else if (yPlusFitMode === 'off') layersOverrides.y_plus_fit = false;
     else delete layersOverrides.y_plus_fit;
     if (Object.keys(layersOverrides).length > 0) overrides.layers = layersOverrides;
@@ -1039,7 +1035,6 @@ class CFDApp {
         wall_shear_stress: this.getCheck('cfg-field-wall-shear'),
         y_plus: this.getCheck('cfg-field-yplus'),
         field_min_max: this.getCheck('cfg-field-minmax'),
-        surface_field_value: this.getCheck('cfg-field-surfacevalue'),
         vorticity: this.getCheck('cfg-field-vorticity'),
       };
     }
@@ -1378,9 +1373,7 @@ class CFDApp {
     if (p.ground_layers_note) text += ` | ground layers ${p.ground_layers_note}`;
     if (p.fit_applied) {
       const ratio = p.fit_ratio != null ? p.fit_ratio : '—';
-      const level = p.fit_level != null ? p.fit_level : '—';
-      const mode = p.fit_mode ? ` (${p.fit_mode})` : '';
-      text += ` | y+ fit${mode}: maxFaceThicknessRatio ${ratio}, surface level ${level}`;
+      text += ` | y+ fit: maxFaceThicknessRatio ${ratio}`;
     }
     el.textContent = text;
     this.renderAutoSizePreview(auto, fangle);
@@ -1450,7 +1443,6 @@ class CFDApp {
     ['cfg-field-wall-shear', 'cfg-field-yplus', 'cfg-field-minmax'].forEach(
       (id) => this.setCheck(id, true),
     );
-    this.setCheck('cfg-field-surfacevalue', false);
     this.setCheck('cfg-field-vorticity', false);
     this.updateLayerModeUI();
     const preview = document.getElementById('cfg-layer-preview');
@@ -3627,7 +3619,7 @@ class CFDApp {
         }).join('');
       }
     }
-    // Spatial field diagnostics: location of the max y+ and per-patch wall pressure.
+    // Spatial field diagnostics: location of the max y+.
     const fieldParts = [];
     const fmm = data.field_min_max || {};
     const yPlusFmm = fmm.yPlus || fmm.yplus || fmm.YPlus;
@@ -3636,15 +3628,6 @@ class CFDApp {
         ? ` at (${yPlusFmm.location.map((v) => Number(v).toFixed(2)).join(', ')})`
         : '';
       fieldParts.push(`max y+ ${num(yPlusFmm.max).toFixed(1)}${loc}`);
-    }
-    const surfaceValues = data.surface_values || {};
-    const pressureMax = Object.values(surfaceValues).filter(
-      (v) => v && v.operation === 'max' && v.patch,
-    );
-    if (pressureMax.length) {
-      fieldParts.push('wall p max ' + pressureMax.map(
-        (v) => `${v.patch} ${num(v.value).toFixed(3)}`,
-      ).join(', '));
     }
     const yPlusNote = yPlus.available && yPlus.note ? `Near-wall y+: ${yPlus.note}` : '';
     const fieldNote = fieldParts.length ? `Field diagnostics: ${fieldParts.join(' | ')}` : '';

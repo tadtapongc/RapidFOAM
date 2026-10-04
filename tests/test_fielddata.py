@@ -1,4 +1,4 @@
-"""Tests for postproc.fielddata (fieldMinMax / surfaceFieldValue reductions)."""
+"""Tests for postproc.fielddata (fieldMinMax reduction)."""
 
 import tempfile
 import unittest
@@ -6,12 +6,8 @@ from pathlib import Path
 
 from rapidfoam.postproc.fielddata import (
     find_field_min_max_files,
-    find_surface_field_value_files,
     parse_field_min_max,
-    parse_surface_field_value,
     read_field_min_max,
-    read_surface_field_value,
-    surface_field_value_name,
 )
 
 FIELD_MIN_MAX = """\
@@ -19,12 +15,6 @@ FIELD_MIN_MAX = """\
 # Time          	field           	min             	location(min)   	processor       	max             	location(max)   	processor
 1	yPlus	0.00000000e+00	(2.5e-02 2.3e-01 -6.9e-01)	0	2.45205080e+02	(4.8e-01 -4.2e-02 1.5e-01)	7
 400	yPlus	0.00000000e+00	(2.5e-02 2.3e-01 -6.9e-01)	0	8.01400000e+01	(4.0e-01 1.0e-01 -1.1e+00)	7
-"""
-
-SURFACE_VALUE = """\
-# SurfaceFieldValue patch=geometry operation=max
-# Time        	p
-400	0.85
 """
 
 
@@ -42,18 +32,6 @@ class ParseFieldMinMaxTest(unittest.TestCase):
         self.assertEqual(parse_field_min_max("not a field min max file\n"), {})
 
 
-class ParseSurfaceFieldValueTest(unittest.TestCase):
-    def test_parses_operation_and_patch(self):
-        parsed = parse_surface_field_value(SURFACE_VALUE, "wallPressure_max_geometry")
-        self.assertEqual(parsed["operation"], "max")
-        self.assertEqual(parsed["patch"], "geometry")
-        self.assertAlmostEqual(parsed["value"], 0.85)
-        self.assertEqual(parsed["time"], 400.0)
-
-    def test_unknown_object_name_is_none(self):
-        self.assertIsNone(parse_surface_field_value(SURFACE_VALUE, "someOtherObject"))
-
-
 class ReadFilesTest(unittest.TestCase):
     def test_find_and_read_reductions(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -62,21 +40,11 @@ class ReadFilesTest(unittest.TestCase):
             (root / "postProcessing" / "fieldMinMax" / "400" / "fieldMinMax.dat").write_text(
                 FIELD_MIN_MAX, encoding="utf-8"
             )
-            svf = root / "postProcessing" / "wallPressure_min_geometry" / "400"
-            svf.mkdir(parents=True)
-            (svf / "surfaceFieldValue.dat").write_text(SURFACE_VALUE, encoding="utf-8")
 
             fmm_files = find_field_min_max_files(root)
             self.assertEqual(len(fmm_files), 1)
             fmm = read_field_min_max(fmm_files)
             self.assertAlmostEqual(fmm["yPlus"]["max"], 80.14)
-
-            svf_files = find_surface_field_value_files(root)
-            self.assertEqual(len(svf_files), 1)
-            self.assertEqual(surface_field_value_name(svf_files[0]), "wallPressure_min_geometry")
-            values = read_surface_field_value(svf_files)
-            self.assertIn("min_geometry", values)
-            self.assertAlmostEqual(values["min_geometry"]["value"], 0.85)
 
 
 if __name__ == "__main__":

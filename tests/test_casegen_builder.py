@@ -131,8 +131,7 @@ class SolverFieldOutputsTest(unittest.TestCase):
         self.assertIn("type            wallShearStress;", text)
         self.assertIn("patches         (body);", text)
         self.assertIn("writeFields     true;", text)
-        # Extrema location; surface_field_value is off by default (a missing
-        # patch would abort the run).
+        # Extrema location reduction, but no surfaceFieldValue wall-pressure FO.
         self.assertIn("type            fieldMinMax;", text)
         self.assertIn("writeLocation   true;", text)
         self.assertNotIn("wallPressure_min_body", text)
@@ -142,25 +141,13 @@ class SolverFieldOutputsTest(unittest.TestCase):
         self.assertNotIn("type            vorticity;", text)
         self.assertNotIn("type            wallPressure;", text)
 
-    def test_surface_field_value_true_uses_all_patches(self):
-        text = self._write(surface_field_value=True)
-        self.assertIn("wallPressure_min_body", text)
-        self.assertIn("type            surfaceFieldValue;", text)
-        # surfaceFieldValue requires writeFields in v2606.
-        self.assertIn("writeFields     false;", text)
-
-    def test_surface_field_value_explicit_patch_list(self):
-        text = self._write(surface_field_value=["body", "wing"])
-        self.assertIn("wallPressure_max_body", text)
-        self.assertIn("wallPressure_max_wing", text)
-
     def test_vorticity_opt_in(self):
         self.assertIn("type            vorticity;", self._write(vorticity=True))
 
     def test_flags_disable_outputs(self):
         text = self._write(
             wall_shear_stress=False, y_plus=False,
-            field_min_max=False, surface_field_value=False, vorticity=False,
+            field_min_max=False, vorticity=False,
         )
         self.assertNotIn("wallShearStress", text)
         self.assertNotIn("wallPressure", text)

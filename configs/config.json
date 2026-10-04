@@ -80,12 +80,11 @@
     },
 
     "_feature_extract_comment": "Feature edges for snappyHexMesh. includedAngle (degrees) is the threshold BELOW which an edge is kept as a feature; 140 captures real aero edges without cosmetic CAD seams. The generator derives resolveFeatureAngle from the STL crease histogram and only sharpens this, never loosens it.",
-    "_field_outputs_comment": "Diagnostic outputs for inspecting the spatial load map in ParaView (open test.foam) and for telemetry. wall_shear_stress: per-face surface field (skin friction / separation). y_plus: writes the y+ field. field_min_max: small text reduction giving the max y+ value and its location (volume fields). surface_field_value: per-patch wall-pressure min/max/average sampled from p -- OFF by default because it aborts the run if a patch does not exist; set true (all STL patches) or a list of patch names. vorticity: opt-in volume field for wake/vortex visualization. Set a flag false to suppress.",
+    "_field_outputs_comment": "Diagnostic outputs for inspecting the spatial load map in ParaView (open test.foam) and for telemetry. wall_shear_stress: per-face surface field (skin friction / separation). y_plus: writes the y+ field. field_min_max: small text reduction giving the max y+ value and its location (volume fields). vorticity: opt-in volume field for wake/vortex visualization. Set a flag false to suppress.",
     "field_outputs": {
         "wall_shear_stress": true,
         "y_plus": true,
         "field_min_max": true,
-        "surface_field_value": false,
         "vorticity": false
     },
     "_feature_extract": {
@@ -175,7 +174,7 @@
             "_min_thickness_ratio": "Fraction of the derived first layer used as minThickness. Default 0.35 keeps partial layer stacks instead of dropping them, improving coverage on hard geometry at the cost of thinner prisms. 1.0 restores the all-or-nothing full-first-layer gate.",
             "_ground_layers": "Off by default. Opt-in prism layers on the moving ground patch; requires at least max(2 mm, 2x first layer) clearance and is capped by ground_n_layers.",
             "_two_pass": "true (default). Pass 1 castellates + snaps, pass 2 adds layers with the relaxed gate (system/snappyHexMeshDict_layering) for higher boundary-layer coverage. Costs ~30-80% more meshing time; set false for a single pass.",
-            "_y_plus_fit": "false (default) / 'ratio' / 'full'. If the y+ target is unreachable at the current surface resolution (snappy caps a layer at maxFaceThicknessRatio x the local face): 'ratio' raises maxFaceThicknessRatio up to 0.8 only (surface_level untouched); 'full' also coarsens the finest surface level if the cap is not enough. Falls back to the plain clamp+warning if the target still cannot be built.",
+            "_y_plus_fit": "false (default). If the y+ target is unreachable because snappy caps a layer at maxFaceThicknessRatio x the local face, true raises maxFaceThicknessRatio (up to 0.8, surface_level untouched) so the target is met. Falls back to the plain clamp+warning when still unreachable.",
             "_ground_n_layers": "Maximum ground layer count (default 2, never more than n_layers)"
         },
         "fluid": {

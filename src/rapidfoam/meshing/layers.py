@@ -28,59 +28,29 @@ def _fit_y_plus_clamp(
     base_cell: float,
     levels: list[int],
     ratio_limit: float,
-    *,
-    allow_level: bool = True,
 ) -> tuple[float, int] | None:
     """Make ``requested_thickness`` buildable by snappyHexMesh (opt-in y+ fit).
 
-    Prefers the least destructive lever: raise ``maxFaceThicknessRatio`` up to
-    :data:`Y_PLUS_FIT_RATIO_CAP`. When the target cannot fit under the cap it
-    coarsens the *finest* surface level so the near-wall cell is large enough (a
-    wall-function layer must be a fraction of the local face) — but only when
-    ``allow_level`` is true; with ``allow_level=False`` (the ``"ratio"`` mode) the
-    surface resolution is left untouched and the caller keeps the clamp. Mutates
-    ``layers`` and ``cfg['mesh_params']`` so the chosen values reach the writers.
+    Raises ``maxFaceThicknessRatio`` up to :data:`Y_PLUS_FIT_RATIO_CAP` so the
+    requested layer fits on more faces; the surface resolution is left untouched.
+    Mutates ``layers`` so the chosen ratio reaches the writers.
 
-    Returns ``(ratio, level_fine)`` or ``None`` when it declines to / cannot help.
+    Returns ``(ratio, level_fine)`` or ``None`` when the cap still cannot build
+    the layer (then the caller keeps the plain clamp).
     """
     if base_cell <= 0 or requested_thickness <= 0:
         return None
     level_fine = int(levels[1])
     cap = max(ratio_limit, Y_PLUS_FIT_RATIO_CAP)
-    needed = requested_thickness / (base_cell / (2 ** level_fine))
-    if needed <= cap:
-        new_level = level_fine
-    elif not allow_level:
-        return None
-    else:
-        max_level = int(math.floor(math.log2(base_cell * cap / requested_thickness)))
-        new_level = max(0, min(level_fine, max_level))
-    new_cell = base_cell / (2 ** new_level)
+    new_cell = base_cell / (2 ** level_fine)
     if new_cell <= 0:
         return None
     new_ratio = min(cap, max(ratio_limit, requested_thickness / new_cell))
     if new_ratio * new_cell + 1e-12 < requested_thickness:
         return None
-    mesh = cfg.get("mesh_params")
-    if new_level != level_fine and isinstance(mesh, dict) and isinstance(mesh.get("surface_level"), (list, tuple)):
-        mesh["surface_level"] = [min(int(levels[0]), new_level), new_level]
     if new_ratio > ratio_limit + 1e-9:
         layers["maxFaceThicknessRatio"] = round(new_ratio, 4)
-    return new_ratio, new_level
-
-
-def resolve_y_plus_fit_mode(layers: dict[str, Any]) -> str | None:
-    """Normalise ``layers.y_plus_fit`` to ``None`` / ``"ratio"`` / ``"full"``.
-
-    ``false``/absent → off; ``true`` → ``"full"`` (back-compat alias); the
-    strings ``"ratio"`` and ``"full"`` select the strategy explicitly.
-    """
-    value = layers.get("y_plus_fit", False)
-    if value is True:
-        return "full"
-    if isinstance(value, str) and value.strip().lower() in ("ratio", "full"):
-        return value.strip().lower()
-    return None
+    return new_ratio, level_fine
 
 
 def estimate_friction_velocity(U: float, nu: float, length: float) -> float:
@@ -234,7 +204,6 @@ def resolve_layers(
         "clamp_cell_m": None,
         # y+ fit provenance (only populated when layers.y_plus_fit resolves a clamp).
         "fit_applied": False,
-        "fit_mode": None,
         "fit_ratio": None,
         "fit_level": None,
     }
@@ -269,18 +238,13 @@ def resolve_layers(
                 resolved["clamp_level"] = level_fine
                 resolved["clamp_cell_m"] = cell_fine
                 if thickness > thickness_max:
-                    # Opt-in: instead of only clamping + warning, recalculate the
-                    # buildable thickness by raising maxFaceThicknessRatio (and,
-                    # in "full" mode, coarsening the finest surface level) so the
-                    # requested y+ is actually met. "ratio" mode never touches the
-                    # surface resolution and falls back to the clamp when the cap
-                    # cannot reach the target. Default off.
-                    fit_mode = resolve_y_plus_fit_mode(layers)
-                    if fit_mode is not None:
-                        resolved["fit_mode"] = fit_mode
+                    # Opt-in: instead of only clamping + warning, raise
+                    # maxFaceThicknessRatio (within the cap) so the requested y+
+                    # is actually met. Falls back to the plain clamp when the cap
+                    # still cannot build the layer. Default off.
+                    if bool(layers.get("y_plus_fit", False)):
                         fitted = _fit_y_plus_clamp(
                             cfg, layers, thickness, base_cell, levels, ratio_limit,
-                            allow_level=(fit_mode == "full"),
                         )
                         if fitted is not None:
                             ratio_limit, level_fine = fitted
@@ -331,7 +295,6 @@ __all__ = [
     "estimate_friction_velocity",
     "first_layer_height",
     "resolve_layers",
-    "resolve_y_plus_fit_mode",
     "Y_PLUS_FIT_RATIO_CAP",
     "_apply_ground_layer_policy",
 ]
