@@ -222,19 +222,46 @@
                   </div>
                 </div>
 
-                <!-- Refinement study (grid independence workflow) -->
-                <div class="form-group col-span-2 overrides-section-header">
-                  <h4 class="section-subtitle">Refinement Study (Grid Independence)</h4>
-                  <span class="field-hint">Create a valid grid study: three cases that differ only in mesh density (<code>cells_per_length</code>); physics, near-wall layers and end time are held fixed. Then run them and compare in the Telemetry tab's Grid Independence panel.</span>
+                <!-- Run mode (normal vs grid study) -->
+                <div class="form-group col-span-2">
+                  <label>Run Mode</label>
+                  <div class="segmented-control" id="cfg-run-mode" role="group" aria-label="Run mode">
+                    <button type="button" class="segment active" data-mode="normal">Normal simulation</button>
+                    <button type="button" class="segment" data-mode="grid">Grid independence study</button>
+                  </div>
+                  <span class="field-hint" id="cfg-run-mode-hint">Generate a single case at the chosen fidelity.</span>
                 </div>
-                <div class="form-group">
-                  <label for="cfg-study-levels">Refinement Levels (cells/length)</label>
-                  <input type="text" id="cfg-study-levels" class="input" value="20, 30, 45" placeholder="20, 30, 45">
-                  <span class="field-hint">Coarse, medium, fine background resolution (comma-separated, ascending).</span>
-                </div>
-                <div class="form-group">
-                  <span class="field-hint">&nbsp;</span>
-                  <button type="button" class="btn btn-outline" id="btn-refinement-study">Generate Refinement Study (3 cases)</button>
+
+                <!-- Grid-study settings (shown only in grid mode) -->
+                <div class="col-span-2" id="grid-study-settings" style="display:none;">
+                  <div class="study-banner">
+                    <strong>Grid study:</strong> three cases are generated from this config — only mesh density
+                    (<code>cells_per_length</code>) varies. Every other field (flow, turbulence, near-wall y+/layers,
+                    end time, solver) is <em>shared and pinned</em> across all three.
+                  </div>
+                  <div class="form-grid">
+                    <div class="form-group">
+                      <label for="cfg-study-levels">Refinement Levels (cells/length)</label>
+                      <input type="text" id="cfg-study-levels" class="input" value="20, 30, 45" placeholder="20, 30, 45">
+                      <span class="field-hint">Coarse, medium, fine background resolution (comma-separated, ascending).</span>
+                    </div>
+                    <div class="form-group">
+                      <label for="cfg-study-corefine">Co-refine Surface</label>
+                      <select id="cfg-study-corefine" class="input">
+                        <option value="off" selected>Off (background only)</option>
+                        <option value="on">On (also step surface/edge level)</option>
+                      </select>
+                      <span class="field-hint">Off = cleanest background ladder; On = stronger near-wall ladder.</span>
+                    </div>
+                    <div class="form-group col-span-2">
+                      <span class="field-hint" id="cfg-study-preview"></span>
+                    </div>
+                  </div>
+                  <div class="config-actions-bar" style="border:none;padding-left:0;">
+                    <button type="button" class="btn btn-primary" id="btn-refinement-study">Generate 3 cases</button>
+                    <button type="button" class="btn btn-outline" id="btn-refinement-study-submit">Generate &amp; submit all…</button>
+                  </div>
+                  <p class="field-hint" id="grid-study-result"></p>
                 </div>
               </div>
             </div>

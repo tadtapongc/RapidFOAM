@@ -1131,3 +1131,25 @@ test('runGridStudy renders the fidelity table and verdict', async () => {
   assert.ok(verdict.includes('grid-independent'), verdict);
   assert.ok(verdict.includes('Richardson'), verdict);
 });
+
+// ------------------------------------------- Run mode / grid study
+test('setRunMode toggles the grid-study settings and hint', async () => {
+  const app = await makeApp(`
+    <div id="cfg-run-mode">
+      <button class="segment active" data-mode="normal"></button>
+      <button class="segment" data-mode="grid"></button>
+    </div>
+    <div id="grid-study-settings" style="display:none;"></div>
+    <span id="cfg-run-mode-hint"></span>
+    <input id="cfg-study-levels" value="20, 30, 45">
+    <span id="cfg-study-preview"></span>
+  `);
+  installFormStubs(app);
+  app.activeConfig = { case_name: 'wing' };
+  app.setRunMode('grid');
+  assert.equal(app._window.document.getElementById('grid-study-settings').style.display, 'block');
+  assert.ok(app._window.document.getElementById('cfg-run-mode-hint').textContent.includes('Grid study'));
+  assert.ok(app._window.document.getElementById('cfg-study-preview').textContent.includes('wing_cpl20'));
+  app.setRunMode('normal');
+  assert.equal(app._window.document.getElementById('grid-study-settings').style.display, 'none');
+});

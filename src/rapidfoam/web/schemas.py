@@ -48,6 +48,7 @@ class GenerateCaseRequest(BaseModel):
 class RefinementStudyRequest(BaseModel):
     config: dict[str, Any]
     levels: list[int] = [20, 30, 45]
+    co_refine_surface: bool = False
     generate_locally: bool = True
     upload_to_cluster: bool = False
     submit_slurm: bool = False

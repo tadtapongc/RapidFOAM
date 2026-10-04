@@ -2621,3 +2621,37 @@ body.dark-theme {
 }
 
 
+
+/* ---- Run mode segmented control + grid-study card ---- */
+.segmented-control {
+  display: inline-flex;
+  border: 1px solid var(--border-color, #2a3140);
+  border-radius: var(--radius-md, 7px);
+  overflow: hidden;
+}
+.segmented-control .segment {
+  appearance: none;
+  border: none;
+  background: var(--bg-input, #0c0e14);
+  color: var(--text-secondary, #94a3b8);
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.segmented-control .segment + .segment { border-left: 1px solid var(--border-color, #2a3140); }
+.segmented-control .segment.active {
+  background: var(--accent-primary, #2563eb);
+  color: #fff;
+}
+.study-banner {
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.35);
+  border-left: 3px solid var(--accent-primary, #2563eb);
+  border-radius: var(--radius-sm, 5px);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-secondary, #94a3b8);
+  line-height: 1.5;
+}

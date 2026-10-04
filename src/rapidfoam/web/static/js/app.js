@@ -161,6 +161,8 @@ class CFDApp {
     this.downloadStates = new Map();
     this.downloadPollTimer = null;
     this.fidelityPresets = null;
+    this.gridStudyDefaults = null;
+    this.runMode = 'normal';
     this.layerPreviewTimer = null;
 
     this.activeConfig = {
@@ -468,7 +470,14 @@ class CFDApp {
     document.getElementById('btn-validate-config')?.addEventListener('click', () => this.validateCurrentConfig());
     document.getElementById('btn-save-config')?.addEventListener('click', () => this.saveCurrentConfig(false));
     document.getElementById('btn-generate-local')?.addEventListener('click', () => this.generateCaseLocally());
-    document.getElementById('btn-refinement-study')?.addEventListener('click', () => this.generateRefinementStudy());
+    document.getElementById('btn-refinement-study')?.addEventListener('click', () => this.generateRefinementStudy(false));
+    document.getElementById('btn-refinement-study-submit')?.addEventListener('click', () => this.generateRefinementStudy(true));
+    // Run-mode segmented control: switch between normal and grid-study modes.
+    document.querySelectorAll('#cfg-run-mode .segment').forEach((btn) => {
+      btn.addEventListener('click', () => this.setRunMode(btn.getAttribute('data-mode')));
+    });
+    document.getElementById('cfg-study-levels')?.addEventListener('input', () => this.renderStudyPreview());
+    document.getElementById('cfg-study-corefine')?.addEventListener('change', () => this.renderStudyPreview());
     document.getElementById('btn-submit-case')?.addEventListener('click', () => this.saveCurrentConfig(true));
     document.getElementById('btn-quick-run')?.addEventListener('click', () => this.saveCurrentConfig(true));
 
@@ -1301,8 +1310,17 @@ class CFDApp {
       if (res.ok) {
         const data = await res.json();
         this.fidelityPresets = data.fidelity_presets || null;
+        const gs = (data.default_config || {}).grid_study || null;
+        if (gs) {
+          this.gridStudyDefaults = gs;
+          if (Array.isArray(gs.levels) && gs.levels.length) {
+            this.setVal('cfg-study-levels', gs.levels.join(', '));
+          }
+          this.setSelectValue('cfg-study-corefine', gs.co_refine_surface ? 'on' : 'off');
+        }
         this.updateFidelityCards();
         this.updateOverridePlaceholders(this.activeConfig?.fidelity || 'standard');
+        this.renderStudyPreview();
       }
     } catch (err) {
       console.warn('Could not load fidelity presets:', err);
@@ -2002,7 +2020,34 @@ class CFDApp {
     }
   }
 
-  async generateRefinementStudy() {
+  setRunMode(mode) {
+    this.runMode = mode === 'grid' ? 'grid' : 'normal';
+    document.querySelectorAll('#cfg-run-mode .segment').forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-mode') === this.runMode);
+    });
+    const settings = document.getElementById('grid-study-settings');
+    if (settings) settings.style.display = this.runMode === 'grid' ? 'block' : 'none';
+    const hint = document.getElementById('cfg-run-mode-hint');
+    if (hint) {
+      hint.textContent = this.runMode === 'grid'
+        ? 'Grid study: three mesh-density variants from this config; all other fields are shared and pinned.'
+        : 'Generate a single case at the chosen fidelity.';
+    }
+    if (this.runMode === 'grid') this.renderStudyPreview();
+  }
+
+  renderStudyPreview() {
+    const el = document.getElementById('cfg-study-preview');
+    if (!el) return;
+    const base = (this.activeConfig && this.activeConfig.case_name) || 'my_case';
+    const raw = this.getVal('cfg-study-levels') || '20, 30, 45';
+    const levels = raw.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0);
+    el.textContent = levels.length
+      ? `Will create: ${levels.map((c) => `${base}_cpl${c}`).join(', ')}`
+      : 'Enter at least three ascending levels.';
+  }
+
+  async generateRefinementStudy(submit = false) {
     this.buildConfigFromVisualForm();
     const base = this.activeConfig.case_name || 'my_case';
     const levelsRaw = this.getVal('cfg-study-levels') || '20, 30, 45';
@@ -2011,30 +2056,39 @@ class CFDApp {
       this.showToast('Enter at least three positive refinement levels.', 'warning');
       return;
     }
-    const willSubmit = this.clusterConnected;
+    const coRefine = this.getVal('cfg-study-corefine') === 'on';
+    const willSubmit = submit;
+    if (willSubmit && !this.clusterConnected) {
+      this.showToast('Connect to the cluster to submit the study jobs.', 'error');
+      this.openSSHModal();
+      return;
+    }
     const decision = await this.showConfirmDialog({
-      title: `Refinement study: ${base}`,
+      title: `Grid study: ${base}`,
       message: `Generate ${levels.length} cases (${levels.join(', ')} cells/length) that differ only in mesh density.`,
       warning: willSubmit
-        ? 'Connected to the cluster: this will also upload and submit all three SLURM jobs (expensive). Use Cancel to generate locally only.'
-        : 'Cases are generated locally. Run them, then compare in the Grid Independence panel.',
+        ? 'This will upload and submit all three SLURM jobs — expensive. Confirm to proceed.'
+        : 'Cases are generated locally. Run them, then compare in the Telemetry tab grid panel.',
       severity: 'warning',
       allowRename: false,
-      confirmText: willSubmit ? 'Generate + Submit All' : 'Generate All',
-      confirmClass: 'btn-warning',
+      confirmText: willSubmit ? 'Generate + Submit All' : 'Generate 3 Cases',
+      confirmClass: willSubmit ? 'btn-warning' : 'btn-primary',
       cancelText: 'Cancel',
     });
     if (decision.action === 'cancel') return;
 
-    const btn = document.getElementById('btn-refinement-study');
-    if (btn) { btn.disabled = true; btn.textContent = 'Working?'; }
+    const btn = document.getElementById(willSubmit ? 'btn-refinement-study-submit' : 'btn-refinement-study');
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+    const resultEl = document.getElementById('grid-study-result');
     try {
-      const res = await this.fetchWithTimeout('/api/case/refinement-study', 120000, {
+      const res = await this.fetchWithTimeout('/api/case/refinement-study', 180000, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           config: this.activeConfig,
           levels,
+          co_refine_surface: coRefine,
           generate_locally: true,
           upload_to_cluster: willSubmit,
           submit_slurm: willSubmit,
@@ -2043,17 +2097,22 @@ class CFDApp {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Study failed');
       const ok = (data.variants || []).filter((v) => v.ok).length;
-      this.showToast(`Refinement study: ${ok}/${levels.length} cases ready.`, 'success');
+      this.showToast(`Grid study: ${ok}/${levels.length} cases ready.`, ok === levels.length ? 'success' : 'warning');
+      if (resultEl) {
+        const names = (data.variants || []).map((v) => `${v.ok ? '✓' : '✗'} ${v.case_name}`).join('  ');
+        resultEl.textContent = `Grid study "${data.base}": ${names}. View results in Telemetry → Grid Independence.`;
+      }
       await this.loadCasesArchive();
     } catch (err) {
-      this.showToast(`Refinement study failed: ${err.message}`, 'error');
+      this.showToast(`Grid study failed: ${err.message}`, 'error');
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = 'Generate Refinement Study (3 cases)'; }
+      if (btn) { btn.disabled = false; btn.textContent = label; }
     }
   }
 
   async saveCurrentConfig(submitToCluster = false) {
-    this.buildConfigFromVisualForm();    if (submitToCluster && !this.clusterConnected) {
+    this.buildConfigFromVisualForm();
+    if (submitToCluster && !this.clusterConnected) {
       this.showToast('Please connect to the cluster via SSH first!', 'error');
       this.openSSHModal();
       return;

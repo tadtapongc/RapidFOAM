@@ -286,7 +286,8 @@ async def api_case_refinement_study(req: RefinementStudyRequest) -> dict[str, An
     base_path.write_text(_json.dumps(cfg, indent=4) + "\n", encoding="utf-8")
 
     variants = await asyncio.to_thread(
-        configure_refinement_study, base_path, base_name=case_name, levels=tuple(levels), out_dir=cfg_dir
+        configure_refinement_study, base_path, base_name=case_name, levels=tuple(levels),
+        out_dir=cfg_dir, co_refine_surface=req.co_refine_surface,
     )
 
     results = []
