@@ -77,7 +77,7 @@ class TestWebAPI(unittest.TestCase):
 
     def setUp(self):
         # Remote telemetry is cached briefly; never leak state across tests.
-        _telemetry_service._remote_telemetry_cache.clear()
+        _telemetry_service.clear_remote_telemetry_cache()
         from rapidfoam.web.routers import cases as _cases_router
         _cases_router._invalidate_local_cases_cache()
 
@@ -334,7 +334,7 @@ class TestWebAPI(unittest.TestCase):
 
         with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
                 patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
-            svc._remote_telemetry_cache.clear()
+            svc.clear_remote_telemetry_cache()
             res = asyncio.run(api_telemetry_forces(case_name))
 
         self.assertTrue(res["has_data"])
@@ -542,7 +542,7 @@ class TestWebAPI(unittest.TestCase):
 
         with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
                 patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
-            svc._remote_telemetry_cache.clear()
+            svc.clear_remote_telemetry_cache()
             asyncio.run(svc._read_remote_telemetry("remote_case_surface"))
 
         patterns = [pattern for pattern, _ in captured["specs"]]
@@ -562,7 +562,7 @@ class TestWebAPI(unittest.TestCase):
 
         with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
                 patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
-            svc._remote_telemetry_cache.clear()
+            svc.clear_remote_telemetry_cache()
             asyncio.run(svc._read_remote_telemetry("remote_case_layering"))
 
         patterns = [pattern for pattern, _ in captured["specs"]]
@@ -582,8 +582,8 @@ class TestWebAPI(unittest.TestCase):
 
         with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
                 patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
-            svc._remote_telemetry_cache.clear()
-            svc._remote_telemetry_status.clear()
+            svc.clear_remote_telemetry_cache()
+            svc.clear_remote_telemetry_cache()
             asyncio.run(svc._read_remote_telemetry("remote_case_badrepo"))
             status = svc.remote_telemetry_status("remote_case_badrepo")
         self.assertFalse(status.get("ok"))
@@ -612,7 +612,7 @@ class TestWebAPI(unittest.TestCase):
 
         with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
                 patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
-            svc._remote_telemetry_cache.clear()
+            svc.clear_remote_telemetry_cache()
             asyncio.run(run_two())
 
         self.assertEqual(calls["n"], 1)
@@ -639,7 +639,7 @@ class TestWebAPI(unittest.TestCase):
 
         with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
                 patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
-            svc._remote_telemetry_cache.clear()
+            svc.clear_remote_telemetry_cache()
             res = asyncio.run(api_telemetry_forces(case_name))
 
         self.assertTrue(res["has_data"])

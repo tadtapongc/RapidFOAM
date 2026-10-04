@@ -128,6 +128,8 @@ class CFDApp {
     this.balanceOverrides = {};
     this.telemetryRequestId = 0;
     this.telemetryInFlight = false;
+    this._telemetryInFlightTimer = null;
+    this._queueRefreshInFlight = false;
     this.telemetryViewer = null;
     this.telemetryLayer = null;
     this.telemetry3dCase = null;
@@ -2388,11 +2390,18 @@ class CFDApp {
   // -------------------------------------------------------------
   async refreshQueue() {
     if (!this.clusterConnected) return;
+    // Guard against overlapping polls piling up on the (serialised) SSH session.
+    if (this._queueRefreshInFlight) return;
+    this._queueRefreshInFlight = true;
     try {
-      const res = await fetch('/api/cluster/status');
+      const res = await this.fetchWithTimeout('/api/cluster/status', 12000);
       const data = await res.json();
       this.renderQueueTable(data.active_jobs || []);
-    } catch {}
+    } catch {
+      // transient failure: keep the last table, retry next tick
+    } finally {
+      this._queueRefreshInFlight = false;
+    }
   }
 
   renderQueueTable(jobs) {

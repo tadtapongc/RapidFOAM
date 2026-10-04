@@ -350,13 +350,11 @@ def _time_dir_key(path: str) -> float:
 
 
 # Short-lived cache so the forces/residuals/solver/mesh/surface endpoints share
-# one remote read per poll instead of issuing separate SSH command batches. An
-# in-flight read is single-flighted per key: concurrent callers wait for the one
-# read rather than each firing their own (which would serialise on the SSH lock
-# and stall the server). Empty/failed reads are cached very briefly so a poll
-# does not repeat a slow/failing SSH command on every endpoint.
-_remote_telemetry_cache: dict[str, tuple[float, dict[str, str], float]] = {}
-_remote_telemetry_lock = threading.Lock()
+# one remote read per poll instead of issuing separate SSH command batches. Reads
+# are single-flighted per case (one asyncio.Lock per key) so concurrent callers
+# await the same read rather than each firing an SSH command on the shared,
+# serialised session. Empty/failed reads are cached briefly so a poll does not
+# repeat a slow/failing command on every endpoint.
 _REMOTE_TELEMETRY_TTL = 2.5
 _REMOTE_TELEMETRY_EMPTY_TTL = 1.0
 # Hard cap on a single remote bundle read so a stalled SSH command cannot hang a
@@ -368,14 +366,41 @@ def _remote_telemetry_key(case_name: str) -> str:
     return f"{ssh_client.host}|{ssh_client.remote_repo_path}|{case_name}"
 
 
-# Last remote-bundle diagnostic per case (host|repo|case), so a failed read can
-# be surfaced instead of showing an empty "no data" state.
-_remote_telemetry_status: dict[str, dict[str, Any]] = {}
+class _RemoteEntry:
+    """Per-case cache slot: last bundle + freshness + a single-flight lock."""
+
+    __slots__ = ("bundle", "fetched_at", "ttl", "lock", "status")
+
+    def __init__(self) -> None:
+        self.bundle: dict[str, str] = {}
+        self.fetched_at = 0.0
+        self.ttl = 0.0
+        self.lock = asyncio.Lock()
+        self.status: dict[str, Any] = {}
+
+
+_remote_telemetry_entries: dict[str, _RemoteEntry] = {}
+_remote_telemetry_registry_lock = threading.Lock()
+
+
+def _remote_entry(key: str) -> _RemoteEntry:
+    with _remote_telemetry_registry_lock:
+        entry = _remote_telemetry_entries.get(key)
+        if entry is None:
+            entry = _RemoteEntry()
+            _remote_telemetry_entries[key] = entry
+        return entry
+
+
+def clear_remote_telemetry_cache() -> None:
+    """Drop all cached remote bundles (used between tests)."""
+    with _remote_telemetry_registry_lock:
+        _remote_telemetry_entries.clear()
 
 
 def remote_telemetry_status(case_name: str) -> dict[str, Any]:
     """Last diagnostic for a case's remote bundle read (ok / reason)."""
-    return dict(_remote_telemetry_status.get(_remote_telemetry_key(case_name), {}))
+    return dict(_remote_entry(_remote_telemetry_key(case_name)).status)
 
 
 def should_read_remote(case_name: str, local_dir: "Path | str | None") -> bool:
@@ -398,71 +423,37 @@ def should_read_remote(case_name: str, local_dir: "Path | str | None") -> bool:
 async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
     """Read every telemetry file for a case in one SSH command (cached ~2.5s).
 
-    Single-flight per case: concurrent callers (the six telemetry endpoints the
-    Studio polls together) await one shared read instead of each issuing an SSH
-    command on the shared, serialised session. Bounded by
-    ``_REMOTE_BUNDLE_TIMEOUT`` so a stalled read cannot hang a request, and a
-    hung producer is evicted so it never poisons the key.
+    Single-flight per case: concurrent callers await one shared read. Bounded by
+    ``_REMOTE_BUNDLE_TIMEOUT``; a timed-out read is not cached, so the next poll
+    retries rather than reusing a hung result.
     """
     if not ssh_client.is_connected:
         return {}
-    key = _remote_telemetry_key(case_name)
+    entry = _remote_entry(_remote_telemetry_key(case_name))
     now = time.monotonic()
-    with _remote_telemetry_lock:
-        cached = _remote_telemetry_cache.get(key)
-        if cached and now - cached[0] < cached[2]:
-            return cached[1]
-        pending = _remote_telemetry_inflight.get(key)
-        if pending is not None and not pending.done():
-            waiter = pending
-        else:
-            waiter = None
+    if entry.bundle is not None and entry.ttl and now - entry.fetched_at < entry.ttl:
+        return entry.bundle
 
-    async def _await_task(task: "asyncio.Task[dict[str, str]]") -> dict[str, str]:
-        try:
-            return await asyncio.wait_for(asyncio.shield(task), timeout=_REMOTE_BUNDLE_TIMEOUT + 1.0)
-        except asyncio.TimeoutError:
-            # Producer is stuck: evict it so future calls start a fresh read.
-            with _remote_telemetry_lock:
-                if _remote_telemetry_inflight.get(key) is task:
-                    _remote_telemetry_inflight.pop(key, None)
-            return {}
-        except Exception:
-            return {}
-
-    if waiter is not None:
-        await _await_task(waiter)
-        with _remote_telemetry_lock:
-            cached = _remote_telemetry_cache.get(key)
-            if cached:
-                return cached[1]
+    try:
+        async with entry.lock:
+            # Re-check after acquiring: another caller may have just refreshed it.
+            now = time.monotonic()
+            if entry.ttl and now - entry.fetched_at < entry.ttl:
+                return entry.bundle
+            report: dict[str, Any] = {}
+            bundle = await _read_remote_bundle(_remote_bundle_specs(case_name), report=report)
+            entry.status = report
+            entry.bundle = bundle
+            entry.ttl = _REMOTE_TELEMETRY_TTL if report.get("ok") else _REMOTE_TELEMETRY_EMPTY_TTL
+            entry.fetched_at = time.monotonic()
+            return bundle
+    except Exception:
         return {}
 
-    loop = asyncio.get_running_loop()
-    task = loop.create_task(_do_remote_telemetry_read(case_name, key))
-    with _remote_telemetry_lock:
-        _remote_telemetry_inflight[key] = task
 
-    def _clear(_t: "asyncio.Future") -> None:
-        with _remote_telemetry_lock:
-            if _remote_telemetry_inflight.get(key) is task:
-                _remote_telemetry_inflight.pop(key, None)
-
-    task.add_done_callback(_clear)
-    await _await_task(task)
-    with _remote_telemetry_lock:
-        cached = _remote_telemetry_cache.get(key)
-        if cached:
-            return cached[1]
-    return {}
-
-
-_remote_telemetry_inflight: dict[str, "asyncio.Task[dict[str, str]]"] = {}
-
-
-async def _do_remote_telemetry_read(case_name: str, key: str) -> dict[str, str]:
-    report: dict[str, Any] = {}
-    bundle = await _read_remote_bundle([
+def _remote_bundle_specs(case_name: str) -> list[tuple[str, Any]]:
+    """The glob specs the telemetry bundle fetches for a case."""
+    return [
         (f"cases/{case_name}/postProcessing/forces/*/force.dat", None),
         (f"cases/{case_name}/postProcessing/forces_*/*/force.dat", None),
         (f"cases/{case_name}/postProcessing/forces/*/moment.dat", None),
@@ -472,22 +463,14 @@ async def _do_remote_telemetry_read(case_name: str, key: str) -> dict[str, str]:
         (f"cases/{case_name}/log.simpleFoam", 20000),
         # Mesh-quality inputs: checkMesh is small; the final snappy layer table
         # sits near the end of the log, so a modest tail is enough. Glob the
-        # snappy log so two-pass cases also fetch log.snappyHexMesh.layering
-        # (the layered pass writes the coverage table there; later table wins).
+        # snappy log so two-pass cases also fetch log.snappyHexMesh.layering.
         (f"cases/{case_name}/log.checkMesh", 400),
         (f"cases/{case_name}/log.snappyHexMesh*", 600),
         (f"cases/{case_name}/log.surfaceCheck", None),
         (f"cases/{case_name}/postProcessing/yPlus/*/yPlus.dat", None),
-        # Field diagnostics (small text reductions): max y+ location and
-        # per-patch wall-pressure stats.
         (f"cases/{case_name}/postProcessing/fieldMinMax/*/fieldMinMax.dat", None),
         (f"cases/{case_name}/case_config.json", None),
-    ], report=report)
-    _remote_telemetry_status[key] = report
-    ttl = _REMOTE_TELEMETRY_TTL if report.get("ok") else _REMOTE_TELEMETRY_EMPTY_TTL
-    with _remote_telemetry_lock:
-        _remote_telemetry_cache[key] = (time.monotonic(), bundle, ttl)
-    return bundle
+    ]
 
 
 def _subsample_indices(count: int, max_pts: int = 400) -> list[int]:
