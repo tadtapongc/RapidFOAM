@@ -1268,3 +1268,25 @@ test('changing the study base preset clears shadowing layer/solver overrides', a
   assert.equal(app._window.document.getElementById('cfg-override-layer-yplus').value, '');
   assert.equal(app._window.document.getElementById('cfg-override-layer-expansion').value, '');
 });
+
+test('override placeholders follow the study base preset in grid mode', async () => {
+  const app = await makeApp(`
+    <div id="fidelity-cards-group"><label class="fidelity-card selected" data-fidelity="standard"></label></div>
+    <select id="cfg-study-base-preset"><option value="fast">f</option><option value="standard" selected>s</option><option value="fine">x</option></select>
+    <input id="cfg-override-solver-endtime">
+    <input id="cfg-override-layer-nlayers">
+    <input id="cfg-override-layer-yplus">
+  ` + buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = { case_name: 'wing', fidelity: 'standard' };
+  app.fidelityPresets = null;
+  app.runMode = 'grid';
+  app.updateOverridePlaceholders('standard');
+  assert.ok(app._window.document.getElementById('cfg-override-solver-endtime').placeholder.includes('1500'));
+  app._window.document.getElementById('cfg-study-base-preset').value = 'fast';
+  app.updateOverridePlaceholders('standard');
+  assert.ok(app._window.document.getElementById('cfg-override-solver-endtime').placeholder.includes('800'));
+  assert.ok(app._window.document.getElementById('cfg-override-layer-nlayers').placeholder.includes('5'));
+  assert.ok(app._window.document.getElementById('cfg-override-layer-yplus').placeholder.includes('50'));
+});

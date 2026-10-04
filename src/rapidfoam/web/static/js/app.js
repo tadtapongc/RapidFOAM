@@ -492,6 +492,7 @@ class CFDApp {
         'cfg-override-layer-expansion',
       ];
       shadowed.forEach((id) => this.setVal(id, ''));
+      this.updateOverridePlaceholders(base || 'standard');
     });
     document.getElementById('btn-submit-case')?.addEventListener('click', () => this.saveCurrentConfig(true));
 
@@ -1270,6 +1271,13 @@ class CFDApp {
   }
 
   updateOverridePlaceholders(fidelity = 'standard') {
+    // In grid-study mode the study's Base Preset governs the pinned preset
+    // values, so the override placeholders must follow it rather than the
+    // fidelity card last chosen in Normal mode.
+    if (this.runMode === 'grid') {
+      const base = this.getVal('cfg-study-base-preset');
+      if (base) fidelity = base;
+    }
     const fallback = {
       fast: { base_cell: 'L/20', surf_min: '3', surf_max: '4', edge: '5', nearwake: '2', farwake: '1', featurecells: '3', maxsurflevel: '6', endtime: '800', writeint: '400', n_layers: '5', expansion: '1.20', yplus: '50' },
       standard: { base_cell: 'L/30', surf_min: '4', surf_max: '5', edge: '6', nearwake: '3', farwake: '1', featurecells: '4', maxsurflevel: '7', endtime: '1500', writeint: '500', n_layers: '8', expansion: '1.20', yplus: '30' },
@@ -2071,6 +2079,7 @@ class CFDApp {
         : 'Generate a single case at the chosen fidelity.';
     }
     this.updateActionButtons();
+    this.updateOverridePlaceholders(this.activeConfig?.fidelity || 'standard');
   }
 
   updateActionButtons() {
