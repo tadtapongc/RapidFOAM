@@ -712,7 +712,7 @@
                   <div class="form-group">
                     <label for="cfg-override-layer-yplus">y+ Target</label>
                     <input type="number" id="cfg-override-layer-yplus" class="input" step="any" min="0.1" max="200" placeholder="Auto / Preset (30)">
-                    <span class="field-hint">Preset: fast 50, standard 30 (wall-function-bridged), fine 1 (wall-resolved). The first layer is capped by the finest surface cell, so the realised y+ can be lower.</span>
+                    <span class="field-hint">Preset: fast 50, standard 30 (wall-function-bridged), fine 1 (wall-resolved). The first layer is capped by maxFaceThicknessRatio x the finest surface cell, so the realised y+ can be lower; enable "Fit y+ to Target" to met it.</span>
                   </div>
 
                   <div class="form-group">
@@ -723,26 +723,26 @@
 
                   <div class="form-group">
                     <label for="cfg-override-layer-expansion">Expansion Ratio</label>
-                    <input type="number" id="cfg-override-layer-expansion" class="input" step="0.01" min="1.0" max="2.0" placeholder="Auto / Preset (1.20)">
-                    <span class="field-hint">Geometric growth ratio between successive layers</span>
+                    <input type="number" id="cfg-override-layer-expansion" class="input" step="0.01" min="1.0" max="2.0" placeholder="Auto / Preset (1.15)">
+                    <span class="field-hint">Geometric growth ratio between successive layers (fast/standard 1.15, fine 1.10). A shorter stack fits tight regions better and improves coverage.</span>
                   </div>
 
                   <div class="form-group">
                     <label for="cfg-override-layer-firstlayer">First Layer Thickness (m)</label>
                     <input type="number" id="cfg-override-layer-firstlayer" class="input" step="any" min="0" placeholder="Auto / Preset">
-                    <span class="field-hint">Metres in absolute mode; fraction of cell size in relative mode</span>
+                    <span class="field-hint">Metres in absolute mode; fraction of cell size in relative mode. The allowed layer is also capped by maxFaceThicknessRatio (default 0.7) x the local face.</span>
                   </div>
 
                   <div class="form-group">
                     <label for="cfg-override-layer-minthickness">Minimum Overall Thickness</label>
-                    <input type="number" id="cfg-override-layer-minthickness" class="input" step="any" min="0" placeholder="Auto (first layer)">
-                    <span class="field-hint">Same units as the first layer; auto-derived as the full first layer (a quality gate: a thinner minimum makes snappy drop whole stacks rather than degenerate prisms). Lowering it is a config-only experiment.</span>
+                    <input type="number" id="cfg-override-layer-minthickness" class="input" step="any" min="0" placeholder="Auto (ratio-derived)">
+                    <span class="field-hint">Same units as the first layer. Leave unset to derive it from min_thickness_ratio; setting it explicitly wins.</span>
                   </div>
 
                   <div class="form-group">
                     <label for="cfg-override-layer-minratio">Min Thickness Ratio</label>
-                    <input type="number" id="cfg-override-layer-minratio" class="input" step="0.05" min="0.05" max="1" placeholder="Auto (1.0)">
-                    <span class="field-hint">Fraction of the derived first layer used as minThickness. 1.0 (default) keeps the full-first-layer gate; lower it (e.g. 0.5) to let snappy keep partial stacks and improve layer coverage on hard geometry, at the cost of thinner prisms.</span>
+                    <input type="number" id="cfg-override-layer-minratio" class="input" step="0.05" min="0.05" max="1" placeholder="Auto / Preset (0.35)">
+                    <span class="field-hint">Fraction of the derived first layer used as minThickness. Default 0.35 lets snappy keep partial stacks and improves layer coverage on hard geometry (thinner/partial prisms). 1.0 restores the all-or-nothing full-first-layer gate.</span>
                   </div>
 
                   <div class="form-group">
@@ -758,11 +758,11 @@
                   <div class="form-group">
                     <label for="cfg-override-layer-twopass">Two-Pass Layering</label>
                     <select id="cfg-override-layer-twopass" class="input">
-                      <option value="auto" selected>Auto (preset: off)</option>
+                      <option value="auto" selected>Auto (preset: on)</option>
                       <option value="on">On</option>
                       <option value="off">Off</option>
                     </select>
-                    <span class="field-hint">Experimental: pass 1 castellates + snaps, pass 2 adds layers with the relaxed quality gate (system/snappyHexMeshDict_layering) for higher layer coverage at some quality cost.</span>
+                    <span class="field-hint">On by default. Pass 1 castellates + snaps, pass 2 adds layers with the relaxed gate (system/snappyHexMeshDict_layering) for higher layer coverage. Costs ~30&ndash;80% more meshing time; set Off for a single pass.</span>
                   </div>
 
                   <div class="form-group">
