@@ -1290,3 +1290,54 @@ test('override placeholders follow the study base preset in grid mode', async ()
   assert.ok(app._window.document.getElementById('cfg-override-layer-nlayers').placeholder.includes('5'));
   assert.ok(app._window.document.getElementById('cfg-override-layer-yplus').placeholder.includes('50'));
 });
+
+test('grid study warns when variant case names already exist and cancels', async () => {
+  const app = await makeApp(`
+    <input id="cfg-case-name" value="wing">
+    <div id="fidelity-cards-group"><label class="fidelity-card selected" data-fidelity="standard"></label></div>
+    <select id="cfg-study-base-preset"><option value="standard" selected>s</option></select>
+    <input id="cfg-study-levels" value="20, 30, 45">
+    <select id="cfg-study-corefine"><option value="off" selected>off</option></select>
+  ` + buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = { case_name: 'wing', fidelity: 'standard' };
+  app.runMode = 'grid';
+  app.clusterConnected = false;
+  app.buildConfigFromVisualForm = () => { app.activeConfig.case_name = 'wing'; };
+  // cpl30 exists already
+  app.checkCaseNameExists = async (n) => ({ exists: n === 'wing_cpl30', is_running: false });
+  const seen = [];
+  app.showConfirmDialog = async (opts) => { seen.push(opts.title); return { action: 'cancel' }; };
+  let posted = false;
+  app.fetchWithTimeout = async () => { posted = true; return { ok: true, json: async () => ({}) }; };
+  app.showToast = () => {};
+  await app.generateRefinementStudy(false);
+  assert.ok(seen.some((t2) => t2.includes('Study Cases Already Exist')));
+  assert.equal(posted, false, 'must not POST when the user cancels');
+});
+
+test('grid study proceeds when names are free', async () => {
+  const app = await makeApp(`
+    <input id="cfg-case-name" value="wing">
+    <div id="fidelity-cards-group"><label class="fidelity-card selected" data-fidelity="standard"></label></div>
+    <select id="cfg-study-base-preset"><option value="standard" selected>s</option></select>
+    <input id="cfg-study-levels" value="20, 30, 45">
+    <select id="cfg-study-corefine"><option value="off" selected>off</option></select>
+  ` + buildStubBody());
+  installFormStubs(app);
+  seedForm(app);
+  app.activeConfig = { case_name: 'wing', fidelity: 'standard' };
+  app.runMode = 'grid';
+  app.buildConfigFromVisualForm = () => { app.activeConfig.case_name = 'wing'; };
+  app.checkCaseNameExists = async () => ({ exists: false, is_running: false });
+  let confirmCount = 0;
+  app.showConfirmDialog = async () => { confirmCount += 1; return { action: 'confirm' }; };
+  let posted = false;
+  app.fetchWithTimeout = async () => { posted = true; return { ok: true, json: async () => ({ variants: [] }) }; };
+  app.loadCasesArchive = () => {};
+  app.showToast = () => {};
+  await app.generateRefinementStudy(false);
+  assert.equal(confirmCount, 1, 'only the study confirm dialog is shown');
+  assert.equal(posted, true);
+});

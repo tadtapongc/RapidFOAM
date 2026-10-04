@@ -2123,6 +2123,52 @@ class CFDApp {
       this.openSSHModal();
       return;
     }
+
+    // Check the base name and each variant name against existing cases, so the
+    // user is warned before the study overwrites anything (mirrors the
+    // single-case flow).
+    const variantNames = levels.map((c) => `${base}_cpl${c}`);
+    const existing = [];
+    let anyRunning = false;
+    for (const name of variantNames) {
+      const chk = await this.checkCaseNameExists(name);
+      if (chk && chk.exists) {
+        existing.push(name);
+        if (chk.is_running) anyRunning = true;
+      }
+    }
+    if (existing.length > 0) {
+      let warningMsg = `These study cases already exist and will be overwritten: ${existing.join(', ')}. Overwriting replaces their dictionaries, mesh setup, and simulation logs.`;
+      let severity = 'warning';
+      let confirmBtnText = willSubmit ? 'Overwrite & Submit All' : 'Overwrite 3 Cases';
+      let confirmBtnClass = 'btn-warning';
+      let confirmAction = 'confirm';
+
+      if (anyRunning) {
+        warningMsg = `🚨 CRITICAL: One or more study cases are currently RUNNING or PENDING on the SLURM cluster (${existing.join(', ')}). Overwriting now may crash or corrupt the active simulation run.`;
+        severity = 'danger';
+        confirmBtnText = 'Force Overwrite';
+        confirmBtnClass = 'btn-danger-solid';
+      }
+
+      const decision0 = await this.showConfirmDialog({
+        title: `⚠️ Study Cases Already Exist`,
+        message: `The grid study "${base}" would reuse ${existing.length} existing case name${existing.length > 1 ? 's' : ''}.`,
+        warning: warningMsg,
+        severity: severity,
+        allowRename: false,
+        confirmText: confirmBtnText,
+        confirmClass: confirmBtnClass,
+        cancelText: 'Cancel & Change Name',
+      });
+      if (decision0.action !== confirmAction) {
+        this.showToast('Grid study cancelled. Please change the base case name.', 'info');
+        const caseInput = document.getElementById('cfg-case-name');
+        if (caseInput) { caseInput.focus(); caseInput.select(); }
+        return;
+      }
+    }
+
     const decision = await this.showConfirmDialog({
       title: `Grid study: ${base}`,
       message: `Generate ${levels.length} cases (${levels.join(', ')} cells/length) that differ only in mesh density.`,
