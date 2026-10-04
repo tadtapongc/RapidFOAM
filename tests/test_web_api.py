@@ -78,6 +78,8 @@ class TestWebAPI(unittest.TestCase):
     def setUp(self):
         # Remote telemetry is cached briefly; never leak state across tests.
         _telemetry_service._remote_telemetry_cache.clear()
+        from rapidfoam.web.routers import cases as _cases_router
+        _cases_router._invalidate_local_cases_cache()
 
     def test_saved_cluster_config(self):
         """Test retrieving cached cluster config with password redacted."""
@@ -2024,6 +2026,9 @@ class TestWebAPI(unittest.TestCase):
             def recv_exit_status(self):
                 return 0
 
+            def settimeout(self, _timeout):
+                return None
+
         class FakeStream(io.BytesIO):
             def __init__(self, data):
                 super().__init__(data)
@@ -2072,6 +2077,9 @@ class TestWebAPI(unittest.TestCase):
         class FakeChannel:
             def recv_exit_status(self):
                 return 0
+
+            def settimeout(self, _timeout):
+                return None
 
         class FakeStream(io.BytesIO):
             def __init__(self, data):

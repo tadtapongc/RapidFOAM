@@ -3164,6 +3164,12 @@ class CFDApp {
     const reqId = ++this.telemetryRequestId;
     const isStale = () => reqId !== this.telemetryRequestId || (select && select.value !== caseName);
     this.telemetryInFlight = true;
+    // Safety net: if any awaited fetch never settles, clear the in-flight latch
+    // after this timeout so the 5s interval is not blocked forever.
+    clearTimeout(this._telemetryInFlightTimer);
+    this._telemetryInFlightTimer = setTimeout(() => {
+      if (reqId === this.telemetryRequestId) this.telemetryInFlight = false;
+    }, 25000);
 
     const pill = document.getElementById('telemetry-convergence-pill');
     const forcesOverlay = document.getElementById('forces-empty-overlay');
@@ -3180,7 +3186,7 @@ class CFDApp {
       try {
         const refQuery = this.telemetryRefQuery();
         const balQuery = this.telemetryBalanceQuery();
-        const res = await fetch(`/api/telemetry/forces?case_name=${encodeURIComponent(caseName)}${refQuery}${balQuery}`);
+        const res = await this.fetchWithTimeout(`/api/telemetry/forces?case_name=${encodeURIComponent(caseName)}${refQuery}${balQuery}`);
         if (!res.ok) throw new Error(`Forces request failed (HTTP ${res.status})`);
         const data = await res.json();
         if (isStale()) return;
@@ -3301,7 +3307,7 @@ class CFDApp {
 
       // 2. Fetch Residuals
       try {
-        const res = await fetch(`/api/telemetry/residuals?case_name=${encodeURIComponent(caseName)}`);
+        const res = await this.fetchWithTimeout(`/api/telemetry/residuals?case_name=${encodeURIComponent(caseName)}`);
         if (!res.ok) throw new Error(`Residuals request failed (HTTP ${res.status})`);
         const resData = await res.json();
         if (isStale()) return;
@@ -3323,7 +3329,7 @@ class CFDApp {
 
       // 3. Fetch Solver Health
       try {
-        const res = await fetch(`/api/telemetry/solver?case_name=${encodeURIComponent(caseName)}`);
+        const res = await this.fetchWithTimeout(`/api/telemetry/solver?case_name=${encodeURIComponent(caseName)}`);
         if (!res.ok) throw new Error(`Solver health request failed (HTTP ${res.status})`);
         const solverData = await res.json();
         if (isStale()) return;
@@ -3344,7 +3350,7 @@ class CFDApp {
 
       // 4. Fetch Mesh Quality (checkMesh + boundary-layer coverage)
       try {
-        const res = await fetch(`/api/telemetry/mesh?case_name=${encodeURIComponent(caseName)}`);
+        const res = await this.fetchWithTimeout(`/api/telemetry/mesh?case_name=${encodeURIComponent(caseName)}`);
         if (!res.ok) throw new Error(`Mesh quality request failed (HTTP ${res.status})`);
         const meshData = await res.json();
         if (isStale()) return;
@@ -3360,7 +3366,7 @@ class CFDApp {
 
       // 5. Fetch Surface Integrity (surfaceCheck)
       try {
-        const res = await fetch(`/api/telemetry/surface?case_name=${encodeURIComponent(caseName)}`);
+        const res = await this.fetchWithTimeout(`/api/telemetry/surface?case_name=${encodeURIComponent(caseName)}`);
         if (!res.ok) throw new Error(`Surface integrity request failed (HTTP ${res.status})`);
         const surfaceData = await res.json();
         if (isStale()) return;
@@ -3377,7 +3383,20 @@ class CFDApp {
       // 6. Tail log (guarded against case switches)
       await this.fetchLogTail(caseName, reqId);
     } finally {
+      clearTimeout(this._telemetryInFlightTimer);
       if (reqId === this.telemetryRequestId) this.telemetryInFlight = false;
+    }
+  }
+
+  // Fetch with an AbortController timeout, so a hung request cannot block the
+  // telemetry poll forever.
+  async fetchWithTimeout(url, timeoutMs = 15000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -3965,7 +3984,7 @@ class CFDApp {
     if (expectedCase && caseName !== expectedCase) return;
 
     try {
-      const res = await fetch(`/api/telemetry/logs?case_name=${encodeURIComponent(caseName)}&log_type=${logType}&lines=60`);
+      const res = await this.fetchWithTimeout(`/api/telemetry/logs?case_name=${encodeURIComponent(caseName)}&log_type=${logType}&lines=60`);
       const data = await res.json();
       // Drop responses that belong to a case the user has already left.
       if (reqId !== null && reqId !== this.telemetryRequestId) return;

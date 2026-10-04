@@ -6,6 +6,8 @@ import asyncio
 import json
 import shlex
 import shutil
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -25,154 +27,193 @@ from rapidfoam.web.state import CASE_NAME_REGEX, PROJECT_ROOT, ssh_client
 
 router = APIRouter()
 
+# Local case scan is CPU/IO heavy (a full force.dat parse per case); run it
+# off the event loop and cache briefly so overlapping Archive views do not rescan.
+_LOCAL_CASES_TTL = 3.0
+_local_cases_cache: dict[str, Any] = {"ts": 0.0, "data": {}, "root": None}
+
+
+def _invalidate_local_cases_cache() -> None:
+    with _local_cases_cache_lock:
+        _local_cases_cache["ts"] = 0.0
+        _local_cases_cache["data"] = {}
+        _local_cases_cache["root"] = None
+
+
+_local_cases_cache_lock = threading.Lock()
+
+
+def _scan_local_cases() -> dict[str, dict[str, Any]]:
+    """Scan local cases/ for metadata (sync; call via to_thread)."""
+    cases: dict[str, dict[str, Any]] = {}
+    local_cases_dir = PROJECT_ROOT / "cases"
+    if not local_cases_dir.is_dir():
+        return cases
+    for d in local_cases_dir.iterdir():
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+
+        case_name = d.name
+        st = d.stat()
+        mtime_dt = datetime.fromtimestamp(st.st_mtime)
+        mtime_str = mtime_dt.strftime("%Y-%m-%d %H:%M")
+
+        # Check case configuration
+        cfg_file = d / "case_config.json"
+        if not cfg_file.is_file():
+            cfg_file = PROJECT_ROOT / "configs" / f"{case_name}.json"
+
+        default_flow = DEFAULT_CONFIG.get("flow", {})
+        default_velocity = float(default_flow.get("velocity", 16.67))
+        default_direction = default_flow.get("direction", "-z")
+        default_nprocs = int(DEFAULT_CONFIG.get("parallel", {}).get("n_procs", 32))
+        fidelity = DEFAULT_CONFIG.get("fidelity", "standard")
+        velocity = f"{default_velocity:.1f}"
+        flow_dir = default_direction
+        n_procs = default_nprocs
+        stl_name = "--"
+        if cfg_file.is_file():
+            try:
+                with open(cfg_file, encoding="utf-8") as cf:
+                    cd = json.load(cf)
+                    fidelity = cd.get("fidelity", fidelity)
+                    v_val = cd.get("flow", {}).get("velocity", default_velocity)
+                    velocity = f"{v_val:.1f}" if isinstance(v_val, (int, float)) else str(v_val)
+                    flow_dir = cd.get("flow", {}).get("direction", default_direction)
+                    n_procs = cd.get("parallel", {}).get("n_procs", default_nprocs)
+                    stls = cd.get("stl_files", [])
+                    if stls:
+                        stl_name = Path(stls[0]).name
+            except Exception:
+                pass
+
+        status = "Generated"
+        converged = False
+        has_forces = False
+        has_residuals = False
+        has_mesh = (d / "constant" / "polyMesh" / "points").is_file()
+        latest_iter: Optional[int] = None
+        downforce_val: Optional[float] = None
+        drag_val: Optional[float] = None
+        ld_val: Optional[float] = None
+
+        # Check forces
+        force_files = find_force_files(d)
+        if force_files:
+            has_forces = True
+            try:
+                drag_idx, drag_sign, df_idx, df_sign, _, _ = load_axis_config(
+                    config_path=str(cfg_file) if cfg_file.is_file() else None,
+                    case_dir=d,
+                )
+                is_sym = is_symmetry_case(
+                    config_path=str(cfg_file) if cfg_file.is_file() else None,
+                    case_dir=d,
+                )
+                times, drags, downforces = read_forces(
+                    force_files, drag_idx, drag_sign, df_idx, df_sign
+                )
+                if is_sym:
+                    drags = [drv * 2.0 for drv in drags]
+                    downforces = [dfv * 2.0 for dfv in downforces]
+                if times:
+                    latest_iter = int(times[-1])
+                    c_conv, _, _, d_avg, f_avg = check_convergence(drags, downforces)
+                    converged = c_conv
+                    downforce_val = round(f_avg, 2)
+                    drag_val = round(d_avg, 2)
+                    ld_val = round(f_avg / d_avg, 2) if abs(d_avg) > 1e-3 else None
+                    status = "Converged" if converged else "Solving"
+            except Exception:
+                pass
+
+        # Check log.simpleFoam
+        log_simple = d / "log.simpleFoam"
+        if log_simple.is_file():
+            has_residuals = True
+            tail = read_file_tail(log_simple)
+            try:
+                log_mtime = log_simple.stat().st_mtime
+            except OSError:
+                log_mtime = st.st_mtime
+            if "End" in tail or "Finalising parallel run" in tail:
+                status = "Converged" if converged else "Completed"
+            elif any(err in tail for err in ["FOAM FATAL", "Fatal error", "FOAM aborting", "sigFpe", "SIGFPE", "Floating point exception"]):
+                status = "Failed"
+            elif status != "Converged":
+                # If the log was modified in the last 3 minutes, it's actively solving
+                if (datetime.now().timestamp() - log_mtime) < 180:
+                    status = "Solving"
+                else:
+                    status = "Completed" if (latest_iter and latest_iter > 0) else "Failed"
+
+        # Check mesher stage if still generated
+        if status == "Generated":
+            log_snappy = d / "log.snappyHexMesh"
+            if log_snappy.is_file():
+                tail = read_file_tail(log_snappy)
+                try:
+                    snappy_mtime = log_snappy.stat().st_mtime
+                except OSError:
+                    snappy_mtime = st.st_mtime
+                if "End" in tail or "Finalising parallel run" in tail:
+                    status = "Meshed"
+                elif any(err in tail for err in ["FOAM FATAL", "Fatal error", "FOAM aborting", "sigFpe", "SIGFPE"]):
+                    status = "Failed"
+                elif (datetime.now().timestamp() - snappy_mtime) < 180:
+                    status = "Meshing"
+                else:
+                    status = "Failed"
+            elif has_mesh:
+                status = "Meshed"
+
+        cases[case_name] = {
+            "name": case_name,
+            "location": "Local",
+            "path": f"cases/{case_name}",
+            "modified": mtime_str,
+            "modified_ts": st.st_mtime,
+            "status": status,
+            "fidelity": fidelity,
+            "velocity": velocity,
+            "direction": flow_dir,
+            "n_procs": n_procs,
+            "stl_name": stl_name,
+            "has_forces": has_forces,
+            "has_residuals": has_residuals,
+            "has_mesh": has_mesh,
+            "latest_iter": latest_iter,
+            "converged": converged,
+            "downforce": downforce_val,
+            "drag": drag_val,
+            "ld_ratio": ld_val,
+        }
+    return cases
+
+
+async def _cached_local_cases() -> dict[str, dict[str, Any]]:
+    now = time.monotonic()
+    root = str(PROJECT_ROOT)
+    with _local_cases_cache_lock:
+        cached = _local_cases_cache["data"]
+        if (cached and _local_cases_cache["root"] == root
+                and now - _local_cases_cache["ts"] < _LOCAL_CASES_TTL):
+            return cached
+    cases = await asyncio.to_thread(_scan_local_cases)
+    with _local_cases_cache_lock:
+        _local_cases_cache["data"] = cases
+        _local_cases_cache["ts"] = now
+        _local_cases_cache["root"] = root
+    return cases
+
 
 @router.get("/api/cases")
 async def api_list_cases() -> list[dict[str, Any]]:
     """List simulation cases from local directory and cluster with comprehensive metadata."""
     cases_dict: dict[str, dict[str, Any]] = {}
 
-    # 1. Local cases
-    local_cases_dir = PROJECT_ROOT / "cases"
-    if local_cases_dir.is_dir():
-        for d in local_cases_dir.iterdir():
-            if not d.is_dir() or d.name.startswith("."):
-                continue
-
-            case_name = d.name
-            st = d.stat()
-            mtime_dt = datetime.fromtimestamp(st.st_mtime)
-            mtime_str = mtime_dt.strftime("%Y-%m-%d %H:%M")
-
-            # Check case configuration
-            cfg_file = d / "case_config.json"
-            if not cfg_file.is_file():
-                cfg_file = PROJECT_ROOT / "configs" / f"{case_name}.json"
-
-            default_flow = DEFAULT_CONFIG.get("flow", {})
-            default_velocity = float(default_flow.get("velocity", 16.67))
-            default_direction = default_flow.get("direction", "-z")
-            default_nprocs = int(DEFAULT_CONFIG.get("parallel", {}).get("n_procs", 32))
-            fidelity = DEFAULT_CONFIG.get("fidelity", "standard")
-            velocity = f"{default_velocity:.1f}"
-            flow_dir = default_direction
-            n_procs = default_nprocs
-            stl_name = "--"
-            if cfg_file.is_file():
-                try:
-                    with open(cfg_file, encoding="utf-8") as cf:
-                        cd = json.load(cf)
-                        fidelity = cd.get("fidelity", fidelity)
-                        v_val = cd.get("flow", {}).get("velocity", default_velocity)
-                        velocity = f"{v_val:.1f}" if isinstance(v_val, (int, float)) else str(v_val)
-                        flow_dir = cd.get("flow", {}).get("direction", default_direction)
-                        n_procs = cd.get("parallel", {}).get("n_procs", default_nprocs)
-                        stls = cd.get("stl_files", [])
-                        if stls:
-                            stl_name = Path(stls[0]).name
-                except Exception:
-                    pass
-
-            status = "Generated"
-            converged = False
-            has_forces = False
-            has_residuals = False
-            has_mesh = (d / "constant" / "polyMesh" / "points").is_file()
-            latest_iter: Optional[int] = None
-            downforce_val: Optional[float] = None
-            drag_val: Optional[float] = None
-            ld_val: Optional[float] = None
-
-            # Check forces
-            force_files = find_force_files(d)
-            if force_files:
-                has_forces = True
-                try:
-                    drag_idx, drag_sign, df_idx, df_sign, _, _ = load_axis_config(
-                        config_path=str(cfg_file) if cfg_file.is_file() else None,
-                        case_dir=d,
-                    )
-                    is_sym = is_symmetry_case(
-                        config_path=str(cfg_file) if cfg_file.is_file() else None,
-                        case_dir=d,
-                    )
-                    times, drags, downforces = read_forces(
-                        force_files, drag_idx, drag_sign, df_idx, df_sign
-                    )
-                    if is_sym:
-                        drags = [drv * 2.0 for drv in drags]
-                        downforces = [dfv * 2.0 for dfv in downforces]
-                    if times:
-                        latest_iter = int(times[-1])
-                        c_conv, _, _, d_avg, f_avg = check_convergence(drags, downforces)
-                        converged = c_conv
-                        downforce_val = round(f_avg, 2)
-                        drag_val = round(d_avg, 2)
-                        ld_val = round(f_avg / d_avg, 2) if abs(d_avg) > 1e-3 else None
-                        status = "Converged" if converged else "Solving"
-                except Exception:
-                    pass
-
-            # Check log.simpleFoam
-            log_simple = d / "log.simpleFoam"
-            if log_simple.is_file():
-                has_residuals = True
-                tail = read_file_tail(log_simple)
-                try:
-                    log_mtime = log_simple.stat().st_mtime
-                except OSError:
-                    log_mtime = st.st_mtime
-                if "End" in tail or "Finalising parallel run" in tail:
-                    status = "Converged" if converged else "Completed"
-                elif any(err in tail for err in ["FOAM FATAL", "Fatal error", "FOAM aborting", "sigFpe", "SIGFPE", "Floating point exception"]):
-                    status = "Failed"
-                elif status != "Converged":
-                    # If the log was modified in the last 3 minutes, it's actively solving
-                    if (datetime.now().timestamp() - log_mtime) < 180:
-                        status = "Solving"
-                    else:
-                        status = "Completed" if (latest_iter and latest_iter > 0) else "Failed"
-
-            # Check mesher stage if still generated
-            if status == "Generated":
-                log_snappy = d / "log.snappyHexMesh"
-                if log_snappy.is_file():
-                    tail = read_file_tail(log_snappy)
-                    try:
-                        snappy_mtime = log_snappy.stat().st_mtime
-                    except OSError:
-                        snappy_mtime = st.st_mtime
-                    if "End" in tail or "Finalising parallel run" in tail:
-                        status = "Meshed"
-                    elif any(err in tail for err in ["FOAM FATAL", "Fatal error", "FOAM aborting", "sigFpe", "SIGFPE"]):
-                        status = "Failed"
-                    elif (datetime.now().timestamp() - snappy_mtime) < 180:
-                        status = "Meshing"
-                    else:
-                        status = "Failed"
-                elif has_mesh:
-                    status = "Meshed"
-
-            cases_dict[case_name] = {
-                "name": case_name,
-                "location": "Local",
-                "path": f"cases/{case_name}",
-                "modified": mtime_str,
-                "modified_ts": st.st_mtime,
-                "status": status,
-                "fidelity": fidelity,
-                "velocity": velocity,
-                "direction": flow_dir,
-                "n_procs": n_procs,
-                "stl_name": stl_name,
-                "has_forces": has_forces,
-                "has_residuals": has_residuals,
-                "has_mesh": has_mesh,
-                "latest_iter": latest_iter,
-                "converged": converged,
-                "downforce": downforce_val,
-                "drag": drag_val,
-                "ld_ratio": ld_val,
-            }
+    # 1. Local cases (scanned off the event loop, briefly cached)
+    cases_dict.update(await _cached_local_cases())
 
     # 2. Remote cases if cluster connected
     if ssh_client.is_connected:

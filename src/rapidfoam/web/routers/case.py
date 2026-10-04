@@ -117,11 +117,14 @@ async def api_case_check_exists(case_name: str) -> dict[str, Any]:
     cluster_exists = False
     is_running = False
     if ssh_client.is_connected:
-        try:
+        def _remote_checks() -> tuple[bool, bool]:
             remote_case = f"{ssh_client.remote_repo_path}/cases/{safe_name}"
             remote_cfg = f"{ssh_client.remote_repo_path}/configs/{safe_name}.json"
-            cluster_exists = ssh_client.remote_file_exists(remote_case) or ssh_client.remote_file_exists(remote_cfg)
-            is_running = ssh_client.is_case_running(safe_name)
+            exists = ssh_client.remote_file_exists(remote_case) or ssh_client.remote_file_exists(remote_cfg)
+            return exists, ssh_client.is_case_running(safe_name)
+
+        try:
+            cluster_exists, is_running = await asyncio.to_thread(_remote_checks)
         except Exception:
             pass
 

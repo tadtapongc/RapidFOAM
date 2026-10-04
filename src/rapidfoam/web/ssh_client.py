@@ -187,14 +187,36 @@ class ClusterSSHClient:
 
     @_synchronized
     def run_command(self, command: str, timeout: Optional[float] = 60.0) -> tuple[int, str, str]:
-        """Execute command on the remote cluster."""
+        """Execute a command on the remote cluster.
+
+        Reads stdout/stderr *before* ``recv_exit_status()`` so the SSH channel
+        window is drained; calling ``recv_exit_status`` first deadlocks once the
+        remote output exceeds the channel window (~2 MiB), and neither the exec
+        ``timeout`` nor any read timeout bounds that. A wall-clock deadline also
+        caps the total time so a stalled transport cannot hang the shared lock
+        forever.
+        """
         if not self.is_connected:
             raise ConnectionError("Not connected to cluster SSH server.")
 
+        deadline = (time.time() + timeout) if timeout else None
         _stdin, stdout, stderr = self._client.exec_command(command, timeout=timeout)
-        exit_code = stdout.channel.recv_exit_status()
-        out_str = stdout.read().decode("utf-8", errors="replace")
-        err_str = stderr.read().decode("utf-8", errors="replace")
+        channel = stdout.channel
+        if deadline is not None:
+            channel.settimeout(max(0.1, deadline - time.time()))
+        try:
+            out_str = stdout.read().decode("utf-8", errors="replace")
+            err_str = stderr.read().decode("utf-8", errors="replace")
+            try:
+                exit_code = channel.recv_exit_status()
+            except Exception:
+                exit_code = -1
+        except Exception as exc:
+            try:
+                channel.close()
+            except Exception:
+                pass
+            raise TimeoutError(f"remote command timed out or failed: {exc}") from exc
         return exit_code, out_str, err_str
 
     @_synchronized

@@ -537,10 +537,8 @@ async def api_telemetry_residuals(case_name: str) -> dict[str, Any]:
             local_log = local_case / "log.simpleFoam"
             if local_log.is_file():
                 try:
-                    with open(local_log, encoding="utf-8", errors="replace") as f:
-                        lines = f.readlines()
-                        log_content = "".join(lines[-5000:])
-                        rows = parse_residuals_from_log(log_content)
+                    log_content = _read_text_tail_lines(local_log, max_lines=5000)
+                    rows = parse_residuals_from_log(log_content)
                 except Exception as exc:
                     log.warning("Could not read local log.simpleFoam: %s", exc)
 

@@ -271,7 +271,16 @@ async def _read_remote_bundle(specs: list[tuple[str, Optional[int]]], report: Op
     if not specs:
         return {}
     try:
-        return await asyncio.to_thread(ssh_client.read_remote_bundle, specs, report=report)
+        return await asyncio.wait_for(
+            asyncio.to_thread(ssh_client.read_remote_bundle, specs, report=report),
+            timeout=_REMOTE_BUNDLE_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        log.warning("Remote bundle read timed out after %ss", _REMOTE_BUNDLE_TIMEOUT)
+        if report is not None:
+            report.clear()
+            report.update({"ok": False, "reason": f"timed out after {_REMOTE_BUNDLE_TIMEOUT:.0f}s"})
+        return {}
     except Exception as exc:
         log.warning("Remote bundle read failed: %s", exc)
         if report is not None:
@@ -350,6 +359,9 @@ _remote_telemetry_cache: dict[str, tuple[float, dict[str, str], float]] = {}
 _remote_telemetry_lock = threading.Lock()
 _REMOTE_TELEMETRY_TTL = 2.5
 _REMOTE_TELEMETRY_EMPTY_TTL = 1.0
+# Hard cap on a single remote bundle read so a stalled SSH command cannot hang a
+# telemetry request indefinitely (the SSH call itself also has a deadline).
+_REMOTE_BUNDLE_TIMEOUT = 12.0
 
 
 def _remote_telemetry_key(case_name: str) -> str:
@@ -388,7 +400,9 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
 
     Single-flight per case: concurrent callers (the six telemetry endpoints the
     Studio polls together) await one shared read instead of each issuing an SSH
-    command on the shared, serialised session.
+    command on the shared, serialised session. Bounded by
+    ``_REMOTE_BUNDLE_TIMEOUT`` so a stalled read cannot hang a request, and a
+    hung producer is evicted so it never poisons the key.
     """
     if not ssh_client.is_connected:
         return {}
@@ -398,18 +412,26 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
         cached = _remote_telemetry_cache.get(key)
         if cached and now - cached[0] < cached[2]:
             return cached[1]
-        # Reuse an in-flight read for the same key if one is already running.
         pending = _remote_telemetry_inflight.get(key)
         if pending is not None and not pending.done():
             waiter = pending
         else:
             waiter = None
 
-    if waiter is not None:
+    async def _await_task(task: "asyncio.Task[dict[str, str]]") -> dict[str, str]:
         try:
-            await asyncio.shield(waiter)
+            return await asyncio.wait_for(asyncio.shield(task), timeout=_REMOTE_BUNDLE_TIMEOUT + 1.0)
+        except asyncio.TimeoutError:
+            # Producer is stuck: evict it so future calls start a fresh read.
+            with _remote_telemetry_lock:
+                if _remote_telemetry_inflight.get(key) is task:
+                    _remote_telemetry_inflight.pop(key, None)
+            return {}
         except Exception:
-            pass
+            return {}
+
+    if waiter is not None:
+        await _await_task(waiter)
         with _remote_telemetry_lock:
             cached = _remote_telemetry_cache.get(key)
             if cached:
@@ -427,7 +449,12 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
                 _remote_telemetry_inflight.pop(key, None)
 
     task.add_done_callback(_clear)
-    return await asyncio.shield(task)
+    await _await_task(task)
+    with _remote_telemetry_lock:
+        cached = _remote_telemetry_cache.get(key)
+        if cached:
+            return cached[1]
+    return {}
 
 
 _remote_telemetry_inflight: dict[str, "asyncio.Task[dict[str, str]]"] = {}
