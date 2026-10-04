@@ -340,11 +340,16 @@ def _time_dir_key(path: str) -> float:
         return 0.0
 
 
-# Short-lived cache so the forces/residuals/solver endpoints share one remote
-# read per poll instead of issuing three separate SSH command batches.
-_remote_telemetry_cache: dict[str, tuple[float, dict[str, str]]] = {}
+# Short-lived cache so the forces/residuals/solver/mesh/surface endpoints share
+# one remote read per poll instead of issuing separate SSH command batches. An
+# in-flight read is single-flighted per key: concurrent callers wait for the one
+# read rather than each firing their own (which would serialise on the SSH lock
+# and stall the server). Empty/failed reads are cached very briefly so a poll
+# does not repeat a slow/failing SSH command on every endpoint.
+_remote_telemetry_cache: dict[str, tuple[float, dict[str, str], float]] = {}
 _remote_telemetry_lock = threading.Lock()
 _REMOTE_TELEMETRY_TTL = 2.5
+_REMOTE_TELEMETRY_EMPTY_TTL = 1.0
 
 
 def _remote_telemetry_key(case_name: str) -> str:
@@ -362,16 +367,56 @@ def remote_telemetry_status(case_name: str) -> dict[str, Any]:
 
 
 async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
-    """Read every telemetry file for a case in one SSH command (cached ~2.5s)."""
+    """Read every telemetry file for a case in one SSH command (cached ~2.5s).
+
+    Single-flight per case: concurrent callers (the six telemetry endpoints the
+    Studio polls together) await one shared read instead of each issuing an SSH
+    command on the shared, serialised session.
+    """
     if not ssh_client.is_connected:
         return {}
     key = _remote_telemetry_key(case_name)
     now = time.monotonic()
     with _remote_telemetry_lock:
         cached = _remote_telemetry_cache.get(key)
-        if cached and now - cached[0] < _REMOTE_TELEMETRY_TTL:
+        if cached and now - cached[0] < cached[2]:
             return cached[1]
+        # Reuse an in-flight read for the same key if one is already running.
+        pending = _remote_telemetry_inflight.get(key)
+        if pending is not None and not pending.done():
+            waiter = pending
+        else:
+            waiter = None
 
+    if waiter is not None:
+        try:
+            await asyncio.shield(waiter)
+        except Exception:
+            pass
+        with _remote_telemetry_lock:
+            cached = _remote_telemetry_cache.get(key)
+            if cached:
+                return cached[1]
+        return {}
+
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(_do_remote_telemetry_read(case_name, key))
+    with _remote_telemetry_lock:
+        _remote_telemetry_inflight[key] = task
+
+    def _clear(_t: "asyncio.Future") -> None:
+        with _remote_telemetry_lock:
+            if _remote_telemetry_inflight.get(key) is task:
+                _remote_telemetry_inflight.pop(key, None)
+
+    task.add_done_callback(_clear)
+    return await asyncio.shield(task)
+
+
+_remote_telemetry_inflight: dict[str, "asyncio.Task[dict[str, str]]"] = {}
+
+
+async def _do_remote_telemetry_read(case_name: str, key: str) -> dict[str, str]:
     report: dict[str, Any] = {}
     bundle = await _read_remote_bundle([
         (f"cases/{case_name}/postProcessing/forces/*/force.dat", None),
@@ -396,11 +441,9 @@ async def _read_remote_telemetry(case_name: str) -> dict[str, str]:
         (f"cases/{case_name}/case_config.json", None),
     ], report=report)
     _remote_telemetry_status[key] = report
-    # Only cache a successful read, so a transient failure does not blank the UI
-    # for the whole TTL.
-    if report.get("ok"):
-        with _remote_telemetry_lock:
-            _remote_telemetry_cache[key] = (now, bundle)
+    ttl = _REMOTE_TELEMETRY_TTL if report.get("ok") else _REMOTE_TELEMETRY_EMPTY_TTL
+    with _remote_telemetry_lock:
+        _remote_telemetry_cache[key] = (time.monotonic(), bundle, ttl)
     return bundle
 
 

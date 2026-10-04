@@ -562,6 +562,34 @@ class TestWebAPI(unittest.TestCase):
         self.assertFalse(status.get("ok"))
         self.assertEqual(status.get("reason"), "remote repo not found")
 
+    def test_remote_telemetry_single_flight(self):
+        """Concurrent endpoints must share one remote read, not issue their own."""
+        import time as _time
+        from rapidfoam.web.services import telemetry as svc
+
+        calls = {"n": 0}
+
+        def fake_bundle(specs, report=None, timeout=10.0):
+            calls["n"] += 1
+            _time.sleep(0.15)  # simulate SSH latency
+            if report is not None:
+                report.update({"ok": True, "files": 0})
+            return {}
+
+        async def run_two():
+            return await asyncio.gather(
+                svc._read_remote_telemetry("remote_single_flight"),
+                svc._read_remote_telemetry("remote_single_flight"),
+                svc._read_remote_telemetry("remote_single_flight"),
+            )
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
+                patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
+            svc._remote_telemetry_cache.clear()
+            asyncio.run(run_two())
+
+        self.assertEqual(calls["n"], 1)
+
     def test_remote_forces_use_bundled_case_config_for_axes(self):
         """Axis mapping for a cluster-only case must come from the bundled
         case_config.json, not hard-coded defaults."""

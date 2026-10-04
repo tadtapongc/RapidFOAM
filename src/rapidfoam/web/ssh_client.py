@@ -423,7 +423,7 @@ class ClusterSSHClient:
     def read_remote_bundle(
         self,
         specs: list[tuple[str, Optional[int]]],
-        timeout: float = 30.0,
+        timeout: float = 10.0,
         report: Optional[dict] = None,
     ) -> dict[str, str]:
         """Read many remote files/globs in a *single* SSH command.
