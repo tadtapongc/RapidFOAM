@@ -649,16 +649,6 @@
                   </div>
 
                   <div class="form-group">
-                    <label for="cfg-override-autosize">Feature-Based Auto-Sizing</label>
-                    <select id="cfg-override-autosize" class="input">
-                      <option value="auto" selected>Auto (preset: off)</option>
-                      <option value="on">On</option>
-                      <option value="off">Off</option>
-                    </select>
-                    <span class="field-hint">Raise surface/edge refinement so the smallest geometry feature is resolved. Never coarsens the preset.</span>
-                  </div>
-
-                  <div class="form-group">
                     <label for="cfg-override-featurecells">Cells Across Smallest Feature</label>
                     <input type="number" id="cfg-override-featurecells" class="input" step="0.5" min="1" max="20" placeholder="Auto / Preset (4)">
                     <span class="field-hint">Target cells spanning the smallest feature (auto-sizing only)</span>
@@ -785,6 +775,15 @@
                       <h4 class="section-subtitle">Per-Surface Refinement</h4>
                       <span class="field-hint">Effective surface/edge level and layer count per STL. Geometry-derived (auto-size) shown as "auto"; manual <code>mesh_regions</code> overrides as "manual".</span>
                     </div>
+                  </div>
+                  <div class="form-group">
+                    <label for="cfg-override-autosize">Feature-Based Auto-Sizing</label>
+                    <select id="cfg-override-autosize" class="input">
+                      <option value="auto" selected>Auto (preset: off)</option>
+                      <option value="on">On</option>
+                      <option value="off">Off</option>
+                    </select>
+                    <span class="field-hint">On: derive each STL's surface/edge level from its own feature size (large parts coarse, small parts fine). Never coarsens the preset.</span>
                   </div>
                   <div class="form-group col-span-2 table-responsive">
                     <table class="data-table mini-table" id="cfg-per-surface-table">
