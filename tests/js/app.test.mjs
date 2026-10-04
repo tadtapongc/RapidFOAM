@@ -1135,9 +1135,11 @@ test('runGridStudy renders the fidelity table and verdict', async () => {
 // ------------------------------------------- Run mode / grid study
 test('setRunMode toggles the grid-study settings and hint', async () => {
   const app = await makeApp(`
-    <div class="run-mode-cards">
-      <label class="fidelity-card selected" data-mode="normal"><input type="radio" name="cfg-run-mode" value="normal" checked></label>
-      <label class="fidelity-card" data-mode="grid"><input type="radio" name="cfg-run-mode" value="grid"></label>
+    <div id="fidelity-cards-group">
+      <label class="fidelity-card" data-fidelity="fast"><input type="radio" name="cfg-fidelity" value="fast"></label>
+      <label class="fidelity-card selected" data-fidelity="standard"><input type="radio" name="cfg-fidelity" value="standard" checked></label>
+      <label class="fidelity-card" data-fidelity="fine"><input type="radio" name="cfg-fidelity" value="fine"></label>
+      <label class="fidelity-card" data-mode="grid"><input type="radio" name="cfg-fidelity" value="grid"></label>
     </div>
     <div id="grid-study-settings" style="display:none;"></div>
     <span id="cfg-run-mode-hint"></span>
@@ -1150,17 +1152,20 @@ test('setRunMode toggles the grid-study settings and hint', async () => {
   assert.equal(app._window.document.getElementById('grid-study-settings').style.display, 'block');
   assert.ok(app._window.document.getElementById('cfg-run-mode-hint').textContent.includes('Grid study'));
   assert.ok(app._window.document.getElementById('cfg-study-preview').textContent.includes('wing_cpl20'));
+  const grid = app._window.document.querySelector('.fidelity-card[data-mode="grid"]');
+  assert.ok(grid.classList.contains('selected'));
+  assert.ok(!app._window.document.querySelector('.fidelity-card[data-fidelity="standard"]').classList.contains('selected'));
   app.setRunMode('normal');
   assert.equal(app._window.document.getElementById('grid-study-settings').style.display, 'none');
+  assert.ok(app._window.document.querySelector('.fidelity-card[data-fidelity="standard"]').classList.contains('selected'));
 });
 
-test('grid mode hides the fidelity cards and uses the study Base Preset', async () => {
+test('grid mode uses the study Base Preset for the pinned fidelity', async () => {
   const app = await makeApp(`
-    <div class="run-mode-cards">
-      <label class="fidelity-card selected" data-mode="normal"><input type="radio" name="cfg-run-mode" value="normal" checked></label>
-      <label class="fidelity-card" data-mode="grid"><input type="radio" name="cfg-run-mode" value="grid"></label>
+    <div id="fidelity-cards-group">
+      <label class="fidelity-card selected" data-fidelity="standard"><input type="radio" name="cfg-fidelity" value="standard" checked></label>
+      <label class="fidelity-card" data-mode="grid"><input type="radio" name="cfg-fidelity" value="grid"></label>
     </div>
-    <div id="fidelity-cards-group"><label class="fidelity-card selected" data-fidelity="standard"><input name="cfg-fidelity" checked></label></div>
     <div id="grid-study-settings" style="display:none;">
       <select id="cfg-study-base-preset"><option value="fast">f</option><option value="standard" selected>s</option><option value="fine">x</option></select>
     </div>
@@ -1171,10 +1176,9 @@ test('grid mode hides the fidelity cards and uses the study Base Preset', async 
   installFormStubs(app);
   app.activeConfig = { case_name: 'wing', fidelity: 'standard' };
   app.setRunMode('grid');
-  assert.equal(app._window.document.getElementById('fidelity-cards-group').style.display, 'none');
   app._window.document.getElementById('cfg-study-base-preset').value = 'fine';
   app.buildConfigFromVisualForm();
   assert.equal(app.activeConfig.fidelity, 'fine');
   app.setRunMode('normal');
-  assert.notEqual(app._window.document.getElementById('fidelity-cards-group').style.display, 'none');
+  assert.ok(app._window.document.querySelector('.fidelity-card[data-fidelity="standard"]').classList.contains('selected'));
 });

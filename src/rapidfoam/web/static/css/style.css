@@ -2622,30 +2622,13 @@ body.dark-theme {
 
 
 
-/* ---- Run mode bar + grid-study card ---- */
-.run-mode-field {
-  margin-bottom: 14px;
+/* ---- Run configuration cards + grid-study card ---- */
+#fidelity-cards-group .fidelity-cards {
+  grid-template-columns: repeat(4, 1fr);
 }
-.run-mode-field > label {
+#cfg-run-mode-hint {
   display: block;
-  margin-bottom: 6px;
-}
-.run-mode-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.run-mode-cards {
-  grid-template-columns: repeat(2, 1fr);
-  flex: 1 1 420px;
-  max-width: 640px;
-}
-.run-mode-hint {
-  font-size: 12px;
-  color: var(--text-tertiary, #64748b);
-  flex: 1 1 200px;
-  line-height: 1.5;
+  margin-top: 8px;
 }
 .study-banner {
   background: rgba(37, 99, 235, 0.08);

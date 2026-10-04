@@ -371,15 +371,21 @@ class CFDApp {
   // Bidirectional Config Synchronization
   // -------------------------------------------------------------
   bindConfigFormInputs() {
-    // Fidelity cards
-    const fidelityCards = document.querySelectorAll('.fidelity-card');
+    // Fidelity cards (skip the grid-study card, which is handled as a run mode)
+    const fidelityCards = document.querySelectorAll('#fidelity-cards-group .fidelity-card');
     fidelityCards.forEach((card) => {
       card.addEventListener('click', () => {
+        if (card.dataset.mode === 'grid') {
+          this.setRunMode('grid');
+          return;
+        }
         fidelityCards.forEach((c) => c.classList.remove('selected'));
         card.classList.add('selected');
+        this._lastFidelityCard = card;
         const radio = card.querySelector('input[type="radio"]');
         if (radio) radio.checked = true;
         const fidelity = card.dataset.fidelity || 'standard';
+        this.setRunMode('normal');
         this.updateOverridePlaceholders(fidelity);
         this.buildConfigFromVisualForm();
         this.scheduleLayerPreview();
@@ -472,10 +478,6 @@ class CFDApp {
     document.getElementById('btn-generate-local')?.addEventListener('click', () => this.generateCaseLocally());
     document.getElementById('btn-refinement-study')?.addEventListener('click', () => this.generateRefinementStudy(false));
     document.getElementById('btn-refinement-study-submit')?.addEventListener('click', () => this.generateRefinementStudy(true));
-    // Run mode: card pair switching between normal and grid-study modes.
-    document.querySelectorAll('.run-mode-cards .fidelity-card').forEach((card) => {
-      card.addEventListener('click', () => this.setRunMode(card.getAttribute('data-mode')));
-    });
     document.getElementById('cfg-study-levels')?.addEventListener('input', () => this.renderStudyPreview());
     document.getElementById('cfg-study-corefine')?.addEventListener('change', () => this.renderStudyPreview());
     document.getElementById('cfg-study-base-preset')?.addEventListener('change', () => {
@@ -769,9 +771,8 @@ class CFDApp {
     // General
     cfg.case_name = this.getVal('cfg-case-name') || 'my_case';
 
-    const selectedFidelityCard = document.querySelector('.fidelity-card.selected');
-    // In grid-study mode the fidelity cards are hidden; the study card's Base
-    // Preset governs instead.
+    const selectedFidelityCard = document.querySelector('#fidelity-cards-group .fidelity-card[data-fidelity].selected');
+    // In grid-study mode the Base Preset governs the pinned fidelity.
     const studyPreset = (this.runMode === 'grid') ? this.getVal('cfg-study-base-preset') : '';
     cfg.fidelity = studyPreset || (selectedFidelityCard ? selectedFidelityCard.dataset.fidelity : 'standard');
 
@@ -2029,20 +2030,27 @@ class CFDApp {
 
   setRunMode(mode) {
     this.runMode = mode === 'grid' ? 'grid' : 'normal';
-    document.querySelectorAll('.run-mode-cards .fidelity-card').forEach((card) => {
-      const on = card.getAttribute('data-mode') === this.runMode;
-      card.classList.toggle('selected', on);
-      const radio = card.querySelector('input[type="radio"]');
-      if (radio) radio.checked = on;
-    });
+    // The run configuration is a single card row: three fidelity cards plus a
+    // grid-study card. Remember the last chosen fidelity so switching back from
+    // grid mode restores it.
+    const group = document.querySelector('#fidelity-cards-group');
+    if (group) {
+      const cards = Array.from(group.querySelectorAll('.fidelity-card'));
+      const prev = cards.find((c) => !c.dataset.mode && c.classList.contains('selected'));
+      if (prev) this._lastFidelityCard = prev;
+      const keep = this._lastFidelityCard || cards.find((c) => c.dataset.fidelity === 'standard');
+      cards.forEach((card) => {
+        const isGrid = card.dataset.mode === 'grid';
+        const on = (this.runMode === 'grid') ? isGrid : (card === keep);
+        card.classList.toggle('selected', on);
+        const radio = card.querySelector('input[type="radio"]');
+        if (radio) radio.checked = on;
+      });
+    }
     const settings = document.getElementById('grid-study-settings');
     if (settings) settings.style.display = this.runMode === 'grid' ? 'block' : 'none';
-    // In grid mode the fidelity cards give way to the study card's Base Preset.
-    const cards = document.getElementById('fidelity-cards-group');
-    if (cards) cards.style.display = this.runMode === 'grid' ? 'none' : '';
     if (this.runMode === 'grid') {
       const base = this.getVal('cfg-study-base-preset');
-      if (base) this.setSelectValue('cfg-study-base-preset', this.activeConfig?.fidelity || 'standard');
       if (base) this.activeConfig.fidelity = base;
       this.renderStudyPreview();
     }
@@ -2052,7 +2060,6 @@ class CFDApp {
         ? 'Grid study: three mesh-density variants from this config; all other fields are shared and pinned.'
         : 'Generate a single case at the chosen fidelity.';
     }
-    if (this.runMode === 'grid') this.renderStudyPreview();
   }
 
   renderStudyPreview() {

@@ -179,33 +179,6 @@
 
             <!-- SUB-TAB 1: General & Presets -->
             <div class="subtab-content active" id="subtab-general">
-              <!-- Run mode: the top-level choice for this case -->
-              <div class="run-mode-field">
-                <label>Run Mode</label>
-                <div class="run-mode-bar">
-                  <div class="fidelity-cards run-mode-cards">
-                  <label class="fidelity-card selected" data-mode="normal">
-                    <input type="radio" name="cfg-run-mode" value="normal" checked>
-                    <div class="card-body">
-                      <div class="card-title">Normal</div>
-                      <div class="card-cells">1 case</div>
-                      <div class="card-time">chosen fidelity</div>
-                      <div class="card-desc">Single production run at the selected fidelity preset</div>
-                    </div>
-                  </label>
-                  <label class="fidelity-card" data-mode="grid">
-                    <input type="radio" name="cfg-run-mode" value="grid">
-                    <div class="card-body">
-                      <div class="card-title">Grid Study</div>
-                      <div class="card-cells">3 cases</div>
-                      <div class="card-time">coarse → fine</div>
-                      <div class="card-desc">Three mesh densities from one pinned physics setup</div>
-                    </div>
-                  </label>
-                </div>
-                <span class="run-mode-hint" id="cfg-run-mode-hint">Generate a single case at the chosen fidelity.</span>
-                </div>
-              </div>
               <div class="form-grid">
                 <div class="form-group col-span-2">
                   <label for="cfg-case-name">Case Directory Name <span class="required">*</span></label>
@@ -213,9 +186,8 @@
                   <span class="field-hint">Target directory name created inside <code>cases/&lt;case_name&gt;/</code>.</span>
                 </div>
 
-
                 <div class="form-group col-span-2" id="fidelity-cards-group">
-                  <label>Mesh & Solver Fidelity Preset</label>
+                  <label>Run Configuration</label>
                   <div class="fidelity-cards">
                     <label class="fidelity-card" data-fidelity="fast">
                       <input type="radio" name="cfg-fidelity" value="fast">
@@ -246,7 +218,18 @@
                         <div class="card-desc">High-resolution boundary layer & wake vortex capture</div>
                       </div>
                     </label>
+
+                    <label class="fidelity-card" data-mode="grid">
+                      <input type="radio" name="cfg-fidelity" value="grid">
+                      <div class="card-body">
+                        <div class="card-title">Grid Study</div>
+                        <div class="card-cells">3 cases</div>
+                        <div class="card-time">coarse → fine</div>
+                        <div class="card-desc">Three mesh densities from one pinned physics setup</div>
+                      </div>
+                    </label>
                   </div>
+                  <span class="field-hint" id="cfg-run-mode-hint">Generate a single case at the chosen fidelity.</span>
                 </div>
 
                 <!-- Grid-study settings (shown only in grid mode) -->
