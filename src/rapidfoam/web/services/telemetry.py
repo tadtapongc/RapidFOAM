@@ -6,6 +6,7 @@ import asyncio
 import logging
 import math
 import re
+import tempfile
 import threading
 import time
 from collections import deque
@@ -464,13 +465,131 @@ def _remote_bundle_specs(case_name: str) -> list[tuple[str, Any]]:
         # Mesh-quality inputs: checkMesh is small; the final snappy layer table
         # sits near the end of the log, so a modest tail is enough. Glob the
         # snappy log so two-pass cases also fetch log.snappyHexMesh.layering.
-        (f"cases/{case_name}/log.checkMesh", 400),
+        # Full checkMesh (not a tail): its "cells:" line sits at the top, and the
+        # grid study reads it for the realised cell count.
+        (f"cases/{case_name}/log.checkMesh", None),
         (f"cases/{case_name}/log.snappyHexMesh*", 600),
         (f"cases/{case_name}/log.surfaceCheck", None),
         (f"cases/{case_name}/postProcessing/yPlus/*/yPlus.dat", None),
         (f"cases/{case_name}/postProcessing/fieldMinMax/*/fieldMinMax.dat", None),
         (f"cases/{case_name}/case_config.json", None),
     ]
+
+
+# --- Grid-study staging (cluster-aware) -----------------------------------
+#
+# ``grid_study`` discovers and reads cases from a single directory tree. To let
+# the Grid Independence panel analyse a study whose levels live only on the
+# cluster, we stage the small set of files it needs (coefficient.dat, force.dat,
+# case_config.json) into one temporary root: local levels are copied, cluster-only
+# levels come from the cached remote bundle. ``grid_study`` then runs unchanged.
+
+# Only these staged entries are needed by _coefficients_for_case / config reads.
+def _is_staged_study_path(rel: str) -> bool:
+    if rel in ("case_config.json", "log.checkMesh"):
+        return True
+    if rel.startswith("postProcessing/forceCoeffs/") and rel.endswith("/coefficient.dat"):
+        return True
+    if rel.startswith("postProcessing/forces/") and rel.endswith("/force.dat"):
+        return True
+    return False
+
+
+def _matches_study_base(name: str, base: str) -> bool:
+    return bool(name) and (name == base or name.startswith(base + "_"))
+
+
+def _stage_local_case(src: Path, dst: Path) -> None:
+    """Copy the study-relevant files of a local case into the staging root."""
+    from rapidfoam.postproc.forces import find_coefficient_files, find_force_files
+
+    config = src / "case_config.json"
+    if config.is_file():
+        dest = dst / "case_config.json"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(config.read_bytes())
+    checkmesh = src / "log.checkMesh"
+    if checkmesh.is_file():
+        dest = dst / "log.checkMesh"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(checkmesh.read_bytes())
+    for finder in (find_coefficient_files, find_force_files):
+        try:
+            files = finder(src)
+        except Exception:
+            files = []
+        for path in files:
+            try:
+                rel = path.relative_to(src)
+            except ValueError:
+                continue
+            dest = dst / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                dest.write_bytes(path.read_bytes())
+            except OSError:
+                continue
+
+
+def _stage_remote_case(case_dir: Path, name: str, bundle: dict[str, str]) -> None:
+    """Write a remote case's study-relevant bundle entries into the staging root."""
+    prefix = f"cases/{name}/"
+    for path, text in bundle.items():
+        if not path.startswith(prefix):
+            continue
+        rel = path[len(prefix):]
+        if not _is_staged_study_path(rel):
+            continue
+        dest = case_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(text, encoding="utf-8")
+
+
+async def prepare_study_root(base: str, local_cases_dir: Path) -> tuple[Path, Optional[Path]]:
+    """Resolve a cases root for ``grid_study``, including cluster-only levels.
+
+    Returns ``(root, temp_root)``. ``temp_root`` is a staging directory the caller
+    must remove, or ``None`` when the local ``cases/`` directory can be used
+    directly (not connected, or the cluster holds no level for ``base``). When the
+    cluster does hold levels, every local and remote level is staged into one
+    temporary root so ``grid_study`` sees a single coherent ladder.
+    """
+    if not ssh_client.is_connected:
+        return local_cases_dir, None
+    try:
+        remote = await asyncio.to_thread(ssh_client.list_remote_cases_detailed)
+    except Exception:
+        return local_cases_dir, None
+    remote_names = [
+        str(case.get("name", "")) for case in remote
+        if isinstance(case, dict) and _matches_study_base(str(case.get("name", "")), base)
+    ]
+    if not remote_names:
+        return local_cases_dir, None
+
+    temp_root = Path(tempfile.mkdtemp(prefix="rapidfoam-study-"))
+    local_names: set[str] = set()
+    if local_cases_dir.is_dir():
+        for entry in local_cases_dir.iterdir():
+            if entry.is_dir() and _matches_study_base(entry.name, base):
+                local_names.add(entry.name)
+                try:
+                    _stage_local_case(entry, temp_root / entry.name)
+                except OSError:
+                    pass
+
+    remote_only = [name for name in remote_names if name and name not in local_names]
+    bundles = await asyncio.gather(
+        *(_read_remote_telemetry(name) for name in remote_only),
+        return_exceptions=True,
+    )
+    for name, bundle in zip(remote_only, bundles):
+        if isinstance(bundle, dict) and bundle:
+            try:
+                _stage_remote_case(temp_root / name, name, bundle)
+            except OSError:
+                pass
+    return temp_root, temp_root
 
 
 def _subsample_indices(count: int, max_pts: int = 400) -> list[int]:

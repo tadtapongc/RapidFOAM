@@ -673,6 +673,48 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(res["verdict"], "grid-independent")
         self.assertIn("richardson", res)
 
+    def test_grid_endpoint_reads_cluster_only_study(self):
+        """A refinement study that exists only on the cluster is staged from the
+        shared remote bundle and analysed, with no local download needed."""
+        from rapidfoam.web.services import telemetry as svc
+
+        cds = {"rc_cpl20": 0.312, "rc_cpl30": 0.301, "rc_cpl45": 0.297}
+        cls = {"rc_cpl20": 1.44, "rc_cpl30": 1.40, "rc_cpl45": 1.39}
+        remote_cases = [{"name": name} for name in cds]
+
+        def fake_bundle(specs, report=None, timeout=30.0):
+            name = specs[0][0].split("/")[1]
+            coeff = "# Time Cd Cl\n" + "".join(
+                f"{i} {cds[name]} {cls[name]}\n" for i in range(1, 30)
+            )
+            cfg = json.dumps({
+                "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+                "mesh_params": {"block_cells": [20, 100, 10]},
+                "layers": {"y_plus_target": 30, "n_layers": 8},
+                "solver": {"end_time": 1500},
+            })
+            if report is not None:
+                report.update({"ok": True, "files": 3})
+            return {
+                f"cases/{name}/postProcessing/forceCoeffs/0/coefficient.dat": coeff,
+                f"cases/{name}/case_config.json": cfg,
+                f"cases/{name}/log.checkMesh": "Mesh stats\n    cells:      7000000\n",
+            }
+
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True), \
+                patch.object(ssh_client, "list_remote_cases_detailed", return_value=remote_cases), \
+                patch.object(ssh_client, "read_remote_bundle", side_effect=fake_bundle):
+            svc.clear_remote_telemetry_cache()
+            res = asyncio.run(api_telemetry_grid("rc"))
+
+        self.assertEqual(res["mode"], "refinement")
+        self.assertTrue(res["available"])
+        self.assertEqual(res["verdict"], "grid-independent")
+        self.assertIn("cpl20", res["per_fidelity"])
+        self.assertTrue(res["pinned_consistent"])
+        # The staged log.checkMesh supplies the realised cell count.
+        self.assertEqual(res["per_fidelity"]["cpl20"]["mesh_cells"], 7_000_000)
+
     def test_refinement_study_endpoint(self):
         """The refinement-study endpoint writes 3 cpl-variant configs."""
         from rapidfoam.web.routers.case import api_case_refinement_study

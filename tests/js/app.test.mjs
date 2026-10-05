@@ -1105,31 +1105,150 @@ test('runGridStudy renders the fidelity table and verdict', async () => {
   const app = await makeApp(`
     <table><tbody id="grid-tbody"></tbody></table>
     <p id="grid-verdict"></p>
+    <p id="grid-richardson"></p>
+    <table><thead><tr><th id="grid-level-head">Level</th></tr></thead></table>
     <input id="grid-base-input">
     <select id="telemetry-case-select"><option value="wing_standard" selected>wing_standard</option></select>
   `);
   installFormStubs(app);
+  app.fidelityPresets = {
+    fast: { mesh: { cells_per_length: 20 } },
+    fine: { mesh: { cells_per_length: 37.5 } },
+  };
   app._window.fetch = async (url) => {
     assert.ok(url.includes('base=wing'), url);
     return { ok: true, json: async () => ({
       verdict: 'grid-independent',
       converged: true,
-      deltas: { cd_std_fine_pct: 1.33, cl_std_fine_pct: 0.71 },
-      richardson: { p: 1.886 },
+      refinement_ratio: 1.5,
+      deltas: { cd_std_fine_pct: 1.33, cl_std_fine_pct: 0.71, ld_std_fine_pct: 0.35 },
+      richardson: { p: 1.886, cd_extrapolated: 0.2958, cl_extrapolated: 1.385 },
+      gci: { safety_factor: 1.25, cd_pct: 0.42, cl_pct: 0.31 },
+      step_deltas: { fine: { cd_pct: 0.2, cl_pct: 0.1 } },
       note: 'std->fine close',
       per_fidelity: {
-        fast: { available: true, cd: 0.312, cl: 1.44, cells: 4000000 },
-        fine: { available: true, cd: 0.297, cl: 1.39, cells: 20000000 },
+        fast: { available: true, cd: 0.312, cl: 1.44, ld: 4.615, cd_pct: 0.4, cl_pct: 0.3, cells: 4000000, mesh_cells: 8000000 },
+        fine: { available: true, cd: 0.297, cl: 1.39, ld: 4.680, cd_pct: 0.2, cl_pct: 0.1, cells: 20000000, mesh_cells: 41000000 },
       },
     }) };
   };
   await app.runGridStudy();
-  const rows = app._window.document.getElementById('grid-tbody').innerHTML;
+  const doc = app._window.document;
+  assert.equal(doc.getElementById('grid-level-head').textContent, 'Cells / length');
+  const rows = doc.getElementById('grid-tbody').innerHTML;
   assert.ok(rows.includes('fast') && rows.includes('0.31200'), rows);
-  assert.ok(rows.includes('20,000,000'), rows);
-  const verdict = app._window.document.getElementById('grid-verdict').textContent;
+  assert.ok(rows.includes('>20<'), rows);
+  assert.ok(rows.includes('4.615'), rows);            // L/D column
+  assert.ok(rows.includes('0.20'), rows);             // per-step ΔCd% for fine
+  assert.ok(rows.includes('20,000,000'), rows);       // block cells
+  assert.ok(rows.includes('41,000,000'), rows);       // realised mesh cells
+  const verdict = doc.getElementById('grid-verdict').textContent;
   assert.ok(verdict.includes('grid-independent'), verdict);
-  assert.ok(verdict.includes('Richardson'), verdict);
+  const rich = doc.getElementById('grid-richardson').textContent;
+  assert.ok(rich.includes('CD∞') && rich.includes('0.2958'), rich);
+  assert.ok(rich.includes('GCI(Cd) ±0.42%'), rich);
+});
+
+test('runGridStudy strips a refinement-study cpl suffix from the default base', async () => {
+  const app = await makeApp(`
+    <table><tbody id="grid-tbody"></tbody></table>
+    <p id="grid-verdict"></p>
+    <input id="grid-base-input">
+    <select id="telemetry-case-select"><option value="wing_cpl30" selected>wing_cpl30</option></select>
+  `);
+  installFormStubs(app);
+  let requested = null;
+  app._window.fetch = async (url) => {
+    requested = url;
+    return { ok: true, json: async () => ({
+      verdict: 'insufficient-data', converged: false, per_fidelity: {},
+    }) };
+  };
+  await app.runGridStudy();
+  assert.ok(requested.includes('base=wing'), requested);
+  assert.ok(!requested.includes('wing_cpl30'), requested);
+});
+
+test('runGridStudy shows refinement mode, level header and pinned note', async () => {
+  const app = await makeApp(`
+    <table><tbody id="grid-tbody"></tbody></table>
+    <p id="grid-verdict"></p>
+    <p id="grid-richardson"></p>
+    <p id="grid-pinned-note"></p>
+    <span id="grid-mode-badge"></span>
+    <table><thead><tr><th id="grid-level-head">Level</th></tr></thead></table>
+    <input id="grid-base-input" value="wing">
+  `);
+  installFormStubs(app);
+  app._window.fetch = async () => ({ ok: true, json: async () => ({
+    mode: 'refinement',
+    verdict: 'grid-independent',
+    converged: true,
+    pinned_consistent: true,
+    refinement_ratio: 1.5,
+    deltas: { cd_std_fine_pct: 1.3, cl_std_fine_pct: 0.7 },
+    richardson: { p: 1.8, cd_extrapolated: 0.2958, cl_extrapolated: 1.385 },
+    gci: { safety_factor: 1.25, cd_pct: 0.42, cl_pct: 0.31 },
+    monotonic: { cd: true, cl: true },
+    per_fidelity: {
+      cpl20: { available: true, cd: 0.312, cl: 1.44, cells: 4000000 },
+      cpl45: { available: true, cd: 0.297, cl: 1.39, cells: 20000000 },
+    },
+  }) });
+  await app.runGridStudy();
+  const doc = app._window.document;
+  assert.equal(doc.getElementById('grid-mode-badge').textContent, 'Refinement ladder');
+  assert.equal(doc.getElementById('grid-level-head').textContent, 'Cells / length');
+  const gridRows = doc.getElementById('grid-tbody').innerHTML;
+  assert.ok(gridRows.includes('cpl20') && gridRows.includes('>20<'), gridRows);
+  assert.ok(doc.getElementById('grid-pinned-note').textContent.includes('pinned and consistent'));
+  assert.ok(doc.getElementById('grid-richardson').textContent.includes('GCI(Cd) ±0.42%'));
+});
+
+test('runGridStudy flags a partial refinement ladder', async () => {
+  const app = await makeApp(`
+    <table><tbody id="grid-tbody"></tbody></table>
+    <p id="grid-verdict"></p>
+    <p id="grid-pinned-note"></p>
+    <span id="grid-mode-badge"></span>
+    <input id="grid-base-input" value="wing">
+  `);
+  installFormStubs(app);
+  app._window.fetch = async () => ({ ok: true, json: async () => ({
+    mode: 'refinement',
+    verdict: 'insufficient-data',
+    converged: false,
+    pinned_consistent: false,
+    per_fidelity: {
+      cpl20: { available: true, cd: 0.312, cl: 1.44, cells: 4000000 },
+      cpl30: { available: false, note: 'no force/coefficient data' },
+      cpl45: { available: true, cd: 0.297, cl: 1.39, cells: 20000000 },
+    },
+  }) });
+  await app.runGridStudy();
+  const doc = app._window.document;
+  const verdict = doc.getElementById('grid-verdict').textContent;
+  assert.ok(verdict.includes('2/3 levels have solver output'), verdict);
+  assert.ok(doc.getElementById('grid-tbody').innerHTML.includes('no force/coefficient data'));
+  assert.ok(doc.getElementById('grid-pinned-note').textContent.includes('not strictly valid'));
+});
+
+test('switching case clears a stale Grid Independence verdict', async () => {
+  const app = await makeApp(`
+    <table><tbody id="grid-tbody"><tr><td>stale</td></tr></tbody></table>
+    <p id="grid-verdict">Verdict: grid-independent</p>
+    <p id="grid-richardson">Richardson: p 1.8</p>
+    <p id="grid-pinned-note">settings pinned</p>
+    <span id="grid-mode-badge">Refinement ladder</span>
+    <th id="grid-level-head">Cells / length</th>
+  `);
+  app.clearTelemetryView('other');
+  const doc = app._window.document;
+  assert.equal(doc.getElementById('grid-verdict').textContent, '');
+  assert.equal(doc.getElementById('grid-richardson').textContent, '');
+  assert.equal(doc.getElementById('grid-pinned-note').textContent, '');
+  assert.equal(doc.getElementById('grid-mode-badge').style.display, 'none');
+  assert.ok(doc.getElementById('grid-tbody').innerHTML.includes('Run a study'));
 });
 
 // ------------------------------------------- Run mode / grid study

@@ -117,11 +117,13 @@ const TELEMETRY_HELP = {
   },
   gridstudy: {
     title: 'Grid Independence',
-    html: `<p>Compares the <code>fast</code>, <code>standard</code> and <code>fine</code> meshes of a case to check the forces are mesh-converged.</p>
+    html: `<p>Compares three meshes of a case to check the forces are mesh-converged.</p>
       <ul>
-        <li>Enter the case <strong>base</strong> name (e.g. <code>wing</code>) and Run; it looks for <code>wing_fast</code>, <code>wing_standard</code>, <code>wing_fine</code>.</li>
-        <li>Reports the trailing-window Cd/Cl per fidelity, the standard→fine deltas, and a Richardson order <em>p</em>.</li>
-        <li>Verdict: <strong>grid-independent</strong> when Cd changes &lt; 3% and Cl &lt; 5% between standard and fine.</li>
+        <li>Enter the case <strong>base</strong> name (e.g. <code>wing</code>) and Run. It first looks for a <strong>refinement ladder</strong> (<code>wing_cpl20</code>, <code>wing_cpl30</code>, <code>wing_cpl45</code>) — a valid ladder where only mesh density varies — and otherwise for the fidelity cases <code>wing_fast</code> / <code>wing_standard</code> / <code>wing_fine</code>.</li>
+        <li>Local cases and, when the cluster is connected, cluster-only levels are both included — a submitted study can be analysed without downloading it first.</li>
+        <li>The mode badge shows which was found. The table lists the trailing-window Cd/Cl and cell count per level, the standard→fine deltas, and a Richardson order <em>p</em>.</li>
+        <li>Verdict: <strong>grid-independent</strong> when Cd changes &lt; 3% and Cl &lt; 5% between the two finest levels.</li>
+        <li>Levels with no solver output yet are shown as awaiting data, and the verdict degrades to <strong>insufficient-data</strong> until three levels have run. For a refinement ladder, that the pinned near-wall/solver settings agree is reported below the verdict.</li>
       </ul>`,
   },
 };
@@ -3147,6 +3149,7 @@ class CFDApp {
 
     this.resetSolverHealth();
     this.resetMeshQuality();
+    this.resetGridStudy();
 
     // Hide overlays while loading so a stale "no data" state is not shown.
     ['forces-empty-overlay', 'residuals-empty-overlay', 'coeff-empty-overlay',
@@ -4071,6 +4074,37 @@ class CFDApp {
     this.setValText('mesh-quality-note', message || 'No mesh report yet.');
   }
 
+  resetGridStudy(message) {
+    // Clear the Grid Independence panel so a previously studied base's verdict
+    // does not linger after the monitored case changes.
+    const tbody = document.getElementById('grid-tbody');
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Run a study to compare mesh levels.</td></tr>';
+    }
+    const verdictEl = document.getElementById('grid-verdict');
+    if (verdictEl) {
+      verdictEl.textContent = message || '';
+      verdictEl.className = 'field-hint';
+    }
+    const richEl = document.getElementById('grid-richardson');
+    if (richEl) {
+      richEl.textContent = '';
+      richEl.className = 'field-hint';
+    }
+    const pinnedEl = document.getElementById('grid-pinned-note');
+    if (pinnedEl) {
+      pinnedEl.textContent = '';
+      pinnedEl.className = 'field-hint';
+    }
+    const badge = document.getElementById('grid-mode-badge');
+    if (badge) {
+      badge.textContent = '--';
+      badge.style.display = 'none';
+    }
+    const head = document.getElementById('grid-level-head');
+    if (head) head.textContent = 'Cells / length';
+  }
+
   renderCoefficientKpis(data) {
     const summary = (data.coefficients && data.coefficients.summary) || {};
     const fmt = (value, digits = 4) => (value === null || value === undefined) ? '--' : Number(value).toFixed(digits);
@@ -4204,42 +4238,143 @@ class CFDApp {
   async runGridStudy() {
     const tbody = document.getElementById('grid-tbody');
     const verdictEl = document.getElementById('grid-verdict');
+    const pinnedEl = document.getElementById('grid-pinned-note');
+    const modeBadge = document.getElementById('grid-mode-badge');
+    const levelHead = document.getElementById('grid-level-head');
     const input = document.getElementById('grid-base-input');
     if (!tbody) return;
-    // Default the base name to the selected case, stripped of a fidelity suffix.
+
+    const setMode = (label) => {
+      if (!modeBadge) return;
+      modeBadge.textContent = label || '--';
+      modeBadge.style.display = label ? '' : 'none';
+    };
+    const setPinned = (text, ok = true) => {
+      if (!pinnedEl) return;
+      pinnedEl.textContent = text || '';
+      pinnedEl.className = `field-hint ${ok ? '' : 'mesh-metric-fail'}`.trim();
+    };
+
+    // Default the base name to the selected case, stripped of a fidelity or
+    // refinement-study suffix (the ladder is named <base>_cpl<N>).
     let base = (input && input.value.trim()) || (document.getElementById('telemetry-case-select') || {}).value || '';
-    base = base.replace(/_(fast|standard|fine)$/i, '');
+    base = base.replace(/_(fast|standard|fine)$/i, '').replace(/_cpl\d+$/i, '');
     if (!base) {
       if (verdictEl) verdictEl.textContent = 'Enter a case base name (e.g. wing).';
       return;
     }
     if (input && !input.value.trim()) input.value = base;
-    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Running…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Running…</td></tr>';
+    setMode('');
+    setPinned('');
+
+    let data;
     try {
       const res = await this.fetchWithTimeout(`/api/telemetry/grid?base=${encodeURIComponent(base)}`, 20000);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const fmt = (v, d = 5) => (v === null || v === undefined) ? '--' : Number(v).toFixed(d);
-      const rows = Object.entries(data.per_fidelity || {}).map(([fid, info]) => {
-        if (!info || !info.available) {
-          return `<tr><td>${this.escapeHtml(fid)}</td><td colspan="3" class="text-muted">${this.escapeHtml((info && info.note) || 'unavailable')}</td></tr>`;
-        }
-        const cells = info.cells ? Number(info.cells).toLocaleString() : '--';
-        return `<tr><td>${this.escapeHtml(fid)}</td><td class="monospace">${fmt(info.cd)}</td>`
-          + `<td class="monospace">${fmt(info.cl)}</td><td class="monospace">${cells}</td></tr>`;
-      });
-      tbody.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="4" class="text-center text-muted">No fidelities found.</td></tr>';
-      if (verdictEl) {
-        let text = `Verdict: ${data.verdict || '--'}`;
-        if (data.deltas) text += ` — std→fine Cd ${data.deltas.cd_std_fine_pct}%, Cl ${data.deltas.cl_std_fine_pct}%`;
-        if (data.richardson) text += ` — Richardson p = ${data.richardson.p}`;
-        if (data.note) text += ` — ${data.note}`;
-        verdictEl.textContent = text;
-        verdictEl.className = `field-hint ${data.converged ? 'mesh-metric-pass' : 'mesh-metric-usable'}`;
-      }
+      data = await res.json();
     } catch (err) {
-      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Study failed.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Study failed.</td></tr>';
       if (verdictEl) verdictEl.textContent = `Grid study failed: ${err.message}`;
+      if (levelHead) levelHead.textContent = 'Cells / length';
+      return;
+    }
+
+    // A refinement study finds <base>_cpl<N> cases; otherwise it is a fidelity
+    // comparison over <base>_fast/_standard/_fine.
+    const refinement = data.mode === 'refinement';
+    setMode(refinement ? 'Refinement ladder' : 'Fidelity presets');
+
+    // The mesh-resolution axis is cells per length. A refinement level encodes
+    // it in its name (cpl20 -> 20); a fidelity preset carries it in the
+    // schema-defaults table (fast 20, standard 30, fine 37.5). The level name is
+    // kept as a muted suffix so each row stays identifiable.
+    const cellsPerLength = (level) => {
+      const match = /^cpl(\d+(?:\.\d+)?)$/i.exec(level);
+      if (match) return Number(match[1]);
+      const preset = this.fidelityPresets && this.fidelityPresets[level];
+      const cpl = preset && preset.mesh ? preset.mesh.cells_per_length : null;
+      return typeof cpl === 'number' ? cpl : null;
+    };
+    const levelCell = (level) => {
+      const name = this.escapeHtml(level);
+      const cpl = cellsPerLength(level);
+      return cpl === null
+        ? name
+        : `<span class="monospace">${cpl}</span> <span class="text-muted small">${name}</span>`;
+    };
+    if (levelHead) levelHead.textContent = 'Cells / length';
+
+    const fmt = (v, d = 5) => (v === null || v === undefined) ? '--' : Number(v).toFixed(d);
+    // Per-level trailing-window variation shown as a muted suffix on Cd/Cl.
+    const windowPct = (v) => (v === null || v === undefined) ? '' : ` <span class="text-muted small">±${v}%</span>`;
+    const stepDeltas = data.step_deltas || {};
+    const entries = Object.entries(data.per_fidelity || {});
+    const availableCount = entries.filter(([, info]) => info && info.available).length;
+    const rows = entries.map(([level, info]) => {
+      if (!info || !info.available) {
+        return `<tr><td>${levelCell(level)}</td>`
+          + `<td colspan="7" class="text-muted">${this.escapeHtml((info && info.note) || 'awaiting solver output')}</td></tr>`;
+      }
+      const delta = stepDeltas[level] || {};
+      const blockCells = info.cells ? Number(info.cells).toLocaleString() : '--';
+      const meshCells = info.mesh_cells ? Number(info.mesh_cells).toLocaleString() : '--';
+      return `<tr><td>${levelCell(level)}</td>`
+        + `<td class="monospace">${fmt(info.cd)}${windowPct(info.cd_pct)}</td>`
+        + `<td class="monospace">${fmt(delta.cd_pct, 2)}</td>`
+        + `<td class="monospace">${fmt(info.cl)}${windowPct(info.cl_pct)}</td>`
+        + `<td class="monospace">${fmt(delta.cl_pct, 2)}</td>`
+        + `<td class="monospace">${fmt(info.ld, 3)}</td>`
+        + `<td class="monospace">${blockCells}</td>`
+        + `<td class="monospace">${meshCells}</td></tr>`;
+    });
+    tbody.innerHTML = rows.length
+      ? rows.join('')
+      : '<tr><td colspan="8" class="text-center text-muted">No levels found for this base.</td></tr>';
+
+    if (verdictEl) {
+      let text = `Verdict: ${data.verdict || '--'}`;
+      if (data.deltas) {
+        const step = refinement ? 'coarse→fine' : 'std→fine';
+        text += ` — ${step} Cd ${data.deltas.cd_std_fine_pct}%, Cl ${data.deltas.cl_std_fine_pct}%`;
+        if (data.deltas.ld_std_fine_pct !== undefined) text += `, L/D ${data.deltas.ld_std_fine_pct}%`;
+      }
+      if (data.note) text += ` — ${data.note}`;
+      // Partial study: make it explicit that the answer is waiting on the rest.
+      if (data.verdict === 'insufficient-data' && availableCount > 0 && availableCount < 3) {
+        text += ` — ${availableCount}/3 levels have solver output; re-run once the rest finish.`;
+      }
+      verdictEl.textContent = text;
+      verdictEl.className = `field-hint ${data.converged ? 'mesh-metric-pass' : 'mesh-metric-usable'}`;
+    }
+
+    // Richardson extrapolation + Roache GCI: the converged value and its band.
+    const richEl = document.getElementById('grid-richardson');
+    if (richEl) {
+      const parts = [];
+      const rich = data.richardson;
+      if (rich) {
+        if (rich.cd_extrapolated !== null && rich.cd_extrapolated !== undefined) parts.push(`CD∞ ${rich.cd_extrapolated}`);
+        if (rich.cl_extrapolated !== null && rich.cl_extrapolated !== undefined) parts.push(`CL∞ ${rich.cl_extrapolated}`);
+        parts.push(`p ${rich.p}`);
+        if (data.refinement_ratio !== undefined) parts.push(`r ${data.refinement_ratio}`);
+        const gci = data.gci;
+        if (gci && gci.cd_pct !== null && gci.cd_pct !== undefined) parts.push(`GCI(Cd) ±${gci.cd_pct}%`);
+        if (gci && gci.cl_pct !== null && gci.cl_pct !== undefined) parts.push(`GCI(Cl) ±${gci.cl_pct}%`);
+      }
+      const nonMonotone = data.monotonic && (data.monotonic.cd === false || data.monotonic.cl === false);
+      if (data.monotonic && data.monotonic.cd === false) parts.push('⚠ Cd not monotone');
+      if (data.monotonic && data.monotonic.cl === false) parts.push('⚠ Cl not monotone');
+      richEl.textContent = parts.length ? `Richardson: ${parts.join(' · ')}` : '';
+      richEl.className = `field-hint ${nonMonotone ? 'mesh-metric-usable' : ''}`.trim();
+    }
+
+    // Refinement studies pin the near-wall/solver settings; if they differ the
+    // Richardson estimate is not strictly valid, so say so.
+    if (refinement && data.pinned_consistent === false) {
+      setPinned('⚠ Near-wall/solver settings differ between levels — Richardson p is not strictly valid.', false);
+    } else if (refinement) {
+      setPinned('Near-wall/solver settings are pinned and consistent across the ladder.', true);
     }
   }
 

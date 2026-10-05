@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import math
+import shutil
 from pathlib import Path
 from typing import Any, Optional
 
@@ -78,6 +79,7 @@ from rapidfoam.web.services.telemetry import (
     parse_residuals_from_log,
     parse_solver_diagnostics_from_log,
     parse_solver_info_text,
+    prepare_study_root,
 )
 from rapidfoam.web.state import ALLOWED_LOG_TYPES, CASE_NAME_REGEX, PROJECT_ROOT, ssh_client
 
@@ -880,14 +882,22 @@ async def api_telemetry_surface(case_name: str) -> dict[str, Any]:
 
 @router.get("/api/telemetry/grid")
 async def api_telemetry_grid(base: str) -> dict[str, Any]:
-    """Grid-independence study across <base>_fast/_standard/_fine (local cases)."""
+    """Grid-independence study over a base's fidelity or refinement levels.
+
+    Reads local cases directly. When the cluster is connected and holds levels
+    for this base (e.g. a submitted study), those are pulled from the shared
+    remote bundle and staged alongside any local ones so the study spans both.
+    """
     if not CASE_NAME_REGEX.match(base):
         raise HTTPException(status_code=400, detail="Invalid base name")
     from rapidfoam.postproc.gridstudy import grid_study
 
-    report = await asyncio.to_thread(
-        grid_study, base, cases_root=PROJECT_ROOT / "cases"
-    )
+    root, temp_root = await prepare_study_root(base, PROJECT_ROOT / "cases")
+    try:
+        report = await asyncio.to_thread(grid_study, base, cases_root=root)
+    finally:
+        if temp_root is not None:
+            shutil.rmtree(temp_root, ignore_errors=True)
     return {"base": base, **report}
 
 

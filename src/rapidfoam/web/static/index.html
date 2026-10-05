@@ -1337,28 +1337,42 @@
       </div>
 
       <!-- Grid Independence -->
-      <div class="panel analysis-panel" id="grid-study-panel" data-help="gridstudy">
+      <div class="panel solver-health-panel" id="grid-study-panel" data-help="gridstudy">
         <div class="panel-header">
           <div class="panel-title-group">
             <h3>Grid Independence</h3>
-            <span class="panel-subtitle">Compare &lt;base&gt;_fast / _standard / _fine forces</span>
+            <span class="panel-subtitle" id="grid-study-subtitle">Compare a fidelity (&lt;base&gt;_fast/_standard/_fine) or refinement (&lt;base&gt;_cpl&lt;N&gt;) ladder</span>
           </div>
           <div class="panel-header-actions">
+            <span class="badge badge-subtle" id="grid-mode-badge" style="display: none;">--</span>
             <input type="text" id="grid-base-input" class="input input-sm" placeholder="case base name" style="width: 180px;">
             <button type="button" class="btn btn-outline btn-sm" id="btn-run-grid">Run study</button>
           </div>
         </div>
-        <div class="table-responsive">
-          <table class="data-table mini-table" id="grid-table">
-            <thead>
-              <tr><th>Fidelity</th><th>Cd</th><th>Cl</th><th>Cells</th></tr>
-            </thead>
-            <tbody id="grid-tbody">
-              <tr><td colspan="4" class="text-center text-muted">Run a study to compare mesh fidelities.</td></tr>
-            </tbody>
-          </table>
+        <div class="solver-health-body">
+          <div class="table-responsive">
+            <table class="data-table mini-table" id="grid-table">
+              <thead>
+                <tr>
+                  <th id="grid-level-head">Cells / length</th>
+                  <th>Cd</th>
+                  <th>&Delta;Cd %</th>
+                  <th>Cl</th>
+                  <th>&Delta;Cl %</th>
+                  <th>L/D</th>
+                  <th title="Background blockMesh grid (nx&middot;ny&middot;nz) &mdash; the refinement parameter, not the final meshed count">Block cells</th>
+                  <th title="Realised cell count from checkMesh (background + snappy refinement + layers)">Mesh cells</th>
+                </tr>
+              </thead>
+              <tbody id="grid-tbody">
+                <tr><td colspan="8" class="text-center text-muted">Run a study to compare mesh levels.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="field-hint" id="grid-verdict"></p>
+          <p class="field-hint" id="grid-richardson"></p>
+          <p class="field-hint" id="grid-pinned-note"></p>
         </div>
-        <p class="field-hint" id="grid-verdict"></p>
       </div>
 
       <!-- Solver Health -->

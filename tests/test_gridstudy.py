@@ -31,6 +31,18 @@ def _write_case(root: Path, name: str, cd: float, cl: float, cells: int = 1_000_
     return case
 
 
+def _write_unsolved_case(root: Path, name: str):
+    """A generated cpl case that has not produced force/coefficient data yet."""
+    import json
+    case = root / name
+    case.mkdir(parents=True, exist_ok=True)
+    (case / "case_config.json").write_text(json.dumps({
+        "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+        "mesh_params": {"block_cells": [1, 100, 10]},
+    }))
+    return case
+
+
 class GridStudyTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -74,6 +86,66 @@ class GridStudyTest(unittest.TestCase):
     def test_richardson_handles_degenerate(self):
         self.assertIsNone(_richardson_p(0.3, 0.3, 0.3, 1.5))   # no change
         self.assertIsNone(_richardson_p(0.3, 0.2, 0.1, 1.0))   # r <= 1
+
+    def test_convergence_stats_gci_ld_and_step_deltas(self):
+        _write_case(self.root, "b_fast", cd=0.312, cl=1.44, cells=4_000_000)
+        _write_case(self.root, "b_standard", cd=0.301, cl=1.40, cells=9_000_000)
+        _write_case(self.root, "b_fine", cd=0.297, cl=1.39, cells=20_000_000)
+        report = grid_study("b", cases_root=self.root)
+
+        # Aero efficiency per level.
+        self.assertIsNotNone(report["per_fidelity"]["fine"]["ld"])
+        self.assertIn("ld_std_fine_pct", report["deltas"])
+
+        # Per-step deltas (each level vs the previous), plus a monotonicity flag.
+        self.assertIn("standard", report["step_deltas"])
+        self.assertIn("fine", report["step_deltas"])
+        self.assertGreater(report["step_deltas"]["fine"]["cd_pct"], 0)
+        self.assertTrue(report["monotonic"]["cd"])
+
+        # Roache GCI on the extrapolated value.
+        self.assertIn("gci", report)
+        self.assertEqual(report["gci"]["safety_factor"], 1.25)
+        self.assertGreater(report["gci"]["cd_pct"], 0)
+
+    def test_realised_mesh_cells_from_checkmesh(self):
+        # block_cells (background grid) and the realised checkMesh count are
+        # reported separately; only the former drives the refinement ratio.
+        for name, cd, cl, cells, mesh in (
+            ("m_fast", 0.312, 1.44, 4_000_000, 8_000_000),
+            ("m_standard", 0.301, 1.40, 9_000_000, 18_000_000),
+            ("m_fine", 0.297, 1.39, 20_000_000, 40_000_000),
+        ):
+            case = _write_case(self.root, name, cd=cd, cl=cl, cells=cells)
+            (case / "log.checkMesh").write_text(f"Mesh stats\n    cells:      {mesh}\n")
+        report = grid_study("m", cases_root=self.root)
+        # block_cells is the small background grid; mesh_cells the realised count.
+        self.assertEqual(report["per_fidelity"]["fine"]["cells"], 20000)
+        self.assertEqual(report["per_fidelity"]["fine"]["mesh_cells"], 40_000_000)
+
+    def test_partial_ladder_still_reports_step_deltas(self):
+        _write_case(self.root, "q_cpl20", cd=0.312, cl=1.44, cells=20_000_000)
+        _write_unsolved_case(self.root, "q_cpl30")
+        _write_case(self.root, "q_cpl45", cd=0.297, cl=1.39, cells=45_000_000)
+        report = grid_study("q", cases_root=self.root)
+        self.assertFalse(report["available"])
+        # cpl45's delta is measured against the previous *available* level (cpl20).
+        self.assertIn("cpl45", report["step_deltas"])
+        self.assertGreater(report["step_deltas"]["cpl45"]["cd_pct"], 0)
+
+    def test_partial_refinement_data_degrades_instead_of_crashing(self):
+        # A cpl study whose middle level has not produced force data yet (still
+        # meshing/solving) must report insufficient-data, not raise KeyError.
+        # Regression: the cpl branch passed every key to _finish_study, including
+        # "available": False entries with no "cd"/"cl".
+        _write_case(self.root, "r_cpl20", cd=0.312, cl=1.44, cells=20_000_000)
+        _write_unsolved_case(self.root, "r_cpl30")
+        _write_case(self.root, "r_cpl45", cd=0.297, cl=1.39, cells=45_000_000)
+        report = grid_study("r", cases_root=self.root)
+        self.assertEqual(report["mode"], "refinement")
+        self.assertFalse(report["available"])
+        self.assertEqual(report["verdict"], "insufficient-data")
+        self.assertFalse(report["per_fidelity"]["cpl30"]["available"])
 
 
 class RefinementStudyConfigTest(unittest.TestCase):

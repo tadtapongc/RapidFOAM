@@ -9,6 +9,7 @@ nothing here runs OpenFOAM.
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -104,6 +105,83 @@ def _richardson_p(cd_fast: float, cd_std: float, cd_fine: float, r: float) -> Op
     return math.log(d_fs / d_sf) / math.log(r)
 
 
+# Safety factor for the Roache Grid Convergence Index. 1.25 is the standard for
+# a study with three or more grids.
+GCI_SAFETY_FACTOR = 1.25
+
+
+def _gci_pct(coarse: float, fine: float, r: float, p: float, fs: float = GCI_SAFETY_FACTOR) -> Optional[float]:
+    """Roache Grid Convergence Index, as a percentage of the fine value.
+
+    ``GCI = Fs * |(f_fine - f_coarse) / f_fine| / (r^p - 1)``. Returns ``None``
+    when the observed order ``p`` is unavailable or the ratio is degenerate.
+    """
+    if coarse is None or fine is None or fine == 0 or r <= 1.0 or p is None:
+        return None
+    denom = r ** p - 1.0
+    if denom <= 0:
+        return None
+    return round(fs * (abs(fine - coarse) / abs(fine)) / denom * 100.0, 3)
+
+
+_CHECKMESH_CELLS_RE = re.compile(r"^\s*cells:\s+(\d+)", re.MULTILINE)
+
+
+def _read_mesh_cells(case_dir: Path) -> Optional[int]:
+    """Realised cell count from ``log.checkMesh`` (``cells:`` line), or None.
+
+    This is the *meshed* count (background + snappy refinement + layers), as
+    opposed to ``mesh_params.block_cells`` which is only the background grid.
+    """
+    try:
+        text = (case_dir / "log.checkMesh").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = _CHECKMESH_CELLS_RE.search(text)
+    return int(match.group(1)) if match else None
+
+
+def _level_entry(
+    coeffs: dict[str, Any],
+    case_name: str,
+    cells: Optional[int],
+    mesh_cells: Optional[int] = None,
+) -> dict[str, Any]:
+    """One ``per_fidelity`` row from a parsed coefficients dict.
+
+    Carries the trailing-window variation (``cd_pct``/``cl_pct``) and the aero
+    efficiency ``ld`` (|Cl/Cd|) alongside the rounded coefficients, so the panel
+    can show convergence *quality* and not just the values. ``cells`` is the
+    background block count (used for the refinement ratio); ``mesh_cells`` is the
+    realised checkMesh count, informational only.
+    """
+    cd = coeffs.get("cd")
+    cl = coeffs.get("cl")
+    return {
+        "available": True,
+        "case": case_name,
+        "cd": round(cd, 5) if cd is not None else None,
+        "cl": round(cl, 5) if cl is not None else None,
+        "cd_pct": round(coeffs["cd_pct"], 3) if coeffs.get("cd_pct") is not None else None,
+        "cl_pct": round(coeffs["cl_pct"], 3) if coeffs.get("cl_pct") is not None else None,
+        "ld": round(abs(cl / cd), 3) if cd not in (None, 0) and cl is not None else None,
+        "source": coeffs.get("source"),
+        "cells": cells,
+        "mesh_cells": mesh_cells,
+        "iterations": coeffs.get("iterations"),
+    }
+
+
+def _is_monotonic(values: list[Optional[float]]) -> Optional[bool]:
+    """True/False when a series is monotone, None when it has fewer than two points."""
+    vals = [v for v in values if v is not None]
+    if len(vals) < 2:
+        return None
+    increasing = all(b >= a for a, b in zip(vals, vals[1:]))
+    decreasing = all(b <= a for a, b in zip(vals, vals[1:]))
+    return increasing or decreasing
+
+
 def grid_study(
     base: str,
     *,
@@ -150,13 +228,13 @@ def grid_study(
                 "n_layers": cfg.get("layers", {}).get("n_layers"),
                 "end_time": cfg.get("solver", {}).get("end_time"),
             }
-            per_fidelity[label] = {
-                "available": True, "case": case_dir.name,
-                "cd": round(coeffs["cd"], 5) if coeffs.get("cd") is not None else None,
-                "cl": round(coeffs["cl"], 5) if coeffs.get("cl") is not None else None,
-                "source": coeffs.get("source"), "cells": n,
-            }
-        report = _finish_study(list(per_fidelity.keys()), per_fidelity, cd_thresh, cl_thresh)
+            per_fidelity[label] = _level_entry(coeffs, case_dir.name, n, _read_mesh_cells(case_dir))
+        # Only levels that actually produced force/coefficient data can be
+        # compared; passing unavailable levels to _finish_study would index a
+        # missing "cd"/"cl" key (a level may still be meshing/solving). Mirrors
+        # the fidelity branch below.
+        available = [label for label, info in per_fidelity.items() if info.get("available")]
+        report = _finish_study(available, per_fidelity, cd_thresh, cl_thresh)
         report["mode"] = "refinement"
         report["pinned"] = pinned
         report["pinned_consistent"] = len({tuple(sorted(v.items())) for v in pinned.values()}) <= 1
@@ -191,14 +269,7 @@ def grid_study(
         cell_count = None
         if isinstance(cells, (list, tuple)) and len(cells) == 3:
             cell_count = int(cells[0]) * int(cells[1]) * int(cells[2])
-        per_fidelity[fidelity] = {
-            "available": True,
-            "case": case_dir.name,
-            "cd": round(coeffs["cd"], 5) if coeffs.get("cd") is not None else None,
-            "cl": round(coeffs["cl"], 5) if coeffs.get("cl") is not None else None,
-            "source": coeffs.get("source"),
-            "cells": cell_count,
-        }
+        per_fidelity[fidelity] = _level_entry(coeffs, case_dir.name, cell_count, _read_mesh_cells(case_dir))
 
     available = [f for f in fidelities if per_fidelity.get(f, {}).get("available")]
     result = _finish_study(available, per_fidelity, cd_thresh, cl_thresh)
@@ -214,6 +285,29 @@ def _finish_study(
 ) -> dict[str, Any]:
     """Compute deltas, Richardson p and the verdict for a list of levels."""
     result: dict[str, Any] = {"available": len(available) >= 3, "per_fidelity": per_fidelity}
+
+    # Per-step deltas (each level vs the previous, coarse->fine) and a
+    # monotonicity check are useful even before three levels have data.
+    step_deltas: dict[str, Any] = {}
+    prev: Optional[str] = None
+    for level in available:
+        info = per_fidelity.get(level, {})
+        cd, cl = info.get("cd"), info.get("cl")
+        if prev is not None:
+            prev_cd = per_fidelity.get(prev, {}).get("cd")
+            prev_cl = per_fidelity.get(prev, {}).get("cl")
+            step_deltas[level] = {
+                "cd_pct": round(abs(cd - prev_cd) / abs(prev_cd) * 100, 3)
+                if prev_cd and cd is not None else None,
+                "cl_pct": round(abs(cl - prev_cl) / abs(prev_cl) * 100, 3)
+                if prev_cl and cl is not None else None,
+            }
+        prev = level
+    result["step_deltas"] = step_deltas
+    result["monotonic"] = {
+        "cd": _is_monotonic([per_fidelity.get(level, {}).get("cd") for level in available]),
+        "cl": _is_monotonic([per_fidelity.get(level, {}).get("cl") for level in available]),
+    }
 
     if len(available) < 3:
         result["verdict"] = "insufficient-data"
@@ -238,6 +332,11 @@ def _finish_study(
         "cd_std_fine_pct": round((cd_sf or 0.0) * 100, 3),
         "cl_std_fine_pct": round((cl_sf or 0.0) * 100, 3),
     }
+    # Aero-efficiency convergence: L/D can drift even when Cd and Cl each pass.
+    ld_std = per_fidelity[f_std].get("ld")
+    ld_fine = per_fidelity[f_fine].get("ld")
+    if ld_std and ld_fine is not None:
+        result["deltas"]["ld_std_fine_pct"] = round(abs(ld_fine - ld_std) / abs(ld_std) * 100, 3)
 
     # Refinement ratio (coarse->fine) from cell counts if available, else 1.5.
     n_fast = per_fidelity[f_fast].get("cells")
@@ -258,6 +357,12 @@ def _finish_study(
             "p": round(p, 3),
             "cd_extrapolated": round(cd_extrap, 5) if cd_extrap is not None else None,
             "cl_extrapolated": round(cl_extrap, 5) if cl_extrap is not None else None,
+        }
+        # Roache GCI: the uncertainty band on the extrapolated value.
+        result["gci"] = {
+            "safety_factor": GCI_SAFETY_FACTOR,
+            "cd_pct": _gci_pct(cd_std, cd_fine, r, p),
+            "cl_pct": _gci_pct(cl_std, cl_fine, r, p) if None not in (cl_std, cl_fine) else None,
         }
 
     converged = (cd_sf is not None and cd_sf < cd_thresh and cl_sf is not None and cl_sf < cl_thresh)
@@ -286,18 +391,25 @@ def print_grid_study(report: dict[str, Any]) -> None:
             continue
         cd = f"{info['cd']:.5f}" if info.get("cd") is not None else "--"
         cl = f"{info['cl']:.5f}" if info.get("cl") is not None else "--"
+        ld = f"{info['ld']:.3f}" if info.get("ld") is not None else "--"
         cells = info.get("cells")
         cells_txt = f"  cells {cells:,}" if cells else ""
-        print(f"    {fidelity:<9} Cd {cd}  Cl {cl}  ({info.get('source')}){cells_txt}")
+        print(f"    {fidelity:<9} Cd {cd}  Cl {cl}  L/D {ld}  ({info.get('source')}){cells_txt}")
     deltas = report.get("deltas")
     if deltas:
-        print(f"    delta std->fine:  Cd {deltas['cd_std_fine_pct']:.2f}%  Cl {deltas['cl_std_fine_pct']:.2f}%")
+        print(f"    delta std->fine:  Cd {deltas['cd_std_fine_pct']:.2f}%  Cl {deltas['cl_std_fine_pct']:.2f}%"
+              + (f"  L/D {deltas['ld_std_fine_pct']:.2f}%" if "ld_std_fine_pct" in deltas else ""))
     rich = report.get("richardson")
     if rich:
         p = rich.get("p")
         print(f"    Richardson order p = {p}" + (
             f", Cd extrapolated {rich['cd_extrapolated']}" if rich.get("cd_extrapolated") is not None else ""
         ))
+    gci = report.get("gci")
+    if gci:
+        print(f"    GCI (Fs {gci.get('safety_factor')}): Cd ±{gci.get('cd_pct')}%  Cl ±{gci.get('cl_pct')}%")
+    if report.get("monotonic", {}).get("cd") is False:
+        print("    warning: Cd is not monotone across levels (possible oscillation)")
     print(f"    verdict: {report.get('verdict')} — {report.get('note')}")
 
 
@@ -317,7 +429,12 @@ _REFINEMENT_LABELS = ("coarse", "medium", "fine")
 
 
 def refinement_variant_name(base: str, cells_per_length: int) -> str:
-    """Case name for one refinement level, e.g. ``wing_coarse`` history-safe."""
+    """Case name for one refinement level, e.g. ``wing`` + 20 -> ``wing_cpl20``.
+
+    The ``_cpl<N>`` suffix is the contract the rest of the pipeline relies on:
+    ``grid_study`` discovers variants with ``glob("<base>_cpl*")`` and the Studio
+    strips the suffix to recover the base name.
+    """
     return f"{base}_cpl{cells_per_length}"
 
 
