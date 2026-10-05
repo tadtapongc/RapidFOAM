@@ -4390,11 +4390,12 @@ class CFDApp {
         if (gci && gci.cd_pct !== null && gci.cd_pct !== undefined) parts.push(`GCI(Cd) ±${gci.cd_pct}%`);
         if (gci && gci.cl_pct !== null && gci.cl_pct !== undefined) parts.push(`GCI(Cl) ±${gci.cl_pct}%`);
       }
-      const nonMonotone = data.monotonic && (data.monotonic.cd === false || data.monotonic.cl === false);
-      if (data.monotonic && data.monotonic.cd === false) parts.push('⚠ Cd not monotone');
-      if (data.monotonic && data.monotonic.cl === false) parts.push('⚠ Cl not monotone');
+      let hasWarning = false;
+      if (data.monotonic && data.monotonic.cd === false) { parts.push('⚠ Cd not monotone'); hasWarning = true; }
+      if (data.monotonic && data.monotonic.cl === false) { parts.push('⚠ Cl not monotone'); hasWarning = true; }
+      if (data.refinement_uniform === false) { parts.push('⚠ non-uniform ladder (r approximate)'); hasWarning = true; }
       richEl.textContent = parts.length ? `Richardson: ${parts.join(' · ')}` : '';
-      richEl.className = `field-hint ${nonMonotone ? 'mesh-metric-usable' : ''}`.trim();
+      richEl.className = `field-hint ${hasWarning ? 'mesh-metric-usable' : ''}`.trim();
     }
 
     // Refinement studies pin the near-wall/solver settings; if they differ the

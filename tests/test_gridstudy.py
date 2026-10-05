@@ -158,6 +158,44 @@ class GridStudyTest(unittest.TestCase):
         self.assertEqual(report["verdict"], "not-converged")
         self.assertIn("Cl", report["note"])
 
+    def test_symmetry_half_model_coefficients_are_doubled(self):
+        # A symmetry half model's forceCoeffs is half-car; the grid study must
+        # report full-car Cd/Cl like the rest of the app (factor 2).
+        import json
+        raw = {20: 0.0030, 30: 0.0029, 45: 0.00285}
+        for cpl, cd in raw.items():
+            case = self.root / f"s_cpl{cpl}"
+            coeff = case / "postProcessing" / "forceCoeffs" / "0"
+            coeff.mkdir(parents=True)
+            coeff.joinpath("coefficient.dat").write_text(
+                "# Time Cd Cl\n" + "".join(f"{i} {cd} {cd * 10}\n" for i in range(1, 30))
+            )
+            (case / "case_config.json").write_text(json.dumps({
+                "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+                "domain_faces": {"-x": "symmetry", "+x": "farField", "-y": "ground",
+                                 "+y": "farField", "+z": "inlet", "-z": "outlet"},
+                "mesh_params": {"block_cells": [cpl, cpl, cpl]},
+            }))
+        report = grid_study("s", cases_root=self.root)
+        self.assertAlmostEqual(report["per_fidelity"]["cpl20"]["cd"], raw[20] * 2, places=5)
+        self.assertAlmostEqual(report["per_fidelity"]["cpl45"]["cl"], raw[45] * 20, places=5)
+
+    def test_non_uniform_ladder_is_flagged(self):
+        import json
+        for cpl, cd in ((20, 0.31), (30, 0.30), (50, 0.29)):
+            case = self.root / f"u_cpl{cpl}"
+            coeff = case / "postProcessing" / "forceCoeffs" / "0"
+            coeff.mkdir(parents=True)
+            coeff.joinpath("coefficient.dat").write_text(
+                "# Time Cd Cl\n" + "".join(f"{i} {cd} {cd}\n" for i in range(1, 30))
+            )
+            (case / "case_config.json").write_text(json.dumps({
+                "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+                "mesh_params": {"block_cells": [cpl, cpl, cpl]},
+            }))
+        report = grid_study("u", cases_root=self.root)
+        self.assertFalse(report["refinement_uniform"])
+
     def test_convergence_stats_gci_ld_and_step_deltas(self):
         _write_case(self.root, "b_fast", cd=0.312, cl=1.44, cells=4_000_000)
         _write_case(self.root, "b_standard", cd=0.301, cl=1.40, cells=9_000_000)

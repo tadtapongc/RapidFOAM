@@ -29,7 +29,16 @@ CL_THRESHOLD = 0.05
 
 
 def _coefficients_for_case(case_dir: Path) -> dict[str, Any]:
-    """Trailing-window Cd/Cl for one case, from coefficient.dat or forces."""
+    """Trailing-window Cd/Cl for one case, from coefficient.dat or forces.
+
+    Values are projected to **full-car** convention: the solver's ``forceCoeffs``
+    (and the raw forces) are evaluated on the body patches only, so a symmetry
+    half model is half-car and is doubled here — matching the KPI/telemetry
+    panels. The relative verdict is unaffected (the factor cancels), but this
+    keeps the displayed coefficients consistent across the Studio.
+    """
+    cfg = caseconfig.read_case_config(case_dir=case_dir)
+    sym = 2.0 if caseconfig.has_symmetry(cfg) else 1.0
     coeff_files = find_coefficient_files(case_dir)
     if coeff_files:
         from rapidfoam.postproc.forces import parse_tabular_dat
@@ -50,15 +59,15 @@ def _coefficients_for_case(case_dir: Path) -> dict[str, Any]:
             return {
                 "available": True,
                 "source": "coefficient.dat",
-                "cd": cd_avg,
-                "cl": cl_avg,
+                "cd": cd_avg * sym,
+                "cl": cl_avg * sym,
                 "cd_pct": cd_pct,
                 "cl_pct": cl_pct,
                 "iterations": len(times),
+                "symmetric": sym != 1.0,
             }
 
     # Fall back to raw forces + config reference values.
-    cfg = caseconfig.read_case_config(case_dir=case_dir)
     outputs = cfg.get("outputs", {})
     drag_axis = outputs.get("drag_axis", "-z")
     df_axis = outputs.get("downforce_axis", "-y")
@@ -79,8 +88,7 @@ def _coefficients_for_case(case_dir: Path) -> dict[str, Any]:
     q_area = 0.5 * rho * velocity * velocity * aref
     if q_area <= 0:
         return {"available": False}
-    # Symmetry doubles the half-model force.
-    sym = 2.0 if caseconfig.has_symmetry(cfg) else 1.0
+    # Symmetry doubles the half-model force (sym computed above).
     cd_series = [v * sym / q_area for v in drags]
     cl_series = [v * sym / q_area for v in downforces]
     cd_avg, cd_pct = window_stats(cd_series)
@@ -93,6 +101,7 @@ def _coefficients_for_case(case_dir: Path) -> dict[str, Any]:
         "cd_pct": cd_pct,
         "cl_pct": cl_pct,
         "iterations": len(times),
+        "symmetric": sym != 1.0,
     }
 
 
@@ -356,6 +365,11 @@ def _finish_study(
     r: Optional[float] = math.prod(adjacent) ** (1.0 / len(adjacent)) if adjacent else None
     if r is not None:
         result["refinement_ratio"] = round(r, 4)
+    # A constant refinement ratio is the Richardson/GCI assumption; flag a ladder
+    # whose adjacent ratios differ materially (e.g. levels 20/30/50).
+    result["refinement_uniform"] = (
+        len(adjacent) < 2 or abs(adjacent[0] - adjacent[1]) / max(adjacent) <= 0.05
+    )
 
     # Per-metric order / extrapolation / GCI. Each metric gets its own observed
     # order so a converging Cd cannot mask a diverging Cl (their own GCI already
@@ -500,6 +514,8 @@ def print_grid_study(report: dict[str, Any]) -> None:
         print(f"    GCI (Fs {gci.get('safety_factor')}): Cd ±{gci.get('cd_pct')}%  Cl ±{gci.get('cl_pct')}%")
     if report.get("monotonic", {}).get("cd") is False:
         print("    warning: Cd is not monotone across levels (possible oscillation)")
+    if report.get("refinement_uniform") is False:
+        print("    warning: non-uniform refinement (adjacent ratios differ) — r is approximate")
     for key, label in (("cd", "Cd"), ("cl", "Cl")):
         metric = report.get("per_metric", {}).get(key)
         if not metric:

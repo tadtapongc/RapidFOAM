@@ -1220,6 +1220,32 @@ test('runGridStudy shows refinement mode, level header and pinned note', async (
   assert.ok(badges.includes('Cl: not-converged'), badges);
 });
 
+test('runGridStudy flags a non-uniform refinement ladder', async () => {
+  const app = await makeApp(`
+    <table><tbody id="grid-tbody"></tbody></table>
+    <p id="grid-verdict"></p>
+    <p id="grid-richardson"></p>
+    <div id="grid-metric-badges"></div>
+    <input id="grid-base-input" value="u">
+  `);
+  installFormStubs(app);
+  app._window.fetch = async () => ({ ok: true, json: async () => ({
+    mode: 'refinement',
+    verdict: 'grid-independent',
+    converged: true,
+    refinement_uniform: false,
+    refinement_ratio: 1.58,
+    richardson: { p: 1.9, cd_extrapolated: 0.299, cl_extrapolated: 1.38 },
+    per_fidelity: {
+      cpl20: { available: true, cd: 0.31, cl: 1.44, cells: 8000 },
+      cpl50: { available: true, cd: 0.29, cl: 1.39, cells: 125000 },
+    },
+  }) });
+  await app.runGridStudy();
+  const rich = app._window.document.getElementById('grid-richardson').textContent;
+  assert.ok(rich.includes('non-uniform'), rich);
+});
+
 test('runGridStudy flags a partial refinement ladder', async () => {
   const app = await makeApp(`
     <table><tbody id="grid-tbody"></tbody></table>
