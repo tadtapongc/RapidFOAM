@@ -180,6 +180,28 @@ class GridStudyTest(unittest.TestCase):
         self.assertAlmostEqual(report["per_fidelity"]["cpl20"]["cd"], raw[20] * 2, places=5)
         self.assertAlmostEqual(report["per_fidelity"]["cpl45"]["cl"], raw[45] * 20, places=5)
 
+    def test_co_refined_ladder_is_not_pinned_consistent(self):
+        # A co-refined ladder steps surface_level/edge_level, so the near-wall
+        # settings are not identical across levels and pinned_consistent must be
+        # False (the Studio then warns that p is only approximate).
+        import json
+        for cpl, surf, cd in ((20, [4, 5], 0.31), (30, [4, 6], 0.30), (45, [4, 7], 0.29)):
+            case = self.root / f"n_cpl{cpl}"
+            coeff = case / "postProcessing" / "forceCoeffs" / "0"
+            coeff.mkdir(parents=True)
+            coeff.joinpath("coefficient.dat").write_text(
+                "# Time Cd Cl\n" + "".join(f"{i} {cd} {cd}\n" for i in range(1, 30))
+            )
+            (case / "case_config.json").write_text(json.dumps({
+                "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+                "mesh_params": {"block_cells": [cpl, cpl, cpl],
+                                "surface_level": surf, "edge_level": surf[1] + 1},
+                "layers": {"y_plus_target": 30, "n_layers": 8},
+                "solver": {"end_time": 1500},
+            }))
+        report = grid_study("n", cases_root=self.root)
+        self.assertFalse(report["pinned_consistent"])
+
     def test_non_uniform_ladder_is_flagged(self):
         import json
         for cpl, cd in ((20, 0.31), (30, 0.30), (50, 0.29)):
@@ -306,13 +328,13 @@ class RefinementStudyConfigTest(unittest.TestCase):
             self.assertEqual(cfg["overrides"]["solver"]["end_time"], 1500)
         self.assertEqual(times, ["04:00:00", "08:00:00", "14:00:00"])
 
-    def test_co_refine_surface_steps_last_two(self):
+    def test_co_refine_surface_steps_progressively(self):
         import json
         variants = configure_refinement_study(self._base(), out_dir=self.root, co_refine_surface=True)
-        surfaces = [json.loads(Path(v["config_path"]).read_text())["overrides"]["mesh_params"].get("surface_level")
-                    for v in variants]
-        self.assertTrue(all(s is not None for s in surfaces))
-        self.assertLess(surfaces[0][1], surfaces[-1][1])
+        params = [json.loads(Path(v["config_path"]).read_text())["overrides"]["mesh_params"] for v in variants]
+        # +0/+1/+2 across the ladder => constant 2x near-wall refinement per rung.
+        self.assertEqual([m["surface_level"] for m in params], [[4, 5], [4, 6], [4, 7]])
+        self.assertEqual([m["edge_level"] for m in params], [6, 7, 8])
 
     def test_grid_study_discovers_cpl_variants(self):
         import json

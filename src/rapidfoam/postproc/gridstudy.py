@@ -232,10 +232,15 @@ def grid_study(
             n = int(cells[0]) * int(cells[1]) * int(cells[2]) if isinstance(cells, (list, tuple)) and len(cells) == 3 else None
             # Screened physics: confirm the near-wall/solver settings are identical
             # across the ladder (they must be for a valid Richardson estimate).
+            # surface_level/edge_level are included so a co-refined ladder (which
+            # steps the near-wall refinement) is flagged as not-pinned.
+            surf = mesh.get("surface_level")
             pinned[label] = {
                 "y_plus_target": cfg.get("layers", {}).get("y_plus_target"),
                 "n_layers": cfg.get("layers", {}).get("n_layers"),
                 "end_time": cfg.get("solver", {}).get("end_time"),
+                "surface_level": tuple(surf) if isinstance(surf, (list, tuple)) else None,
+                "edge_level": mesh.get("edge_level"),
             }
             per_fidelity[label] = _level_entry(coeffs, case_dir.name, n, _read_mesh_cells(case_dir))
         # Only levels that actually produced force/coefficient data can be
@@ -571,8 +576,11 @@ def configure_refinement_study(
 
     Defaults come from ``DEFAULT_CONFIG["grid_study"]``. SLURM walltime and
     memory are scaled per level so the fine mesh is not starved by the base's
-    config. With ``co_refine_surface`` the surface/edge level is also stepped
-    +0/+1/+1 across the ladder (a stronger, less clean near-wall ladder).
+    config. With ``co_refine_surface`` the surface/edge level is stepped by the
+    rung index (``+0/+1/+2`` for three levels), giving a *constant* near-wall
+    refinement ratio between adjacent levels — a stronger but "less clean"
+    ladder, since the near-wall resolution now varies alongside background
+    density.
 
     ``preset`` is the fidelity preset block (from
     :data:`rapidfoam.meshing.presets.FIDELITY_PRESETS`) used to pin the near-wall
@@ -648,7 +656,6 @@ def configure_refinement_study(
     mems = list(slurm_scaling.get("mem_per_cpu", []))
 
     results: list[dict[str, Any]] = []
-    last_index = max(len(levels) - 1, 1)
     for index, cpl in enumerate(levels):
         variant = json.loads(json.dumps(raw))  # deep copy
         variant["case_name"] = refinement_variant_name(stem, cpl)
@@ -658,7 +665,12 @@ def configure_refinement_study(
         variant["overrides"]["solver"] = dict(solver)
         variant["overrides"]["mesh_params"] = {**mesh, "cells_per_length": int(cpl)}
         if co_refine_surface:
-            step = 1 if index == last_index else 0
+            # Progressive co-refinement: +1 surface/edge level per rung
+            # (+0/+1/+2 for three levels) gives a constant 2x near-wall
+            # refinement ratio between adjacent levels, which is what the
+            # Richardson/GCI maths assume. Stepping only the finest rung would
+            # make the near-wall ratio vary from step to step.
+            step = index
             variant["overrides"]["mesh_params"]["surface_level"] = [base_surface[0], base_surface[1] + step]
             variant["overrides"]["mesh_params"]["edge_level"] = base_edge + step
         # Scale SLURM resources per level (override any pinned base value).

@@ -309,7 +309,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # pinned — so the resulting forces form a valid refinement ladder.
     "grid_study": {
         "levels": [20, 30, 45],            # cells_per_length, coarse -> fine
-        "co_refine_surface": False,        # true also steps surface_level/edge_level
+        "co_refine_surface": False,        # true also steps surface_level/edge_level by rung (+0/+1/+2)
         "cd_threshold": 0.03,              # fine vs previous Cd tolerance
         "cl_threshold": 0.05,              # fine vs previous Cl tolerance
         # Per-level SLURM resources so the fine mesh is not starved by the base's
