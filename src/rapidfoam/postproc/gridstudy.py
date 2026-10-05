@@ -338,48 +338,138 @@ def _finish_study(
     if ld_std and ld_fine is not None:
         result["deltas"]["ld_std_fine_pct"] = round(abs(ld_fine - ld_std) / abs(ld_std) * 100, 3)
 
-    # Refinement ratio (coarse->fine) from cell counts if available, else 1.5.
+    # Refinement ratio. The three-grid Richardson formula uses the *adjacent*
+    # ratio (coarse->medium and medium->fine), not the overall coarse->fine span:
+    #     p = ln(|f_medium - f_coarse| / |f_fine - f_medium|) / ln(r)
+    # h ~ N^(-1/3), so take the geometric mean of the two adjacent ratios (a
+    # uniform ladder reduces to r). The overall span would report p as roughly
+    # half its true value. Without cell counts r cannot be derived, so p/GCI are
+    # left unset rather than computed from a guessed ratio.
     n_fast = per_fidelity[f_fast].get("cells")
+    n_std = per_fidelity[f_std].get("cells")
     n_fine = per_fidelity[f_fine].get("cells")
-    r = 1.5
-    if n_fast and n_fine and n_fast > 0:
-        r = (n_fine / n_fast) ** (1.0 / 3.0)
-    result["refinement_ratio"] = round(r, 4)
+    adjacent: list[float] = []
+    if n_fast and n_std and n_fast > 0:
+        adjacent.append((n_std / n_fast) ** (1.0 / 3.0))
+    if n_std and n_fine and n_std > 0:
+        adjacent.append((n_fine / n_std) ** (1.0 / 3.0))
+    r: Optional[float] = math.prod(adjacent) ** (1.0 / len(adjacent)) if adjacent else None
+    if r is not None:
+        result["refinement_ratio"] = round(r, 4)
 
-    p = _richardson_p(cd_fast, cd_std, cd_fine, r)
-    if p is not None and r != 1.0:
-        denom = r ** p - 1.0
-        cd_extrap = cd_fine + (cd_fine - cd_std) / denom if denom else None
-        cl_extrap = None
-        if None not in (cl_fast, cl_std, cl_fine):
-            cl_extrap = cl_fine + (cl_fine - cl_std) / denom if denom else None
+    # Per-metric order / extrapolation / GCI. Each metric gets its own observed
+    # order so a converging Cd cannot mask a diverging Cl (their own GCI already
+    # folds in p and r, so gating on it enforces the asymptotic range too).
+    cd_m = _metric_summary(cd_fast, cd_std, cd_fine, cd_thresh, result["monotonic"].get("cd"), r)
+    cl_m = _metric_summary(cl_fast, cl_std, cl_fine, cl_thresh, result["monotonic"].get("cl"), r)
+    result["per_metric"] = {"cd": cd_m, "cl": cl_m}
+
+    # Back-compat: Richardson block keyed on Cd (as before); the GCI now uses
+    # each metric's own observed order rather than Cd's for both.
+    if cd_m["p"] is not None:
         result["richardson"] = {
-            "p": round(p, 3),
-            "cd_extrapolated": round(cd_extrap, 5) if cd_extrap is not None else None,
-            "cl_extrapolated": round(cl_extrap, 5) if cl_extrap is not None else None,
+            "p": cd_m["p"],
+            "cd_extrapolated": cd_m["extrapolated"],
+            "cl_extrapolated": cl_m["extrapolated"],
         }
-        # Roache GCI: the uncertainty band on the extrapolated value.
         result["gci"] = {
             "safety_factor": GCI_SAFETY_FACTOR,
-            "cd_pct": _gci_pct(cd_std, cd_fine, r, p),
-            "cl_pct": _gci_pct(cl_std, cl_fine, r, p) if None not in (cl_std, cl_fine) else None,
+            "cd_pct": cd_m["gci_pct"],
+            "cl_pct": cl_m["gci_pct"],
         }
 
-    converged = (cd_sf is not None and cd_sf < cd_thresh and cl_sf is not None and cl_sf < cl_thresh)
-    result["converged"] = converged
-    if converged:
-        result["verdict"] = "grid-independent"
-        result["note"] = (
-            f"fine-level vs previous: Cd {cd_sf * 100:.2f}% (< {cd_thresh * 100:.0f}%), "
-            f"Cl {cl_sf * 100:.2f}% (< {cl_thresh * 100:.0f}%)"
-        )
-    elif (cd_sf is not None and cd_sf < 2 * cd_thresh and cl_sf is not None and cl_sf < 2 * cl_thresh):
-        result["verdict"] = "marginal"
-        result["note"] = f"near convergent: Cd {cd_sf * 100:.2f}%, Cl {cl_sf * 100:.2f}%"
-    else:
-        result["verdict"] = "not-converged"
-        result["note"] = f"forces still move with refinement: Cd {cd_sf * 100:.2f}%, Cl {cl_sf * 100:.2f}%"
+    severity = {"independent": 0, "marginal": 1, "not-converged": 2}
+    overall = "independent"
+    for metric in (cd_m, cl_m):
+        if severity[metric["verdict"]] > severity[overall]:
+            overall = metric["verdict"]
+    result["converged"] = overall == "independent"
+    result["verdict"] = {
+        "independent": "grid-independent",
+        "marginal": "marginal",
+        "not-converged": "not-converged",
+    }[overall]
+    result["note"] = _verdict_note(cd_m, cl_m)
     return result
+
+
+def _metric_summary(
+    coarse: float,
+    med: float,
+    fine: float,
+    threshold: float,
+    monotone: Optional[bool],
+    r: Optional[float],
+) -> dict[str, Any]:
+    """Order, extrapolated value, GCI and verdict for a single coefficient."""
+    step_frac = abs(fine - med) / abs(med) if med else None
+    p = _richardson_p(coarse, med, fine, r) if (r is not None and r > 1.0) else None
+    # Only a positive observed order is in the asymptotic range; a non-positive
+    # order makes both the extrapolated value and the GCI meaningless.
+    in_range = p is not None and p > 0
+    gci = _gci_pct(med, fine, r, p) if in_range else None
+    extrapolated = None
+    if in_range and r is not None:
+        denom = r ** p - 1.0
+        if denom > 0:
+            extrapolated = round(fine + (fine - med) / denom, 5)
+    gci_frac = (gci / 100.0) if gci is not None else None
+    return {
+        "verdict": _classify_metric(step_frac, gci_frac, threshold, monotone, p),
+        "step_pct": round(step_frac * 100, 3) if step_frac is not None else None,
+        "p": round(p, 3) if p is not None else None,
+        "gci_pct": gci,
+        "extrapolated": extrapolated,
+        "monotonic": monotone,
+        "unverified": gci is None,
+    }
+
+
+def _classify_metric(
+    step_frac: Optional[float],
+    gci_frac: Optional[float],
+    threshold: float,
+    monotone: Optional[bool],
+    p: Optional[float],
+) -> str:
+    """independent / marginal / not-converged for one coefficient.
+
+    The step delta is necessary but not sufficient: a metric whose observed order
+    is non-positive is not converging (regardless of how small the last step
+    was), and the GCI must also sit inside the band. A non-monotone sequence is
+    capped at marginal. When the GCI is unavailable (no cell counts) the step
+    rule alone applies and the result is flagged ``unverified``.
+    """
+    if step_frac is None:
+        return "not-converged"
+    if p is not None and p <= 0:
+        return "not-converged"
+    gci_ok = gci_frac is None or gci_frac <= threshold
+    gci_ok2 = gci_frac is None or gci_frac <= 2 * threshold
+    if step_frac < threshold and gci_ok:
+        level = "independent"
+    elif step_frac < 2 * threshold and gci_ok2:
+        level = "marginal"
+    else:
+        level = "not-converged"
+    if level == "independent" and monotone is False:
+        level = "marginal"
+    return level
+
+
+def _verdict_note(cd_m: dict[str, Any], cl_m: dict[str, Any]) -> str:
+    """Short per-metric explanation of the overall verdict."""
+
+    def _one(label: str, metric: dict[str, Any]) -> str:
+        if metric["gci_pct"] is not None:
+            detail = f"GCI ±{metric['gci_pct']}%"
+        else:
+            detail = f"step {metric['step_pct']}%"
+        if metric["monotonic"] is False:
+            detail += ", non-monotone"
+        return f"{label} {metric['verdict']} ({detail})"
+
+    return f"{_one('Cd', cd_m)}; {_one('Cl', cl_m)}"
 
 
 def print_grid_study(report: dict[str, Any]) -> None:
@@ -397,7 +487,7 @@ def print_grid_study(report: dict[str, Any]) -> None:
         print(f"    {fidelity:<9} Cd {cd}  Cl {cl}  L/D {ld}  ({info.get('source')}){cells_txt}")
     deltas = report.get("deltas")
     if deltas:
-        print(f"    delta std->fine:  Cd {deltas['cd_std_fine_pct']:.2f}%  Cl {deltas['cl_std_fine_pct']:.2f}%"
+        print(f"    delta fine vs previous:  Cd {deltas['cd_std_fine_pct']:.2f}%  Cl {deltas['cl_std_fine_pct']:.2f}%"
               + (f"  L/D {deltas['ld_std_fine_pct']:.2f}%" if "ld_std_fine_pct" in deltas else ""))
     rich = report.get("richardson")
     if rich:
@@ -410,6 +500,13 @@ def print_grid_study(report: dict[str, Any]) -> None:
         print(f"    GCI (Fs {gci.get('safety_factor')}): Cd ±{gci.get('cd_pct')}%  Cl ±{gci.get('cl_pct')}%")
     if report.get("monotonic", {}).get("cd") is False:
         print("    warning: Cd is not monotone across levels (possible oscillation)")
+    for key, label in (("cd", "Cd"), ("cl", "Cl")):
+        metric = report.get("per_metric", {}).get(key)
+        if not metric:
+            continue
+        detail = (f"GCI ±{metric['gci_pct']}%" if metric.get("gci_pct") is not None
+                  else f"step {metric.get('step_pct')}%")
+        print(f"    {label}: {metric['verdict']} ({detail})")
     print(f"    verdict: {report.get('verdict')} — {report.get('note')}")
 
 

@@ -1550,6 +1550,16 @@ body.dark-theme {
   flex-shrink: 0;
 }
 
+/* Grid Independence per-metric verdict badges */
+.grid-metric-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.grid-metric-badges:empty {
+  display: none;
+}
+
 .solver-health-body {
   padding: 12px 16px 16px;
   display: flex;

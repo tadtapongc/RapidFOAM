@@ -87,6 +87,77 @@ class GridStudyTest(unittest.TestCase):
         self.assertIsNone(_richardson_p(0.3, 0.3, 0.3, 1.5))   # no change
         self.assertIsNone(_richardson_p(0.3, 0.2, 0.1, 1.0))   # r <= 1
 
+    def test_richardson_order_uses_adjacent_refinement_ratio(self):
+        # f(h) = 0.30 + h^2 with h ~ 1/cpl and N ~ cpl^3: the *adjacent* ratio is
+        # 1.5 while the overall coarse->fine span is 2.25. The observed order must
+        # come out at ~2, not ~1 (which is what using the overall ratio produced).
+        import json
+
+        def f(cpl):
+            return 0.30 + (1.0 / cpl) ** 2
+
+        for cpl in (20, 30, 45):
+            case = self.root / f"o_cpl{cpl}"
+            coeff = case / "postProcessing" / "forceCoeffs" / "0"
+            coeff.mkdir(parents=True)
+            coeff.joinpath("coefficient.dat").write_text(
+                "# Time Cd Cl\n" + "".join(f"{i} {f(cpl)} {f(cpl)}\n" for i in range(1, 30))
+            )
+            (case / "case_config.json").write_text(json.dumps({
+                "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+                "mesh_params": {"block_cells": [cpl, cpl, cpl]},
+            }))
+        report = grid_study("o", cases_root=self.root)
+        self.assertAlmostEqual(report["refinement_ratio"], 1.5, places=3)
+        self.assertAlmostEqual(report["richardson"]["p"], 2.0, delta=0.05)
+        self.assertAlmostEqual(report["richardson"]["cd_extrapolated"], 0.30, delta=1e-4)
+
+    def test_no_richardson_when_cell_counts_missing(self):
+        # Without block_cells the refinement ratio is unknown, so no p/GCI is
+        # fabricated (the verdict still comes from the std->fine delta).
+        import json
+        for name, cd in (("z_fast", 0.312), ("z_standard", 0.301), ("z_fine", 0.297)):
+            case = self.root / name
+            coeff = case / "postProcessing" / "forceCoeffs" / "0"
+            coeff.mkdir(parents=True)
+            coeff.joinpath("coefficient.dat").write_text(
+                "# Time Cd Cl\n" + "".join(f"{i} {cd} {cd}\n" for i in range(1, 30))
+            )
+            (case / "case_config.json").write_text(json.dumps({
+                "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+                "mesh_params": {},
+            }))
+        report = grid_study("z", cases_root=self.root)
+        self.assertNotIn("refinement_ratio", report)
+        self.assertNotIn("richardson", report)
+        self.assertIn(report["verdict"], ("grid-independent", "marginal", "not-converged"))
+
+    def test_diverging_cl_is_not_grid_independent(self):
+        # Real numbers from a study: Cd converges cleanly (step halves, p ~ 2),
+        # but Cl's step change *grows* (order ~ -0.15) while still sitting just
+        # under the 5% band. A step-only verdict would wrongly say grid-independent;
+        # the per-metric order/GCI gate must flag Cl.
+        import json
+        data = {20: (0.00597, 0.06359), 30: (0.00579, 0.06080), 45: (0.00570, 0.05784)}
+        for cpl, (cd, cl) in data.items():
+            case = self.root / f"g_cpl{cpl}"
+            coeff = case / "postProcessing" / "forceCoeffs" / "0"
+            coeff.mkdir(parents=True)
+            coeff.joinpath("coefficient.dat").write_text(
+                "# Time Cd Cl\n" + "".join(f"{i} {cd} {cl}\n" for i in range(1, 30))
+            )
+            (case / "case_config.json").write_text(json.dumps({
+                "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+                "mesh_params": {"block_cells": [cpl, cpl, cpl]},
+            }))
+        report = grid_study("g", cases_root=self.root)
+        self.assertEqual(report["per_metric"]["cd"]["verdict"], "independent")
+        self.assertEqual(report["per_metric"]["cl"]["verdict"], "not-converged")
+        self.assertTrue(report["per_metric"]["cl"]["p"] <= 0)
+        self.assertFalse(report["converged"])
+        self.assertEqual(report["verdict"], "not-converged")
+        self.assertIn("Cl", report["note"])
+
     def test_convergence_stats_gci_ld_and_step_deltas(self):
         _write_case(self.root, "b_fast", cd=0.312, cl=1.44, cells=4_000_000)
         _write_case(self.root, "b_standard", cd=0.301, cl=1.40, cells=9_000_000)

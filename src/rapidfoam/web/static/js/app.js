@@ -4101,6 +4101,8 @@ class CFDApp {
       badge.textContent = '--';
       badge.style.display = 'none';
     }
+    const metricEl = document.getElementById('grid-metric-badges');
+    if (metricEl) metricEl.innerHTML = '';
     const head = document.getElementById('grid-level-head');
     if (head) head.textContent = 'Cells / length';
   }
@@ -4335,17 +4337,43 @@ class CFDApp {
     if (verdictEl) {
       let text = `Verdict: ${data.verdict || '--'}`;
       if (data.deltas) {
-        const step = refinement ? 'coarse→fine' : 'std→fine';
-        text += ` — ${step} Cd ${data.deltas.cd_std_fine_pct}%, Cl ${data.deltas.cl_std_fine_pct}%`;
+        // The delta is always between the two finest levels (previous -> fine),
+        // i.e. std->fine for a fidelity trio or the last two rungs of a ladder.
+        text += ` — fine vs previous Cd ${data.deltas.cd_std_fine_pct}%, Cl ${data.deltas.cl_std_fine_pct}%`;
         if (data.deltas.ld_std_fine_pct !== undefined) text += `, L/D ${data.deltas.ld_std_fine_pct}%`;
       }
-      if (data.note) text += ` — ${data.note}`;
+      // With per-metric detail the explanation is shown as badges below; the note
+      // is only needed for the early-exit messages (insufficient data, etc.).
+      if (data.note && !data.per_metric) text += ` — ${data.note}`;
       // Partial study: make it explicit that the answer is waiting on the rest.
       if (data.verdict === 'insufficient-data' && availableCount > 0 && availableCount < 3) {
         text += ` — ${availableCount}/3 levels have solver output; re-run once the rest finish.`;
       }
       verdictEl.textContent = text;
-      verdictEl.className = `field-hint ${data.converged ? 'mesh-metric-pass' : 'mesh-metric-usable'}`;
+      const verdictClass = data.converged ? 'mesh-metric-pass'
+        : (data.verdict === 'not-converged' ? 'mesh-metric-fail' : 'mesh-metric-usable');
+      verdictEl.className = `field-hint ${verdictClass}`;
+    }
+
+    // Per-metric verdict badges so a passing Cd cannot hide a failing Cl.
+    const metricEl = document.getElementById('grid-metric-badges');
+    if (metricEl) {
+      const perMetric = data.per_metric || {};
+      const badgeCls = {
+        independent: 'mesh-quality-badge-ok',
+        marginal: 'mesh-quality-badge-warn',
+        'not-converged': 'mesh-quality-badge-bad',
+      };
+      metricEl.innerHTML = [['cd', 'Cd'], ['cl', 'Cl']]
+        .filter(([key]) => perMetric[key])
+        .map(([key, label]) => {
+          const m = perMetric[key];
+          const detail = (m.gci_pct !== null && m.gci_pct !== undefined)
+            ? `GCI ±${m.gci_pct}%` : `step ${m.step_pct}%`;
+          const warn = m.monotonic === false ? ' · non-monotone' : '';
+          return `<span class="badge badge-subtle ${badgeCls[m.verdict] || ''}">`
+            + `${this.escapeHtml(label)}: ${this.escapeHtml(m.verdict)} · ${this.escapeHtml(detail)}${warn}</span>`;
+        }).join('');
     }
 
     // Richardson extrapolation + Roache GCI: the converged value and its band.
