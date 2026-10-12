@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Mapping
 
 from rapidfoam.core.faces import patch_role
 from rapidfoam.meshing.context import MeshContext
 from rapidfoam.meshing.plan import MeshPlan
+from rapidfoam.meshing.quality import resolve_quality
 from rapidfoam.core.foam import FOOTER, bool_str, foam_header
 
 
@@ -53,55 +55,56 @@ def _location_in_mesh(plan: MeshPlan, ctx: MeshContext) -> list[float]:
     return loc
 
 
-def _quality_controls_block(
-    controls: dict, relaxed: dict, fallback: dict
+def _render_quality_controls(
+    limits: Mapping[str, float], relaxed: Mapping[str, float]
 ) -> str:
     """Render one snappyHexMesh ``meshQualityControls`` block.
 
-    ``controls`` supplies the main limits (falling back to ``fallback`` then a
-    hard-coded default); ``relaxed`` supplies the sub-block applied while layers
-    are added. Reused for the single-pass dict and the layering dict so the
-    layering gate is a *real* relaxation rather than a total disable.
+    Both tiers arrive fully resolved from :func:`meshing.quality.resolve_quality`
+    (the single tuning source), so there are no hidden per-call defaults here:
+    what the profile says is exactly what the dictionary contains. ``limits``
+    is the gate; ``relaxed`` is the sub-block snappy falls back to during its
+    iterations.
     """
 
-    def c(key: str, default):
-        return controls.get(key, fallback.get(key, default))
+    def v(key: str) -> str:
+        return f"{limits[key]:g}"
 
-    def r(key: str, default):
-        return relaxed.get(key, default)
+    def r(key: str) -> str:
+        return f"{relaxed[key]:g}"
 
     return f"""\
 meshQualityControls
 {{
-    maxNonOrtho         {c("maxNonOrtho", 65)};
-    maxBoundarySkewness {c("maxBoundarySkewness", 20)};
-    maxInternalSkewness {c("maxInternalSkewness", 4)};
-    maxConcave          {c("maxConcave", 80)};
-    minVol              {c("minVol", 1e-13)};
-    minTetQuality       {c("minTetQuality", 1e-15)};
-    minArea             {c("minArea", -1)};
-    minTwist            {c("minTwist", 0.02)};
-    minDeterminant      {c("minDeterminant", 0.001)};
-    minFaceWeight       {c("minFaceWeight", 0.05)};
-    minVolRatio         {c("minVolRatio", 0.01)};
-    minTriangleTwist    {c("minTriangleTwist", -1)};
-    nSmoothScale        {c("nSmoothScale", 4)};
-    errorReduction      {c("errorReduction", 0.75)};
+    maxNonOrtho         {v("maxNonOrtho")};
+    maxBoundarySkewness {v("maxBoundarySkewness")};
+    maxInternalSkewness {v("maxInternalSkewness")};
+    maxConcave          {v("maxConcave")};
+    minVol              {v("minVol")};
+    minTetQuality       {v("minTetQuality")};
+    minArea             {v("minArea")};
+    minTwist            {v("minTwist")};
+    minDeterminant      {v("minDeterminant")};
+    minFaceWeight       {v("minFaceWeight")};
+    minVolRatio         {v("minVolRatio")};
+    minTriangleTwist    {v("minTriangleTwist")};
+    nSmoothScale        {v("nSmoothScale")};
+    errorReduction      {v("errorReduction")};
 
     relaxed
     {{
-        maxNonOrtho     {r("maxNonOrtho", 75)};
-        maxBoundarySkewness {r("maxBoundarySkewness", 25)};
-        maxInternalSkewness {r("maxInternalSkewness", 5)};
-        maxConcave      {r("maxConcave", 85)};
-        minVol          {r("minVol", 1e-13)};
-        minTetQuality   {r("minTetQuality", 1e-30)};
-        minArea         {r("minArea", -1)};
-        minTwist        {r("minTwist", 0.001)};
-        minDeterminant  {r("minDeterminant", 0.0005)};
-        minFaceWeight   {r("minFaceWeight", 0.02)};
-        minVolRatio     {r("minVolRatio", 0.005)};
-        minTriangleTwist {r("minTriangleTwist", -1)};
+        maxNonOrtho     {r("maxNonOrtho")};
+        maxBoundarySkewness {r("maxBoundarySkewness")};
+        maxInternalSkewness {r("maxInternalSkewness")};
+        maxConcave      {r("maxConcave")};
+        minVol          {r("minVol")};
+        minTetQuality   {r("minTetQuality")};
+        minArea         {r("minArea")};
+        minTwist        {r("minTwist")};
+        minDeterminant  {r("minDeterminant")};
+        minFaceWeight   {r("minFaceWeight")};
+        minVolRatio     {r("minVolRatio")};
+        minTriangleTwist {r("minTriangleTwist")};
     }}
 }}
 
@@ -116,7 +119,7 @@ def write_snappy_hex_mesh_dict(plan: MeshPlan, ctx: MeshContext, case_dir: Path)
     snap = ctx.snap
     layers = plan.layers
     quality = ctx.quality
-    relaxed = quality.get("relaxed", {})
+    profile = resolve_quality(quality)
 
     surface_level = mesh["surface_level"]
     edge_level = mesh["edge_level"]
@@ -189,16 +192,12 @@ def write_snappy_hex_mesh_dict(plan: MeshPlan, ctx: MeshContext, case_dir: Path)
 
     loc = _location_in_mesh(plan, ctx)
 
-    quality_text = _quality_controls_block(quality, relaxed, quality)
+    quality_text = _render_quality_controls(profile.main, profile.relaxed)
 
-    # Layering pass gate: reuse the configured relaxed limits (a genuine
-    # relaxation) instead of the historical "disable everything" block, which
-    # let badly skewed/folded prisms through (max skewness ~285, failed checks).
-    # A case may override with mesh_quality.layering_relaxed.
-    layering_relaxed = quality.get("layering_relaxed") if isinstance(quality, dict) else None
-    if not isinstance(layering_relaxed, dict):
-        layering_relaxed = relaxed
-    layering_quality_text = _quality_controls_block(layering_relaxed, layering_relaxed, quality)
+    # Layering pass gate: a bounded relaxation of the main gate (the tier that
+    # actually bounds the final mesh — snappy keeps a prism only while the cell
+    # stays inside it). A case may override with mesh_quality.layering_relaxed.
+    layering_quality_text = _render_quality_controls(profile.layering, profile.layering)
 
     def _render(castellated, snap_flag, add_layers, quality_block):
         return f"""\

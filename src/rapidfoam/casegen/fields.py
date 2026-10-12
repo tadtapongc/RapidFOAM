@@ -84,8 +84,7 @@ boundaryField
     }}
     {patches["outlet"]}
     {{
-        type            inletOutlet;
-        inletValue      uniform (0 0 0);
+        type            pressureInletOutletVelocity;
         value           uniform (0 0 0);
     }}
     "{wing_re}"
@@ -148,7 +147,9 @@ boundaryField
     }}
     {patches["outlet"]}
     {{
-        type            zeroGradient;
+        type            inletOutlet;
+        inletValue      uniform {kv};
+        value           uniform {kv};
     }}
     "{wing_re}"
     {{
@@ -180,7 +181,9 @@ boundaryField
     }}
     {patches["outlet"]}
     {{
-        type            zeroGradient;
+        type            inletOutlet;
+        inletValue      uniform {ov};
+        value           uniform {ov};
     }}
     "{wing_re}"
     {{

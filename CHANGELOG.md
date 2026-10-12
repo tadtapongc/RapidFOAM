@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Divergence guard**: the background convergence monitor now also detects
+  blow-ups — when a force exceeds 50x the median of its trailing 50 iterations
+  it writes `stopAt writeNow;` and lets the solver exit cleanly. Measured on the
+  two crashed aero-map cases this triggers ~110–220 iterations before the
+  floating-point exception, preserving the state for diagnosis instead of
+  losing every result since the last write. Exposed as `--blowup-factor` on the
+  standalone `rapidfoam-monitor`; the per-case generated monitor uses the
+  rolling-median rule with the 50x default.
+
+### Changed
+- **Mesher robustness retune (stability-first)**: the two-pass layering gate
+  (`mesh_quality.layering_relaxed`) is now a *bounded* relaxation of the main
+  gate — default `{maxNonOrtho 65, maxBoundarySkewness 22, maxInternalSkewness
+  5, maxConcave 82}` (was `{maxNonOrtho 80, maxInternalSkewness 8}`). Measured
+  on a full aero-map (24 cases, ~10M cells each), the old gate pinned the final
+  mesh at ~80° non-orthogonality with skewness up to ~14 and a "Bad" verdict on
+  every case; the bounded gate keeps the final mesh around the practical
+  good/caution bands while keeping as much layer coverage as quality allows.
+- **Refinement-transition smoothing**: `nCellsBetweenLevels` is now 3 in every
+  fidelity preset (was 2) so refinement-level jumps get an extra buffer cell —
+  a measured mesh-quality comparison showed non-orthogonality drop from ~80 to
+  ~70 at ~12% more cells.
+- **Bounded layer thickness**: `layers.maxFaceThicknessRatio` default 0.7 → 0.5
+  limits layer-induced skewness (a full car case measured max skewness 14.4 at
+  0.7). The y+ ~30 first layer still builds at standard surface resolution, and
+  `layers.y_plus_fit` can still raise the ratio (up to 0.8) when a case needs
+  target matching.
+- **Single tuning source**: the snappyHexMesh quality tiers now live in
+  `meshing/quality.py` (`QUALITY_LIMITS`, `RELAXED_LIMITS`, `LAYERING_LIMITS`,
+  `resolve_quality`). `DEFAULT_CONFIG` and the snappy writer consume the resolved
+  profile instead of duplicating hard-coded fallbacks, so the emitted
+  `meshQualityControls` can no longer drift from the documented defaults.
+- **Backflow-robust outlet boundary conditions**: the outlet now uses
+  `pressureInletOutletVelocity` for `U` (was `inletOutlet` with a dead-end zero
+  velocity on backflow) and `inletOutlet` with the freestream value for `k` and
+  `omega` (was `zeroGradient`). Large vehicle wakes routinely reverse the flow
+  near the outlet during development; the new pair is the standard robust
+  external-aero choice and cannot stall reverse flow at the boundary.
+- **Physics guardrails**: validation now warns when `turbulence.model` is not
+  kOmegaSST (the default wall functions and y+ presets assume k-omega) and when
+  `turbulence.intensity` is written as a percentage (0.5) instead of a fraction
+  (0.005).
+- **Layer-coverage telemetry recalibrated**: coverage is now tiered instead of a
+  binary "dropout at < 90%" hard failure. A real multi-part car measures ~3.3–6.1
+  of 8 layers (41–76%): a full stack (≥ 90%) is healthy, a partial stack (50–90%)
+  is a warning, and only below 50% is hard dropout. The realised y+ remains the
+  authoritative near-wall check, and the bands are tunable per case with
+  `mesh_quality.verdict_bands.layer_coverage` (`{good: 0.9, caution: 0.5}`).
+- **Expert-settings guardrails**: validation now covers the numeric sections that
+  were previously unchecked — `relaxation` factors (error ≤ 0, warn > 1),
+  `simple.nNonOrthogonalCorrectors`/`consistent`, `linear_solvers` tolerance and
+  `relTol`, `snap` ranges/flags, `parallel.method` (warn on non-standard names),
+  `feature_extract.includedAngle`, `layers.featureAngle`/`slipFeatureAngle`,
+  `potential_flow.nNonOrthogonalCorrectors`, the main `mesh_quality` limits (a
+  typo used to fall back silently), `vehicle` ranges/consistency, and
+  `grid_study` levels/thresholds/SLURM list lengths. `solver.write_interval >=
+  end_time` now warns (no intermediate write, so a crash loses the whole run).
+
 ## [1.6.0] - 2026-09-29
 
 ### Added

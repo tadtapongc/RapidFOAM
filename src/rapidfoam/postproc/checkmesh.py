@@ -86,6 +86,19 @@ _PATCH_ROW_RE = re.compile(
     r"(ok|failed|notOk)\s*\(([^)]*)\)"
 )
 
+# snappyHexMesh's final layer table reports the *average* number of layers added
+# per patch, which is routinely fractional (e.g. 2.84 of a 3-layer target) and
+# rarely near 100% on complex geometry: a real multi-part car measures ~3.3-6.1
+# of 8 (41-76%). Coverage is therefore tiered, not binary:
+#   >= LAYER_COVERAGE_GOOD   full stack (healthy)
+#   >= LAYER_COVERAGE_MIN    partial stack (warning — normal on hard geometry;
+#                            the realised y+ is the authoritative near-wall check)
+#   <  LAYER_COVERAGE_MIN    real dropout (hard issue)
+# Both thresholds are tunable per case via
+# mesh_quality.verdict_bands.layer_coverage.
+LAYER_COVERAGE_GOOD = 0.9
+LAYER_COVERAGE_MIN = 0.5
+
 # CFD-practical quality bands, independent of snappy's give-up limits.
 #
 # snappyHexMesh's ``meshQualityControls`` are where it stops *trying*, not where
@@ -105,6 +118,7 @@ QUALITY_TIERS: dict[str, tuple[float, float, str, str]] = {
     "min_interp_weight": (0.1, 0.01, "min", "Min face interpolation weight"),
     "min_volume_ratio": (0.05, 0.01, "min", "Min face volume ratio"),
     "concave_cells": (0.0, 0.0, "zero", "Concave cells"),
+    "layer_coverage": (LAYER_COVERAGE_GOOD, LAYER_COVERAGE_MIN, "min", "Boundary-layer coverage"),
 }
 
 # Verdict ordering, worst last: index is severity.
@@ -116,17 +130,11 @@ _VERDICT_LABEL = {
     "bad": "Bad",
 }
 
-# snappyHexMesh's final layer table reports the *average* number of layers added
-# per patch, which is routinely fractional (e.g. 2.84 of a 3-layer target) and
-# almost never reaches 100% on complex geometry. Coverage at or above this
-# fraction is treated as adequately layered; below it the patch is real dropout.
-LAYER_COVERAGE_MIN = 0.9
-
-# A patch whose layers are all present (count coverage >= LAYER_COVERAGE_MIN)
-# but whose realised stack is below this fraction of the requested thickness is
-# flagged as thin — a warning, not a hard failure: snappy thins the stack near
-# features to protect quality, and the authoritative near-wall check is the
-# realised y+ (read_forces.py --yplus).
+# A patch whose layers are all present (coverage at or above
+# LAYER_COVERAGE_GOOD) but whose realised stack is below this fraction of the
+# requested thickness is flagged as thin — a warning, not a hard failure: snappy
+# thins the stack near features to protect quality, and the authoritative
+# near-wall check is the realised y+ (read_forces.py --yplus).
 LAYER_THICKNESS_MIN = 0.7
 
 
@@ -613,6 +621,7 @@ def check_mesh_quality(
                 issues.append(f"open (non-closed) surface patch '{name}'")
 
     layer_entries: dict[str, dict[str, Any]] = {}
+    layer_dropout = False
     for patch, info in layers.items():
         achieved = _finite(info.get("layers"))
         entry: dict[str, Any] = dict(info)
@@ -631,23 +640,36 @@ def check_mesh_quality(
         coverage = _finite(info.get("coverage"))
         if coverage is None and effective_target and effective_target > 0 and achieved is not None:
             coverage = achieved / effective_target
+        coverage_level: str | None = None
         if coverage is not None:
             entry["coverage"] = coverage
-            if coverage < LAYER_COVERAGE_MIN:
-                shown = f"{achieved:g}" if achieved is not None else "?"
-                target_text = effective_target if effective_target else "?"
+            coverage_level = classify_value("layer_coverage", coverage, tiers)
+            shown = f"{achieved:g}" if achieved is not None else "?"
+            target_text = effective_target if effective_target else "?"
+            if coverage_level == "marginal":
+                # Below the caution band: a real dropout worth a hard failure.
+                layer_dropout = True
                 issues.append(
                     f"boundary-layer dropout on '{patch}': "
                     f"{shown} of {target_text} layers "
                     f"({coverage * 100:.0f}% coverage)"
                 )
+            elif coverage_level == "usable":
+                # Partial stack: normal on complex geometry (snappy drops layers
+                # at edges/gaps), so a warning — the realised y+ decides.
+                warnings.append(
+                    f"partial boundary layer on '{patch}': "
+                    f"{shown} of {target_text} layers "
+                    f"({coverage * 100:.0f}% coverage; realised y+ is authoritative)"
+                )
         # Thickness coverage (snappy's [%] column) is reported whenever known.
         # Flag a much-thinner-than-requested stack only when the layers are all
-        # present (dropout is already an issue); the realised y+ is authoritative.
+        # present (dropout/partial is already reported); the realised y+ is
+        # authoritative.
         thickness = _finite(info.get("percent"))
         if thickness is not None:
             entry["thickness_fraction"] = round(thickness / 100.0, 4)
-            if (coverage is not None and coverage >= LAYER_COVERAGE_MIN
+            if (coverage_level == "good"
                     and entry["thickness_fraction"] < LAYER_THICKNESS_MIN):
                 warnings.append(
                     f"thin boundary layer on '{patch}': "
@@ -667,10 +689,7 @@ def check_mesh_quality(
             verdict = level
     hard_fail = (
         bool(open_patches)
-        or any(
-            e.get("coverage") is not None and e["coverage"] < LAYER_COVERAGE_MIN
-            for e in layer_entries.values()
-        )
+        or layer_dropout
         or (isinstance(stats.get("failed_checks"), int) and stats["failed_checks"] > 0)
     )
     if hard_fail:

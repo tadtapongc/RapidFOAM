@@ -192,11 +192,16 @@ The universal default tree. Sections: `case_name`, `stl_files`, `flow` (`velocit
 `relaxation`, `wall_functions`, `snap`, `layers`, `feature_extract`, **`field_outputs`**
 (222, [dev]), `mesh_quality`, `surface_check`, `potential_flow`.
 
-Notable `layers` defaults (**[dev]** coverage-first tuning): `expansion_ratio 1.15`,
-`min_thickness_ratio 0.35`, `maxFaceThicknessRatio 0.7`, `nSmoothThickness 20`,
+Notable `layers` defaults (**[dev]** coverage-first, stability-bounded tuning): `expansion_ratio 1.15`,
+`min_thickness_ratio 0.35`, `maxFaceThicknessRatio 0.5`, `nSmoothThickness 20`,
 `nRelaxIter 15`, `nLayerIter 75`, `ground_layers False`, `ground_n_layers 2`,
-`two_pass True`, `y_plus_fit False`. `mesh_quality.layering_relaxed` defaults to
-`{"maxNonOrtho": 80, "maxInternalSkewness": 8}` (the two-pass layer gate). The **[dev]**
+`two_pass True`, `y_plus_fit False`. The snappyHexMesh quality tiers are defined once in
+**`meshing/quality.py`**: `QUALITY_LIMITS` (main gate), `RELAXED_LIMITS` (in-iteration
+fallback) and `LAYERING_LIMITS` — the two-pass layer gate defaults to a bounded relaxation
+of the main gate, `{maxNonOrtho 65, maxBoundarySkewness 22, maxInternalSkewness 5,
+maxConcave 82}`. `config.py` builds `DEFAULT_CONFIG["mesh_quality"]` from those constants and
+`writers/snappy.py` renders whatever `resolve_quality` returns, so the emitted dictionaries
+cannot drift from the documented defaults. The **[dev]**
 `field_outputs` block is:
 
 ```python
@@ -225,7 +230,23 @@ mesh-quality `verdict_bands` shape. **[dev]** additions:
 - `field_outputs` (560-567) must be an object of booleans.
 Warnings: both ground settings defined; layer stack below `min_thickness`; absolute first
 layer exceeds `maxFaceThicknessRatio × finest surface cell` (the message now uses the
-configured ratio and hints at `layers.y_plus_fit`).
+configured ratio and hints at `layers.y_plus_fit`); `turbulence.model` is not kOmegaSST
+(wall functions / y+ presets assume k-omega); `turbulence.intensity` looks like a percentage
+(≥ 0.2); a tightened `mesh_quality.maxNonOrtho` left the layering gate looser than the
+default bounded margin; `layers.two_pass` on (bounded relaxed gate notice).
+
+**Expert-settings guardrails** (the numeric sections not shown in the shipped config):
+- errors: `relaxation.*` ≤ 0; `simple.nNonOrthogonalCorrectors` not an integer ≥ 0 or
+  `consistent` non-bool; `linear_solvers.{p,U}.tolerance` ≤ 0 / `relTol` outside [0, 1];
+  `snap.tolerance` ≤ 0 or iteration counts non-integers; `parallel.method` non-string;
+  `feature_extract.includedAngle` outside (0, 180]; `layers.featureAngle`/`slipFeatureAngle`
+  outside [0, 180]; `potential_flow.nNonOrthogonalCorrectors` < 0; any main `mesh_quality`
+  limit non-numeric (used to fall back silently via `resolve_quality`); `vehicle.wheelbase`
+  ≤ 0 / `front_weight_pct` outside [0, 100]; `grid_study.levels` not ≥ 2 strictly increasing
+  values in [5, 100], thresholds ≤ 0, or SLURM lists not matching the level count.
+- warnings: `relaxation.*` > 1 (destabilising); non-standard `parallel.method`;
+  only one of `vehicle.wheelbase`/`front_weight_pct` set (aero balance unavailable);
+  `solver.write_interval` ≥ `solver.end_time` (no intermediate write).
 
 ---
 
@@ -247,9 +268,10 @@ configured ratio and hints at `layers.y_plus_fit`).
 
 ### 7.1 `meshing/presets.py` (201)
 `FIDELITY_PRESETS` (11-139): `fast`/`standard`/`fine` binding `cells_per_length` (20/30/37.5),
-`surface_level`, `edge_level`, `n_layers` (5/8/20), `expansion_ratio` (1.2/1.2/1.1),
+`surface_level`, `edge_level`, `n_layers` (5/8/20), `expansion_ratio` (1.15/1.15/1.1),
 `y_plus_target` (50/30/1), `ground_layers` (all False), `end_time`/`write_interval`,
-`maxGlobalCells`, `nCellsBetweenLevels`, `resolveFeatureAngle` (35/35/30), snap iters,
+`maxGlobalCells`, `nCellsBetweenLevels` (3 in every preset — buffer cells smooth the
+level-jump transitions), `resolveFeatureAngle` (35/35/30), snap iters,
 `slurm_time`/`slurm_mem_per_cpu`, auto-size fields (`feature_cells`, `max_surface_level`),
 `distance_shells`, wake levels, `cell_estimate`/`runtime_estimate`.
 `apply_fidelity_preset(cfg, is_set)` (148) fills only unset fields; mutates `cfg` and returns
@@ -311,17 +333,26 @@ properties and `as_config()`; `build_mesh_plan` (86, pure); `plan_from_config` (
 ### 7.9 `meshing/pipeline.py` (26)
 `emit_mesh_files(plan, ctx, case_dir)` (14); `emit_mesh_files_from_config(cfg, case_dir)` (21).
 
-### 7.10 `meshing/writers/`
+### 7.10 `meshing/quality.py` — the quality-tuning single source
+`QUALITY_LIMITS` (main gate: 60/20/3.5/80 …), `RELAXED_LIMITS` (in-iteration fallback:
+70/25/5/85 …) and `LAYERING_LIMITS` (two-pass layer gate, a bounded relaxation of the main
+gate: `maxNonOrtho 65`, `maxBoundarySkewness 22`, `maxInternalSkewness 5`, `maxConcave 82` —
+the gate that actually bounds the final mesh). `resolve_quality(quality_cfg)` coerces config
+overrides to finite numbers, fills every missing key from the tiers, and starts the layering
+tier from the resolved main tier so tightening the main gate also tightens the layer gate.
+Consumed by `config.py` (DEFAULT_CONFIG) and `writers/snappy.py`; no hard-coded quality
+fallbacks remain in the writer.
+
+### 7.11 `meshing/writers/`
 - **`block_mesh.py` (107)** — `write_block_mesh_dict` (41); `FACE_MAP`; `_PATCH_TYPES`
   (`ground → wall`); missing `block_cells` warns and falls back to uniform counts.
 - **`feature_extract.py` (39)** — one entry per STL with `includedAngle`, `nonManifoldEdges`,
   `openEdges`, `writeObj no`.
-- **`snappy.py` (276)** — `_location_in_mesh` (13); `_quality_controls_block(controls,
-  relaxed, fallback)` (56) renders one `meshQualityControls` block (**[dev]**); 
+- **`snappy.py`** — `_location_in_mesh` (13); `_render_quality_controls(limits, relaxed)`
+  renders one `meshQualityControls` block from the fully resolved quality profile;
   `write_snappy_hex_mesh_dict` (111) emits geometry/features/refinementRegions/addLayersControls
   and the quality block. **Two-pass** writes `snappyHexMeshDict_layering` whose gate is the
-  configured `mesh_quality.relaxed` (**[dev]**, previously a total disable), overridable via
-  `mesh_quality.layering_relaxed`.
+  bounded `mesh_quality.layering_relaxed` tier, overridable per case.
 
 ---
 
@@ -357,7 +388,10 @@ At solve time the time dirs also receive the optional diagnostic fields (`wallSh
 ### 8.3 `casegen/constants.py` (38), `casegen/fields.py` (231)
 - `write_constant` (14): `transportProperties` (Newtonian, nu), `turbulenceProperties` (RAS).
 - `write_fields` (25): `U/p/k/omega/nut` with per-patch BCs; `_wing_regex` over all STL stems;
-  moving-ground vs slip; ground/symmetry patches emitted only when assigned.
+  moving-ground vs slip; ground/symmetry patches emitted only when assigned. The outlet is
+  backflow-robust: `pressureInletOutletVelocity` for `U`, `inletOutlet` (freestream
+  `inletValue`) for `k`/`omega`, `calculated` for `nut`; the slip far field keeps
+  `zeroGradient` scalars (no normal flux there).
 
 ### 8.4 `casegen/solver.py` (325) — incl. **[dev]** field outputs
 - `write_control_dict` (22): `simpleFoam`, `startFrom latestTime`, `stopAt endTime`, function
@@ -412,7 +446,9 @@ interrupt.
   faces incorrectly oriented, faces with low-quality/negative-volume decomposition tets,
   cells with small determinant, faces with small interpolation weight, faces with small
   volume ratio.
-- `QUALITY_TIERS` (good/caution bands), `LAYER_COVERAGE_MIN 0.9`, `LAYER_THICKNESS_MIN 0.7`.
+- `QUALITY_TIERS` (good/caution bands, including `layer_coverage` good 0.9 / caution 0.5),
+  `LAYER_COVERAGE_GOOD 0.9` / `LAYER_COVERAGE_MIN 0.5` (full vs partial vs dropout),
+  `LAYER_THICKNESS_MIN 0.7`.
 - `resolve_bands` (133), `classify_value` (158), `find_checkmesh_logs`/`find_snappy_logs`
   (209/215), `parse_checkmesh` (233) — also builds `stats["failures"]`, `parse_boundary_patches`
   (333), `parse_layer_coverage` (414), `read_checkmesh`/`read_layer_coverage` (446/458),
@@ -578,17 +614,21 @@ cannot build the layer. Provenance: `fit_applied`, `fit_ratio`, `fit_level`. CLI
 
 ### 13.3 Two-pass layering gate
 `layers.two_pass` is **on by default**. It writes `system/snappyHexMeshDict_layering` whose
-`meshQualityControls` use `mesh_quality.layering_relaxed` `{maxNonOrtho 80,
-maxInternalSkewness 8}` (a bounded relaxation, not a disable), overridable per case. The
-single-pass `snappyHexMeshDict` is unchanged.
+`meshQualityControls` use the bounded `mesh_quality.layering_relaxed` tier
+`{maxNonOrtho 65, maxBoundarySkewness 22, maxInternalSkewness 5, maxConcave 82}`
+(resolved by `meshing/quality.py`, overridable per case). This gate bounds the final mesh:
+measured on the aero-map cases, the previous 80/8 gate pinned final meshes at ~80°
+non-orthogonality and Bad verdicts. The single-pass `snappyHexMeshDict` main gate is unchanged
+(60/3.5) with the 70/5 in-iteration fallback.
 
-### 13.4 Coverage-first layer defaults
-The shipped defaults are tuned for boundary-layer coverage on real, complex geometry:
-`min_thickness_ratio 0.35` (keep partial stacks), `maxFaceThicknessRatio 0.7` (thicker allowed
-layer), `expansion_ratio 1.15` (shorter stack), `nSmoothThickness 20` / `nRelaxIter 15` /
-`nLayerIter 75`, `two_pass true`. `y_plus_fit` is deliberately **off**: it is a
-*target-matching* tool that raises `maxFaceThicknessRatio` only as needed to hit y+ and can
-lift the `min_thickness` floor, so it trades coverage for the target rather than raising it.
+### 13.4 Coverage-first, stability-bounded layer defaults
+The shipped defaults are tuned for boundary-layer coverage on real, complex geometry while
+bounding layer-induced skewness: `min_thickness_ratio 0.35` (keep partial stacks),
+`maxFaceThicknessRatio 0.5` (bounds thick-prism skewness; was 0.7), `expansion_ratio 1.15`
+(shorter stack), `nSmoothThickness 20` / `nRelaxIter 15` / `nLayerIter 75`, `two_pass true`.
+`y_plus_fit` is deliberately **off**: it is a *target-matching* tool that raises
+`maxFaceThicknessRatio` only as needed to hit y+ and can lift the `min_thickness` floor, so it
+trades coverage for the target rather than raising it.
 
 ### 13.5 Interpreting the diagnostics
 - `p` and `wallShearStress` are **kinematic** (×ρ for Pa); `Cp = p / (½U∞²)`.
@@ -634,7 +674,11 @@ surfaceCheck (report-only unless enforced) → surfaceFeatureExtract → blockMe
 → snappyHexMesh `-overwrite` (+ optional layering pass) → checkMesh → reconstructParMesh →
 renumberMesh → solver decomposePar → potentialFoam (non-fatal) → background convergence
 monitor → simpleFoam → reconstructPar. The monitor writes `stopAt writeNow;` once drag and
-downforce vary < ±0.5% over 200 iters after 300.
+downforce vary < ±0.5% over 200 iters after 300, and independently guards against divergence
+(a force > 50x the median of its trailing 50 iters) by stopping the solver the same way —
+preserving the state instead of failing in an FPE. Per-case monitor constants
+(`BLOWUP_FACTOR`, `BLOWUP_WINDOW`) live in `runtime/convergence_monitor.py`; the standalone
+`rapidfoam-monitor` exposes `--blowup-factor`.
 
 ### 15.3 Telemetry (Studio)
 The front end polls `/api/telemetry/{forces,residuals,solver,mesh,surface,logs}` every 5 s.
@@ -746,7 +790,10 @@ scaling, unavailable viewer and `dispose`.
 - Symmetry precedence: explicit faces > `symmetry_plane` > default half model > polyMesh.
 - Surface enforce exempts symmetry/`allow_open`; checkMesh open-patch findings suppressed for
   symmetry.
-- Layer coverage uses snappy's fractional average (2.84/3 kept); full-but-thin stacks warn.
+- Layer coverage uses snappy's fractional average (2.84/3 kept) and is tiered: full ≥ 0.9
+  (healthy), partial 0.5-0.9 (warning — normal on complex geometry; realised y+ is
+  authoritative), < 0.5 is real dropout (hard issue). Full-but-thin stacks warn separately;
+  both thresholds are tunable via `mesh_quality.verdict_bands.layer_coverage`.
 - `iterations_per_second == 0` distinguished from absent; Validate cannot mutate state.
 - Two-pass coverage can be *inflated* by a too-loose gate → high skewness / failed checks;
   the gate now reuses `mesh_quality.relaxed`.
@@ -785,8 +832,19 @@ scaling, unavailable viewer and `dispose`.
   `min_thickness_ratio` removed; architecture refactor into bounded contexts; SLURM time/mem
   follow the preset; full-car symmetry fix; telemetry honours overrides and exports full
   history.
-- **`dev` (unreleased)**: opt-in `layers.y_plus_fit` (boolean); two-pass
-  layering gate softened to `mesh_quality.relaxed` (+ `layering_relaxed` override); diagnostic
+- **`dev` (unreleased)**: **mesher robustness retune** — quality tiers centralized in
+  `meshing/quality.py`, layering gate bounded to `{maxNonOrtho 65, maxBoundarySkewness 22,
+  maxInternalSkewness 5, maxConcave 82}` (was 80/8), `nCellsBetweenLevels` 3 in every preset,
+  `maxFaceThicknessRatio` 0.5 (was 0.7); **physics robustness** — backflow-robust outlet BCs
+  (`pressureInletOutletVelocity`, `inletOutlet` turbulence) and turbulence guardrails
+  (model/wall-function mismatch, percentage-vs-fraction intensity); **layer-coverage tiers**
+  (full ≥ 0.9 / partial 0.5-0.9 warning / dropout < 0.5, tunable via
+  `verdict_bands.layer_coverage`) so normal snappy partial stacks no longer read as
+  hard dropout; **expert-settings guardrails** (relaxation/simple/linear-solver/snap/
+  parallel/feature-extract/vehicle/grid_study ranges and types, main `mesh_quality`
+  numeric checks); **divergence guard** in
+  the convergence monitor (50x rolling-median force stop); opt-in `layers.y_plus_fit` (boolean); two-pass
+  layering gate resolved from the single tuning source (+ `layering_relaxed` override); diagnostic
   `field_outputs` (wall shear, y+ field, `fieldMinMax` max-y+ location, per-patch wall-pressure
   opt-in `vorticity`); Studio "Diagnostic Field Outputs" controls; per-part
   `forces_<part>` build-up table; checkMesh failure-reason detail; per-patch y+ min–max range;

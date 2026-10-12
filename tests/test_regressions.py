@@ -103,6 +103,8 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(namespace["MIN_ITERS"], 300)
         self.assertEqual(namespace["WINDOW"], 200)
         self.assertEqual(namespace["THRESHOLD"], 0.5)
+        self.assertEqual(namespace["BLOWUP_FACTOR"], 50.0)
+        self.assertEqual(namespace["BLOWUP_WINDOW"], 50)
 
     def test_init_preserves_existing_config(self):
         path = self.root / "configs/config.json"
@@ -139,6 +141,49 @@ class ProjectTest(unittest.TestCase):
     def test_new_section_comments_are_filtered(self):
         cfg = load_config(self.config(mesh_params={"_comment": "ignore", "base_cell_size": 0.1}))
         self.assertNotIn("_comment", cfg["mesh_params"])
+
+    def test_expert_setting_guardrails(self):
+        def check(**extra):
+            return validate(load_config(self.config(**extra)), self.root)
+
+        errors, _ = check(relaxation={"fields": {"p": 0}})
+        self.assertTrue(any("relaxation.fields.p" in e for e in errors))
+        _, warnings = check(relaxation={"fields": {"p": 1.5}})
+        self.assertTrue(any("relaxation.fields.p" in w for w in warnings))
+        errors, _ = check(simple={"nNonOrthogonalCorrectors": -1})
+        self.assertTrue(any("nNonOrthogonalCorrectors" in e for e in errors))
+        errors, _ = check(linear_solvers={"p": {"relTol": 2}})
+        self.assertTrue(any("relTol" in e for e in errors))
+        errors, _ = check(linear_solvers={"U": {"tolerance": 0}})
+        self.assertTrue(any("tolerance" in e for e in errors))
+        errors, _ = check(snap={"tolerance": -1})
+        self.assertTrue(any("snap.tolerance" in e for e in errors))
+        errors, warnings = check(parallel={"method": "bogus"})
+        self.assertFalse(errors)
+        self.assertTrue(any("parallel.method" in w for w in warnings))
+        errors, _ = check(parallel={"method": 123})
+        self.assertTrue(any("parallel.method" in e for e in errors))
+        errors, _ = check(mesh_quality={"maxNonOrtho": "60"})
+        self.assertTrue(any("mesh_quality.maxNonOrtho" in e for e in errors))
+        _, warnings = check(solver={"write_interval": 2000})
+        self.assertTrue(any("write_interval" in w for w in warnings))
+        errors, _ = check(vehicle={"wheelbase": -1})
+        self.assertTrue(any("vehicle.wheelbase" in e for e in errors))
+        _, warnings = check(vehicle={"wheelbase": 1.6})
+        self.assertTrue(any("aero-balance" in w for w in warnings))
+        errors, _ = check(grid_study={"levels": [30, 20]})
+        self.assertTrue(any("grid_study.levels" in e for e in errors))
+        errors, _ = check(grid_study={"slurm": {"time": ["04:00:00"]}})
+        self.assertTrue(any("grid_study.slurm.time" in e for e in errors))
+        errors, _ = check(feature_extract={"includedAngle": 200})
+        self.assertTrue(any("includedAngle" in e for e in errors))
+        errors, _ = check(layers={"featureAngle": 200})
+        self.assertTrue(any("layers.featureAngle" in e for e in errors))
+        errors, _ = check(potential_flow={"nNonOrthogonalCorrectors": -1})
+        self.assertTrue(any("potential_flow" in e for e in errors))
+        # The shipped defaults stay clean.
+        errors, _ = check()
+        self.assertEqual([], errors)
 
     def test_non_object_configuration_and_overrides_fail_cleanly(self):
         for value in ([], {"overrides": []}):
@@ -223,6 +268,32 @@ class ProjectTest(unittest.TestCase):
         self.assertFalse(check_convergence([10] * 19, [20] * 19)[0])
         self.assertTrue(check_convergence([10] * 20, [20] * 20)[0])
         self.assertFalse(check_convergence([0] * 200, [0] * 200)[0])
+
+    def test_standalone_monitor_detects_blowup(self):
+        cfg = load_config(self.config())
+        namespace = {"__name__": "standalone_blowup_test"}
+        exec(_convergence_monitor_script(cfg), namespace)
+        detect = namespace["detect_blowup"]
+        self.assertIsNone(detect([10.0] * 60, [20.0] * 60))
+        # A smooth ramp tracks its own rolling median; no false trigger.
+        self.assertIsNone(detect([float(10 + i) for i in range(60)], [20.0] * 60))
+        blown = detect([10.0] * 59 + [1.0e9], [20.0] * 60)
+        self.assertIsNotNone(blown)
+        self.assertEqual(blown[0], "drag")
+        self.assertIsNone(detect([10.0] * 40, [20.0] * 40))  # too few samples
+
+    def test_monitor_stops_on_divergence(self):
+        case = self.root / "diverge_case"
+        (case / "system").mkdir(parents=True)
+        (case / "system/controlDict").write_text("stopAt endTime;\n")
+        path = case / "postProcessing/forces/0/force.dat"
+        path.parent.mkdir(parents=True)
+        rows = [force_row(t, 10) for t in range(300)]
+        rows.append(force_row(300, 1.0e9))
+        path.write_text("".join(rows))
+        with patch("rapidfoam.postproc.convergence_monitor.time.sleep", side_effect=[None, RuntimeError("second poll")]), contextlib.redirect_stdout(io.StringIO()):
+            self.assertFalse(monitor(case_dir=case))
+        self.assertIn("writeNow", (case / "system/controlDict").read_text())
 
     def test_monitor_reads_axes_from_target_case(self):
         case = self.root / "remote_case"

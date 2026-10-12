@@ -25,7 +25,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "end_time": 800,
         "write_interval": 400,
         "maxGlobalCells": 10_000_000,
-        "nCellsBetweenLevels": 2,
+        "nCellsBetweenLevels": 3,       # 3 buffer cells: smooth level transitions
         "resolveFeatureAngle": 35,
         "nSolveIter": 100,             # snap iterations
         "nFeatureSnapIter": 10,
@@ -67,7 +67,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "end_time": 1500,
         "write_interval": 500,
         "maxGlobalCells": 20_000_000,
-        "nCellsBetweenLevels": 2,      # 2 buffer cells (avoids massive 3D transition bloat)
+        "nCellsBetweenLevels": 3,      # 3 buffer cells: smoother transitions, lower non-orthogonality
         "resolveFeatureAngle": 35,     # Prevents general body curvature from ballooning to max level
         "nSolveIter": 200,
         "nFeatureSnapIter": 15,
@@ -109,7 +109,7 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "end_time": 2500,
         "write_interval": 500,
         "maxGlobalCells": 32_000_000,
-        "nCellsBetweenLevels": 2,
+        "nCellsBetweenLevels": 3,
         "resolveFeatureAngle": 30,
         "nSolveIter": 300,
         "nFeatureSnapIter": 20,

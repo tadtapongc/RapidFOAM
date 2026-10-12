@@ -23,15 +23,15 @@ RapidFOAM streamlines the OpenFOAM workflow for external vehicle aerodynamics: C
 - **Web Studio Interface**: Browser-based UI with Three.js 3D domain visualization, interactive parameter editor, real-time convergence charts, and remote SLURM cluster job submission over SSH.
 - **Full Aerodynamic Telemetry**: Force/moment component breakdown, coefficients (`Cd`, `Cl`, `Cs`, `CmPitch`, `CmRoll`, `CmYaw`), 2D/3D aero-load views, aero balance / center of pressure, and a post-run reference editor for recomputing coefficients without re-running the solver.
 - **Surface Integrity Report**: Runs `surfaceCheck` on every STL before meshing and reports closure/open edges, self-intersections, illegal triangles and part count in the Studio and via `read_forces.py --surface`. Report-only by default (`surface_check.enforce` aborts the run on a defect); symmetry half models are exempt from the closure requirement.
-- **Mesh-Quality Verification**: Parses the `checkMesh` log and snappyHexMesh's per-patch layer table to report non-orthogonality, skewness, aspect ratio, concave cells, boundary closure and boundary-layer coverage (both layer count and realised thickness), then rolls them into a tiered Good/Usable/Marginal/Bad verdict. A full-but-thin layer stack (all layers present but below 70% of the requested thickness) is flagged as a warning. Cross-references the realised `yPlus` output against the layer sizing target, which remains the authoritative near-wall check.
+- **Mesh-Quality Verification**: Parses the `checkMesh` log and snappyHexMesh's per-patch layer table to report non-orthogonality, skewness, aspect ratio, concave cells, boundary closure and boundary-layer coverage (both layer count and realised thickness), then rolls them into a tiered Good/Usable/Marginal/Bad verdict. Layer coverage is tiered too: a full stack (≥ 90% of the target) is healthy, a partial stack (50–90%) is a warning — normal on complex geometry — and below 50% is real dropout. A full-but-thin layer stack (all layers present but below 70% of the requested thickness) warns separately. Cross-references the realised `yPlus` output against the layer sizing target, which remains the authoritative near-wall check; the coverage bands are tunable with `mesh_quality.verdict_bands.layer_coverage`.
 - **Geometry-Adaptive Meshing (opt-in)**: Streaming STL analysis can drive feature-based surface/edge auto-sizing (`mesh_params.auto_size`) and a geometry-derived `resolveFeatureAngle` (`mesh_params.auto_feature_angle`). Both are **off by default** so the generated mesh is the plain fidelity preset and stays predictable; enable them for geometries with small features or subtle creases.
 - **Graded Background Mesh (opt-in)**: `mesh_params.grading` derives a `blockMesh` `simpleGrading` toward the ground/symmetry planes, keeping the near-body cell at the base cell size while coarsening *away* from the body (flow/wake axis stays uniform). Off by default — measured on a real case it trims ~10–30% of the final cells but raises non-orthogonality/aspect ratio, so it is opted into with `"auto"` or an explicit `[gx, gy, gz]`.
 - **Boundary-Layer y+ Fit (opt-in)**: when a `layers.y_plus_target` cannot be built because snappy caps a layer at `maxFaceThicknessRatio` × the local face, `layers.y_plus_fit: true` raises `maxFaceThicknessRatio` (up to 0.8, surface resolution untouched) so the target is met instead of silently clamped. Off by default; the CLI dry-run and Studio preview report the applied ratio.
-- **Two-Pass Layering**: `layers.two_pass` (on by default) runs `snappyHexMesh` twice — pass 1 castellates + snaps, pass 2 adds layers with *relaxed* quality limits (`system/snappyHexMeshDict_layering`) — to avoid snappy's undo iterations stripping prisms. The layering gate is `mesh_quality.layering_relaxed` (default `{maxNonOrtho 80, maxInternalSkewness 8}`; a real relaxation, not a disable) and can be tuned per case.
+- **Two-Pass Layering**: `layers.two_pass` (on by default) runs `snappyHexMesh` twice — pass 1 castellates + snaps, pass 2 adds layers with a *bounded relaxed* quality gate (`system/snappyHexMeshDict_layering`) — to avoid snappy's undo iterations stripping prisms. The layering gate is `mesh_quality.layering_relaxed` (default `{maxNonOrtho 65, maxBoundarySkewness 22, maxInternalSkewness 5, maxConcave 82}`; a bounded relaxation of the main gate, so it bounds the final mesh without letting badly skewed prisms through) and can be tuned per case.
 - **Diagnostic Field Outputs**: opt-in/out `field_outputs` writes the surface field `wallShearStress` (skin friction + separation), the `yPlus` field, and a `fieldMinMax` reduction giving the **maximum y+ value and its location**. An opt-in `vorticity` volume field is available for wake/vortex visualization. Open the case's `test.foam` in ParaView.
 - **Field & Build-up Telemetry**: the Studio Mesh Quality panel shows the individual `checkMesh` failure reasons behind a verdict, the max-y+ location and the per-patch y+ **min–max** range; the Telemetry tab adds a per-component drag/downforce **build-up** table from the `forces_<part>` outputs.
 - **Remote Case Management**: Submit, monitor and gracefully cancel SLURM jobs; download finished cases from the cluster with live progress (streamed and published atomically, so an interrupted transfer never leaves a partial case).
-- **Convergence Auto-Stop**: Background monitor tracks rolling force variation and signals `stopAt writeNow;` once drag and downforce stabilize within a user-defined threshold (default +/- 0.5%).
+- **Convergence Auto-Stop & Divergence Guard**: Background monitor tracks rolling force variation and signals `stopAt writeNow;` once drag and downforce stabilize within a user-defined threshold (default +/- 0.5%). It also stops a diverging solve gracefully when a force exceeds 50x its rolling median, preserving the state instead of losing it to a floating-point exception.
 - **Post-Processing CLI**: Tabulates aerodynamic forces (Drag, Downforce, L/D), plots live convergence curves, compares multiple case iterations side-by-side, verifies near-wall y+ against the sizing target, and reports mesh quality.
 
 ---
@@ -247,6 +247,11 @@ Key settings available in `configs/config.json`:
 | `flow.velocity` | `float` | Freestream velocity in m/s | `16.67` (~60 km/h) |
 | `flow.direction` | `string` | Flow direction vector (`"-z"`, `"+x"`, `"-x"`, etc.) | `"-z"` |
 | `flow.ground` | `bool` | Enable moving ground wall at freestream speed | `true` |
+| `fluid.nu` | `float` | Kinematic viscosity [m²/s] (air at 20 °C) | `1.516e-5` |
+| `fluid.rho` | `float` | Density [kg/m³] used for force reporting | `1.225` |
+| `turbulence.model` | `string` | RAS model; the default wall functions and y+ presets assume k-omega | `"kOmegaSST"` |
+| `turbulence.intensity` | `float` | Freestream turbulence intensity as a fraction (`0.005` = 0.5 %) | `0.005` |
+| `turbulence.nut_ratio` | `float` | Freestream turbulent-to-laminar viscosity ratio | `10` |
 | `outputs.drag_axis` | `string` | Axis along which drag force is reported | `"-z"` |
 | `outputs.downforce_axis` | `string` | Axis along which downforce (-lift) is reported | `"-y"` |
 | `domain_box` | `string` / `dict` | `"auto"` or explicit `{"min": [x,y,z], "max": [x,y,z]}` | `"auto"` |
@@ -261,12 +266,20 @@ Key settings available in `configs/config.json`:
 | `mesh_params.grading` | `string` / `list` | Background grading: `"off"` (default), `"auto"`, or `[gx, gy, gz]` | `"off"` |
 | `mesh_params.grading_ratio` | `float` | Far/near cell-size ratio for auto grading (1–20) | `3.0` |
 | `layers.y_plus_fit` | `bool` | Recalculate a clamped y+ target by raising `maxFaceThicknessRatio` (surface resolution untouched) | `false` |
-| `layers.two_pass` | `bool` | Two-pass layering (castellate+snap, then add layers with the relaxed gate) | `false` |
-| `mesh_quality.layering_relaxed` | `object` | Override the two-pass layering gate limits; defaults to `mesh_quality.relaxed` | — |
+| `layers.two_pass` | `bool` | Two-pass layering (castellate+snap, then add layers with the relaxed gate) | **`true`** |
+| `mesh_quality.layering_relaxed` | `object` | Override the two-pass layering gate limits; defaults to a bounded relaxation of the main gate (`maxNonOrtho 65`, `maxInternalSkewness 5`) | — |
 | `field_outputs.wall_shear_stress` | `bool` | Write the `wallShearStress` surface field | `true` |
 | `field_outputs.y_plus` | `bool` | Write the `yPlus` field (`fieldMinMax` also reports its max + location) | `true` |
 | `field_outputs.field_min_max` | `bool` | `fieldMinMax` reduction for `yPlus` (max value + coordinate) | `true` |
 | `field_outputs.vorticity` | `bool` | Write the `vorticity` volume field (~5–6 MB/write per million cells) | `false` |
+
+Expert numeric sections that are deliberately not shown in the shipped config
+(`relaxation`, `linear_solvers`, `simple`, `snap`, `mesh_quality`, `potential_flow`,
+`feature_extract`, `parallel`, `vehicle`, `grid_study`) are validated on load:
+out-of-range values are rejected up front, a non-standard `parallel.method` and a
+relaxation factor above 1 warn, and a partially filled `vehicle` block warns that
+the aero-balance handoff is unavailable. This turns silent fallbacks and late
+OpenFOAM failures into immediate config errors.
 
 ### Mesh Fidelity Presets
 
@@ -298,8 +311,8 @@ neither and should be avoided. The presets follow that rule:
 
 | Preset | Regime | y+ target | Layers | Growth |
 | :--- | :--- | :--- | :--- | :--- |
-| `fast` | wall function | ~50 | 5 | 1.2 |
-| `standard` | wall function | ~30 | 8 | 1.2 |
+| `fast` | wall function | ~50 | 5 | 1.15 |
+| `standard` | wall function | ~30 | 8 | 1.15 |
 | `fine` | wall-resolved | ~1 | 20 | 1.1 |
 
 A high y+ needs a *thick* first cell, which snappyHexMesh will not build next to
@@ -371,19 +384,19 @@ so the mesh stays predictable:
 | `mesh_params.auto_size` | `false` | Raise surface/edge refinement so the smallest STL feature is resolved (capped by `max_surface_level`) |
 | `mesh_params.auto_feature_angle` | `false` | Derive `resolveFeatureAngle` from the STL crease (normal-angle) distribution |
 | `mesh_params.grading` | `"off"` | Grade the background grid toward the ground/symmetry planes (fewer cells, slightly higher non-orthogonality/aspect ratio) |
-| `layers.two_pass` | **`true`** | Two-pass layering: a second `snappyHexMesh` pass adds layers with the relaxed layering gate (`system/snappyHexMeshDict_layering`, default `{maxNonOrtho 80, maxInternalSkewness 8}`; tune with `mesh_quality.layering_relaxed`) — much higher boundary-layer coverage on complex geometry. Costs ~30–80% more meshing time; set `false` for a single pass |
+| `layers.two_pass` | **`true`** | Two-pass layering: a second `snappyHexMesh` pass adds layers with a bounded relaxed layering gate (`system/snappyHexMeshDict_layering`, default `{maxNonOrtho 65, maxBoundarySkewness 22, maxInternalSkewness 5, maxConcave 82}`; tune with `mesh_quality.layering_relaxed`) — higher boundary-layer coverage on complex geometry. Costs ~30–80% more meshing time; set `false` for a single pass |
 | `layers.min_thickness_ratio` | **`0.35`** | Fraction of the derived first layer used as `minThickness`. Below 1.0 lets snappy keep partial layer stacks instead of dropping them — the main coverage lever on hard geometry (thinner/partial prisms). `1.0` restores the all-or-nothing full-first-layer gate |
-| `layers.maxFaceThicknessRatio` | **`0.7`** | Maximum layer thickness as a fraction of the local face. Higher = thicker allowed layer = better coverage and y+ reachability |
+| `layers.maxFaceThicknessRatio` | **`0.5`** | Maximum layer thickness as a fraction of the local face. Higher = thicker allowed layer = better coverage and y+ reachability, but thicker prisms raise skewness |
 | `layers.y_plus_fit` | `false` | Recalculate a clamped y+ target instead of clamping: raises `maxFaceThicknessRatio` (surface resolution untouched). Note this is a *target-matching* tool: it can raise the `min_thickness` floor and reduce coverage, so it is off by default and kept separate from the coverage knobs |
 
 When `checkMesh` flags a metric, change **one** thing and re-mesh:
 
 | Finding | Likely cause | Adjustment |
 | :--- | :--- | :--- |
-| High max non-orthogonality | large cell-size jump between background and refinement | raise `mesh_params.nCellsBetweenLevels` (e.g. 3), lower `surface_level`/`edge_level`, disable `grading` |
+| High max non-orthogonality | large cell-size jump between background and refinement | raise `mesh_params.nCellsBetweenLevels` (default 3; try 4), lower `surface_level`/`edge_level`, disable `grading` |
 | High max skewness | layers too thick next to the surface, or aggressive snapping | lower `layers.maxFaceThicknessRatio`, raise `snap.nSolveIter` / `snap.nRelaxIter` |
 | High max aspect ratio | thick first layer vs. the finest cell, or coarse cells beside fine ones | reduce `layers.first_layer_thickness`, disable `grading`, reduce the `surface_level` jump |
-| Boundary-layer dropout (low coverage) | first layer thicker than snappy can extrude | reduce `layers.first_layer_thickness` or raise `surface_level`, raise `layers.maxFaceThicknessRatio` |
+| Boundary-layer dropout (below 50% of faces layered; partial stacks are normal) | first layer thicker than snappy can extrude on small faces | reduce `layers.first_layer_thickness` or raise `surface_level`, raise `layers.maxFaceThicknessRatio`, lower `layers.min_thickness_ratio` |
 | Concave cells / illegal faces | open or self-intersecting geometry | repair the STL (the `surfaceCheck` gate reports it) |
 | Small cell determinant | sharp/degenerate cells surviving smoothing | raise `mesh_quality.errorReduction` / `mesh_quality.nSmoothScale`, repair geometry |
 
@@ -448,8 +461,10 @@ RapidFOAM supports arbitrary coordinate systems by configuring flow and force di
 ### Symmetry Planes
 For straight-line running conditions (zero yaw), a half-car model with a symmetry plane at `x = 0` cuts cell count by roughly 50%. When a symmetry boundary is present, RapidFOAM reports both the simulated half-model values and the projected full-car values (multiplied by 2) in summaries and comparison tables.
 
-### Convergence Auto-Stop
+### Convergence Auto-Stop & Divergence Guard
 The background monitor (`convergence_monitor.py`) inspects force outputs every 10 seconds. Once drag and downforce variation remains within +/- 0.5% over a 200-iteration rolling window (after at least 300 iterations), the monitor writes `stopAt writeNow;` to `system/controlDict` to terminate the solve gracefully and write final results.
+
+The same monitor guards against divergence: when a force exceeds 50x the median of its trailing 50 iterations (a smooth transient tracks its own median, an exponential blow-up does not), it stops the solver the same way — a diverging run preserves its last state for diagnosis instead of dying in a floating-point exception after hours of walltime. The guard threshold is `--blowup-factor` for the standalone `rapidfoam-monitor`; the generated per-case monitor uses the 50x default.
 
 ---
 

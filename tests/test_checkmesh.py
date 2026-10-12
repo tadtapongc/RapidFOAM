@@ -332,15 +332,43 @@ class TestCheckMeshQuality(unittest.TestCase):
         self.assertTrue(result["ok"])
 
     def test_low_fractional_final_coverage_is_dropout(self):
-        table = FINAL_LAYER_TABLE.replace("2.84     0.00134   90.6", "1.50     0.00070   50.0")
+        table = FINAL_LAYER_TABLE.replace("2.84     0.00134   90.6", "1.20     0.00056   40.0")
         result = check_mesh_quality(
             parse_checkmesh(GOOD_CHECKMESH),
             parse_layer_coverage(table),
             target_layers=3,
         )
-        self.assertAlmostEqual(result["layers"]["geometry"]["coverage"], 0.5)
+        self.assertAlmostEqual(result["layers"]["geometry"]["coverage"], 0.4)
         self.assertTrue(any("dropout" in i for i in result["issues"]))
         self.assertFalse(result["ok"])
+
+    def test_partial_fractional_coverage_is_warning_not_dropout(self):
+        # 1.65/3 (55%): a partial stack is normal on complex geometry — a
+        # warning (verdict usable), not a hard dropout, because the realised y+
+        # is the authoritative near-wall check.
+        table = FINAL_LAYER_TABLE.replace("2.84     0.00134   90.6", "1.65     0.00078   55.0")
+        result = check_mesh_quality(
+            parse_checkmesh(GOOD_CHECKMESH),
+            parse_layer_coverage(table),
+            target_layers=3,
+        )
+        self.assertAlmostEqual(result["layers"]["geometry"]["coverage"], 0.55)
+        self.assertTrue(result["ok"])
+        self.assertFalse(any("dropout" in i for i in result["issues"]))
+        self.assertTrue(any("partial boundary layer" in w for w in result["warnings"]))
+        self.assertEqual(result["verdict"], "usable")
+
+    def test_layer_coverage_bands_are_configurable(self):
+        # Lowering the bands makes a 40% stack merely partial.
+        table = FINAL_LAYER_TABLE.replace("2.84     0.00134   90.6", "1.20     0.00056   40.0")
+        result = check_mesh_quality(
+            parse_checkmesh(GOOD_CHECKMESH),
+            parse_layer_coverage(table),
+            target_layers=3,
+            bands={"layer_coverage": {"good": 0.8, "caution": 0.3}},
+        )
+        self.assertTrue(result["ok"])
+        self.assertTrue(any("partial boundary layer" in w for w in result["warnings"]))
 
     def test_metrics_table_has_pass_flags(self):
         result = check_mesh_quality(parse_checkmesh(EXTENDED_CHECKMESH))
@@ -413,7 +441,7 @@ class TestVerdict(unittest.TestCase):
         self.assertEqual(result["verdict"], "bad")
 
     def test_layer_dropout_forces_bad(self):
-        layers = {"geometry": {"faces": 100, "layers": 1, "coverage": 0.5}}
+        layers = {"geometry": {"faces": 100, "layers": 1, "coverage": 0.4}}
         result = check_mesh_quality(
             parse_checkmesh(GOOD_CHECKMESH), layers, target_layers=2
         )

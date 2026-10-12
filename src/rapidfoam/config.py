@@ -13,6 +13,8 @@ import math
 from pathlib import Path
 from typing import Any
 
+from rapidfoam.meshing.quality import LAYERING_LIMITS, QUALITY_LIMITS, RELAXED_LIMITS
+
 log = logging.getLogger(__name__)
 
 # ============================================================
@@ -169,8 +171,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # Boundary layers. The defaults below are tuned for robust boundary-layer
     # coverage on real, complex geometry (multi-part cars): keep partial stacks
-    # (min_thickness_ratio < 1), allow a thicker layer (maxFaceThicknessRatio),
-    # a shorter stack (expansion_ratio) and a dedicated layer pass (two_pass).
+    # (min_thickness_ratio < 1), bound the layer thickness (maxFaceThicknessRatio)
+    # so thick prisms cannot wreck skewness, and use a dedicated layer pass
+    # (two_pass) with a bounded quality gate.
     "layers": {
         "n_layers": 5,
         "expansion_ratio": 1.15,
@@ -187,7 +190,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "featureAngle": 170,
         "slipFeatureAngle": 30,
         "nGrow": 0,
-        "maxFaceThicknessRatio": 0.7,
+        # Layer thickness ceiling as a fraction of the local face. 0.5 bounds
+        # layer-induced skewness (a real case measured max skewness 14 at 0.7)
+        # while still building the y+~30 first layer on standard surfaces.
+        # Opt-in layers.y_plus_fit can raise this (up to 0.8) for target matching.
+        "maxFaceThicknessRatio": 0.5,
         "nSmoothSurfaceNormals": 3,
         "nSmoothThickness": 20,
         "nSmoothNormals": 3,
@@ -236,23 +243,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # Mesh quality controls. snappyHexMesh's limits are where it stops *trying*,
     # not where a mesh becomes good, so they are set near the CFD-practical good
-    # bands (verdict_bands below) to push it to actually fix bad faces. Tightening
-    # costs meshing time; verify with `read_forces.py --mesh`.
+    # bands (verdict_bands below) to push it to actually fix bad faces. The
+    # tiers themselves live in meshing/quality.py (single tuning source):
+    #   main      -> system/snappyHexMeshDict
+    #   relaxed   -> in-iteration fallback for the main gate
+    #   layering  -> system/snappyHexMeshDict_layering (bounded relaxation;
+    #                this gate bounds the final mesh quality)
+    # Tightening costs meshing time; verify with `read_forces.py --mesh`.
     "mesh_quality": {
-        "maxNonOrtho": 60,
-        "maxBoundarySkewness": 20,
-        "maxInternalSkewness": 3.5,
-        "maxConcave": 80,
-        "minVol": 1e-13,
-        "minTetQuality": 1e-15,
-        "minArea": -1,
-        "minTwist": 0.02,
-        "minDeterminant": 0.001,
-        "minFaceWeight": 0.05,
-        "minVolRatio": 0.01,
-        "minTriangleTwist": -1,
-        "nSmoothScale": 6,
-        "errorReduction": 0.75,
+        **QUALITY_LIMITS,
         # Good/caution bands for the mesh-quality verdict (independent of the
         # snappyHexMesh pass/fail limits above). "good" is the value at which a
         # metric is considered healthy; "caution" is the boundary beyond which
@@ -265,29 +264,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "min_interp_weight": {"good": 0.1, "caution": 0.01},
             "min_volume_ratio": {"good": 0.05, "caution": 0.01},
             "concave_cells": {"good": 0.0, "caution": 0.0},
+            # Fraction of the requested layer stack actually built per patch.
+            # Partial stacks (0.5-0.9) are normal on complex geometry and warn;
+            # below 0.5 is real dropout. The realised y+ is authoritative.
+            "layer_coverage": {"good": 0.9, "caution": 0.5},
         },
-        "relaxed": {
-            "maxNonOrtho": 70,
-            "maxBoundarySkewness": 25,
-            "maxInternalSkewness": 5,
-            "maxConcave": 85,
-            "minVol": 1e-13,
-            "minTetQuality": 1e-30,
-            "minArea": -1,
-            "minTwist": 0.001,
-            "minDeterminant": 0.0005,
-            "minFaceWeight": 0.02,
-            "minVolRatio": 0.005,
-            "minTriangleTwist": -1,
-        },
+        "relaxed": dict(RELAXED_LIMITS),
         # meshQualityControls for the two-pass layering pass
-        # (system/snappyHexMeshDict_layering). Bounded above the normal limits to
-        # recover coverage without the "disable everything" collapse. Override
-        # per case with mesh_quality.layering_relaxed.
-        "layering_relaxed": {
-            "maxNonOrtho": 80,
-            "maxInternalSkewness": 8,
-        },
+        # (system/snappyHexMeshDict_layering). A bounded relaxation of the main
+        # gate: enough margin to keep boundary-layer coverage, bounded so the
+        # final mesh stays inside the good/caution bands. Override per case with
+        # mesh_quality.layering_relaxed.
+        "layering_relaxed": dict(LAYERING_LIMITS),
     },
 
     # Pre-mesh surface integrity gate (surfaceCheck). Runs before meshing and
@@ -486,6 +474,150 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
     }.items():
         for key in keys:
             positive(section, key)
+
+    # Physics guardrails: fail fast on the two common turbulence footguns.
+    turb_model = cfg.get("turbulence", {}).get("model")
+    if isinstance(turb_model, str) and turb_model.strip().lower() != "komegasst":
+        warnings.append(
+            f"turbulence.model '{turb_model}' is not kOmegaSST; the default wall_functions "
+            "(nutUSpaldingWallFunction / omegaWallFunction / kqRWallFunction) and the y+ "
+            "presets assume a k-omega model — set wall_functions to match the model."
+        )
+    intensity = cfg.get("turbulence", {}).get("intensity")
+    if finite(intensity) and intensity >= 0.2:
+        warnings.append(
+            f"turbulence.intensity {intensity:g} is a fraction (0.005 = 0.5%), not a "
+            "percentage; values at or above 0.2 are unusually high for external aero."
+        )
+
+    # Expert numeric guardrails. These sections are not shown in the shipped
+    # config, but an override typo would otherwise fail late at run time — or
+    # silently fall back to a default (mesh_quality) — so validate ranges here.
+    relaxation = cfg.get("relaxation", {})
+    for group in ("fields", "equations"):
+        values = relaxation.get(group)
+        if not isinstance(values, dict):
+            continue
+        for key, value in values.items():
+            if not finite(value) or value <= 0:
+                errors.append(f"relaxation.{group}.{key} must be a finite number > 0")
+            elif value > 1.0:
+                warnings.append(
+                    f"relaxation.{group}.{key} {value:g} > 1 — under-relaxation above 1 "
+                    "usually destabilises the solve."
+                )
+    simple = cfg.get("simple", {})
+    correctors = simple.get("nNonOrthogonalCorrectors")
+    if correctors is not None and (
+            not isinstance(correctors, int) or isinstance(correctors, bool) or correctors < 0):
+        errors.append("simple.nNonOrthogonalCorrectors must be an integer >= 0")
+    if "consistent" in simple and not isinstance(simple["consistent"], bool):
+        errors.append("simple.consistent must be true or false")
+
+    solvers = cfg.get("linear_solvers", {})
+    for name in ("p", "U"):
+        block = solvers.get(name)
+        if not isinstance(block, dict):
+            continue
+        tol = block.get("tolerance")
+        if tol is not None and (not finite(tol) or tol <= 0):
+            errors.append(f"linear_solvers.{name}.tolerance must be a finite number > 0")
+        rel = block.get("relTol")
+        if rel is not None and (not finite(rel) or not (0.0 <= rel <= 1.0)):
+            errors.append(f"linear_solvers.{name}.relTol must be a number in [0, 1]")
+
+    snap = cfg.get("snap", {})
+    snap_tolerance = snap.get("tolerance")
+    if snap_tolerance is not None and (not finite(snap_tolerance) or snap_tolerance <= 0):
+        errors.append("snap.tolerance must be a finite number > 0")
+    for key in ("nSmoothPatch", "nSolveIter", "nRelaxIter", "nFeatureSnapIter"):
+        value = snap.get(key)
+        if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 0):
+            errors.append(f"snap.{key} must be an integer >= 0")
+    for key in ("implicitFeatureSnap", "explicitFeatureSnap", "multiRegionFeatureSnap"):
+        if key in snap and not isinstance(snap[key], bool):
+            errors.append(f"snap.{key} must be true or false")
+
+    method = cfg.get("parallel", {}).get("method")
+    if not isinstance(method, str) or not method or any(c.isspace() for c in method):
+        errors.append("parallel.method must be a nonempty string without whitespace")
+    elif method.lower() not in {"scotch", "ptscotch", "hierarchical", "simple", "metis", "manual"}:
+        warnings.append(
+            f"parallel.method '{method}' is not a standard OpenFOAM method "
+            "(scotch/ptscotch/hierarchical/simple/metis/manual); decomposePar will "
+            "fail at run time if it is not recognised."
+        )
+
+    included = cfg.get("feature_extract", {}).get("includedAngle")
+    if included is not None and (not finite(included) or not (0.0 < included <= 180.0)):
+        errors.append("feature_extract.includedAngle must be a number in (0, 180]")
+    for key in ("featureAngle", "slipFeatureAngle"):
+        value = cfg.get("layers", {}).get(key)
+        if value is not None and (not finite(value) or not (0.0 <= value <= 180.0)):
+            errors.append(f"layers.{key} must be a number in [0, 180]")
+
+    pot_correctors = cfg.get("potential_flow", {}).get("nNonOrthogonalCorrectors")
+    if pot_correctors is not None and (
+            not isinstance(pot_correctors, int) or isinstance(pot_correctors, bool)
+            or pot_correctors < 0):
+        errors.append("potential_flow.nNonOrthogonalCorrectors must be an integer >= 0")
+
+    quality = cfg.get("mesh_quality", {})
+    for key in QUALITY_LIMITS:
+        value = quality.get(key)
+        if value is not None and not finite(value):
+            errors.append(f"mesh_quality.{key} must be a finite number")
+
+    end_time = cfg.get("solver", {}).get("end_time")
+    write_interval = cfg.get("solver", {}).get("write_interval")
+    if finite(end_time) and finite(write_interval) and write_interval >= end_time:
+        warnings.append(
+            f"solver.write_interval {write_interval:g} >= solver.end_time {end_time:g}: "
+            "no intermediate write is produced, so a crash or divergence loses the whole "
+            "run. Set write_interval below end_time."
+        )
+
+    vehicle = cfg.get("vehicle", {})
+    wheelbase = vehicle.get("wheelbase")
+    front_pct = vehicle.get("front_weight_pct", vehicle.get("front_pct"))
+    if wheelbase is not None and (not finite(wheelbase) or wheelbase <= 0):
+        errors.append("vehicle.wheelbase must be a finite number > 0 (or null)")
+    if front_pct is not None and (not finite(front_pct) or not (0.0 <= front_pct <= 100.0)):
+        errors.append("vehicle.front_weight_pct must be a number in [0, 100] (or null)")
+    if (wheelbase is None) != (front_pct is None):
+        warnings.append(
+            "vehicle: set both wheelbase and front_weight_pct for the aero-balance / "
+            "centre-of-pressure handoff; with only one, it is unavailable."
+        )
+
+    grid_study = cfg.get("grid_study", {})
+    levels = grid_study.get("levels")
+    if levels is not None and (
+            not isinstance(levels, (list, tuple)) or len(levels) < 2
+            or not all(finite(v) and 5.0 <= v <= 100.0 for v in levels)
+            or any(b <= a for a, b in zip(levels, levels[1:]))):
+        errors.append(
+            "grid_study.levels must be >= 2 strictly increasing numbers between 5 "
+            "and 100 (cells_per_length)"
+        )
+    for key in ("cd_threshold", "cl_threshold"):
+        value = grid_study.get(key)
+        if value is not None and (not finite(value) or value <= 0):
+            errors.append(f"grid_study.{key} must be a finite number > 0")
+    if "co_refine_surface" in grid_study and not isinstance(grid_study["co_refine_surface"], bool):
+        errors.append("grid_study.co_refine_surface must be true or false")
+    gs_slurm = grid_study.get("slurm")
+    if isinstance(gs_slurm, dict) and isinstance(levels, (list, tuple)):
+        for key in ("time", "mem_per_cpu"):
+            values = gs_slurm.get(key)
+            if values is not None and (
+                    not isinstance(values, (list, tuple)) or len(values) != len(levels)):
+                errors.append(
+                    f"grid_study.slurm.{key} must be a list matching grid_study.levels "
+                    f"({len(levels)} entries)"
+                )
+
     base_cell = cfg.get("mesh_params", {}).get("base_cell_size")
     if base_cell is not None and base_cell != "auto":
         positive("mesh_params", "base_cell_size")
@@ -554,10 +686,12 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
         errors.append("layers.y_plus_fit must be true or false")
     if cfg.get("layers", {}).get("two_pass") is True:
         warnings.append(
-            "layers.two_pass is enabled: the layering pass uses a relaxed mesh-quality "
-            "gate (mesh_quality.layering_relaxed, default maxNonOrtho 80 / "
-            "maxInternalSkewness 8) to reach higher boundary-layer coverage. Verify the "
-            "result with checkMesh and taper the limits back if quality degrades."
+            "layers.two_pass is enabled: the layering pass uses a bounded relaxed "
+            "mesh-quality gate (mesh_quality.layering_relaxed, default "
+            f"maxNonOrtho {LAYERING_LIMITS['maxNonOrtho']:g} / "
+            f"maxInternalSkewness {LAYERING_LIMITS['maxInternalSkewness']:g}) to reach "
+            "higher boundary-layer coverage. Verify the result with checkMesh and "
+            "taper the limits back if quality degrades."
         )
     verdict_bands = cfg.get("mesh_quality", {}).get("verdict_bands")
     if verdict_bands is not None:
@@ -608,6 +742,20 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
             for key, value in layering_relaxed.items():
                 if not finite(value):
                     errors.append(f"mesh_quality.layering_relaxed.{key} must be a finite number")
+            # The layering pass bounds the final mesh; a main gate tightened far
+            # below the default layering gate would let the layer pass undo it.
+            main_nonortho = cfg.get("mesh_quality", {}).get("maxNonOrtho")
+            lay_nonortho = layering_relaxed.get("maxNonOrtho")
+            margin = LAYERING_LIMITS["maxNonOrtho"] - QUALITY_LIMITS["maxNonOrtho"]
+            if (finite(main_nonortho) and finite(lay_nonortho)
+                    and float(lay_nonortho) - float(main_nonortho) > margin + 1e-9):
+                warnings.append(
+                    f"mesh_quality.layering_relaxed.maxNonOrtho ({float(lay_nonortho):g}) is "
+                    f"looser than mesh_quality.maxNonOrtho ({float(main_nonortho):g}) by more "
+                    f"than the default bounded margin ({margin:g}); the layering pass will "
+                    "bound the final mesh at the layering limit. Lower "
+                    "layering_relaxed.maxNonOrtho to match the tightened main gate."
+                )
     surface_check = cfg.get("surface_check", {})
     for key in ("enabled", "enforce", "check_self_intersection", "allow_open"):
         if key in surface_check and not isinstance(surface_check[key], bool):

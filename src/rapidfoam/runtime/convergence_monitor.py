@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Auto-stop monitor: stops simpleFoam when forces converge.
+"""Auto-stop monitor: stops simpleFoam on convergence or divergence.
 
 This file is the canonical source copied verbatim into generated cases (with a
 small generated constants header). It is deliberately dependency-free and
@@ -7,7 +7,10 @@ annotation-free so it runs on the cluster's Python (3.6+).
 
 Checks force.dat every INTERVAL seconds. When both drag and downforce variation
 drop below THRESHOLD over the last WINDOW iterations, modifies controlDict to set
-stopAt=writeNow for a clean exit.
+stopAt=writeNow for a clean exit. Independently, it watches for divergence: when
+a force outruns the median of its trailing BLOWUP_WINDOW samples by
+BLOWUP_FACTOR, the solver is stopped gracefully (writeNow) so the run does not
+waste walltime and lose every result to a floating-point exception.
 """
 
 import math
@@ -22,6 +25,8 @@ THRESHOLD = 0.5     # percent
 WINDOW = 200        # iterations to average
 MIN_ITERS = 300     # minimum before checking
 INTERVAL = 10       # seconds between checks
+BLOWUP_FACTOR = 50.0    # stop when |force| exceeds this multiple of its rolling median
+BLOWUP_WINDOW = 50      # rolling reference window (iterations)
 
 
 def _dir_time(path):
@@ -138,9 +143,32 @@ def trigger_stop():
     control_dict.write_text("\n".join(new_lines), encoding="utf-8")
 
 
+def detect_blowup(drags, downforces, factor=BLOWUP_FACTOR, window=BLOWUP_WINDOW):
+    """Return (name, value, reference) when a force has blown up, else None.
+
+    Compares the latest sample against the median of the trailing window: a
+    smooth transient tracks its own median, while an exponential divergence
+    outruns it by orders of magnitude within a few iterations. The 1 N floor
+    keeps a near-zero reference from turning numerical noise into a trigger.
+    """
+    if factor <= 0 or window < 2 or len(drags) < window:
+        return None
+    for name, series in (("drag", drags), ("downforce", downforces)):
+        recent = series[-window:]
+        if not all(math.isfinite(v) for v in recent):
+            return name, float("nan"), 0.0
+        value = recent[-1]
+        reference = statistics.median(recent)
+        if abs(value) > factor * max(abs(reference), 1.0):
+            return name, value, reference
+    return None
+
+
 def main():
     print("  Convergence monitor started (threshold: +/-%s%%, window: %s, min: %s)"
           % (THRESHOLD, WINDOW, MIN_ITERS))
+    print("    Divergence guard: stop when |force| > %s x rolling median (%s iters)"
+          % (BLOWUP_FACTOR, BLOWUP_WINDOW))
     sys.stdout.flush()
 
     while True:
@@ -153,6 +181,17 @@ def main():
         times, drags, downforces = read_forces(
             files, DRAG_IDX, DRAG_SIGN, DF_IDX, DF_SIGN  # noqa: F821  (injected by the generator)
         )
+
+        blowup = detect_blowup(drags, downforces)
+        if blowup is not None:
+            name, value, reference = blowup
+            print("\n  DIVERGING at iteration %d: %s = %.4g N (rolling median %.4g N)"
+                  % (len(times), name, value, reference))
+            print("  -> Triggering solver stop (writeNow) to preserve the state...")
+            sys.stdout.flush()
+            trigger_stop()
+            break
+
         if len(times) < MIN_ITERS:
             continue
 

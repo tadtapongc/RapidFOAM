@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.casegen.builder import CaseGenerationError, build_case
 from rapidfoam.casegen.solver import write_control_dict
-from rapidfoam.config import DEFAULT_CONFIG, deep_merge
+from rapidfoam.config import DEFAULT_CONFIG, deep_merge, load_config, validate
 from rapidfoam.geometry.stl import write_stl
 
 
@@ -110,6 +110,66 @@ class BuildCaseTest(unittest.TestCase):
         allrun = (case / "Allrun").read_text()
         self.assertIn("Surface is not closed", allrun)
         self.assertNotIn("Open surface allowed", allrun)
+
+
+class PhysicsConfigTest(unittest.TestCase):
+    """Physics-related robustness: outlet backflow BCs and turbulence guards."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        write_stl(self.root / "stl" / "body.stl", "body", [
+            ((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 3)),
+        ])
+
+    def _generate(self):
+        path = self.root / "config.json"
+        path.write_text(json.dumps({
+            "case_name": "physics_test",
+            "stl_files": ["body.stl"],
+            "fidelity": "fast",
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+        }), encoding="utf-8")
+        return build_case(path, self.root, reporter=lambda _: None)
+
+    def test_outlet_bcs_are_backflow_robust(self):
+        case = self._generate()
+        u = (case / "0/U").read_text(encoding="utf-8")
+        k = (case / "0/k").read_text(encoding="utf-8")
+        omega = (case / "0/omega").read_text(encoding="utf-8")
+        # Outlet: pressure-driven velocity + freestream-clamped turbulence on
+        # backflow, instead of a dead-end zero velocity / zero-gradient scalar.
+        self.assertIn("type            pressureInletOutletVelocity;", u)
+        self.assertIn("type            inletOutlet;", k)
+        self.assertIn("type            inletOutlet;", omega)
+        k_val = 1.5 * (20.0 * 0.005) ** 2
+        self.assertIn(f"inletValue      uniform {k_val:.6g}", k)
+        # The slip far field keeps zero-gradient scalars (no normal flux there).
+        self.assertIn("type            slip;", u)
+        self.assertIn("type            zeroGradient;", k)
+        self.assertIn("type            zeroGradient;", omega)
+
+    def test_turbulence_guardrails(self):
+        path = self.root / "guard.json"
+        path.write_text(json.dumps({
+            "case_name": "guard",
+            "stl_files": ["body.stl"],
+            "turbulence": {"model": "kEpsilon", "intensity": 0.5},
+        }), encoding="utf-8")
+        _, warnings = validate(load_config(path), self.root)
+        self.assertTrue(any("not kOmegaSST" in w for w in warnings))
+        self.assertTrue(any("fraction" in w for w in warnings))
+
+    def test_default_turbulence_does_not_warn(self):
+        path = self.root / "default.json"
+        path.write_text(json.dumps({
+            "case_name": "default",
+            "stl_files": ["body.stl"],
+        }), encoding="utf-8")
+        _, warnings = validate(load_config(path), self.root)
+        self.assertFalse(any("kOmegaSST" in w or "fraction" in w for w in warnings))
 
 
 class SolverFieldOutputsTest(unittest.TestCase):

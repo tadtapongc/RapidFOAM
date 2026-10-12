@@ -267,7 +267,7 @@ def compute_mesh_params(
         "refinement_regions": refinement_regions,
         "grading": grading_info["grading"],
         "block_cells": grading_info["block_cells"],
-        "nCellsBetweenLevels": user_mesh.get("nCellsBetweenLevels", preset.get("nCellsBetweenLevels", 2)),
+        "nCellsBetweenLevels": user_mesh.get("nCellsBetweenLevels", preset.get("nCellsBetweenLevels", 3)),
         "maxGlobalCells": user_mesh.get("maxGlobalCells", preset.get("maxGlobalCells", 18_000_000)),
         "maxLocalCells": user_mesh.get("maxLocalCells", 2_000_000),
         "minRefinementCells": user_mesh.get("minRefinementCells", 10),

@@ -130,7 +130,7 @@
     "featureAngle": 170,
     "slipFeatureAngle": 30,
     "nGrow": 0,
-    "maxFaceThicknessRatio": 0.7,
+    "maxFaceThicknessRatio": 0.5,
     "nSmoothSurfaceNormals": 3,
     "nSmoothThickness": 20,
     "nSmoothNormals": 3,
@@ -158,7 +158,7 @@
       "mode": "absolute",
       "clamped": false,
       "requested_thickness": 0.0011805798182942158,
-      "thickness_max": 0.0021874999999999998,
+      "thickness_max": 0.0015625,
       "clamp_level": 5,
       "clamp_cell_m": 0.003125,
       "fit_applied": false,
@@ -223,6 +223,10 @@
       "concave_cells": {
         "good": 0.0,
         "caution": 0.0
+      },
+      "layer_coverage": {
+        "good": 0.9,
+        "caution": 0.5
       }
     },
     "relaxed": {
@@ -240,8 +244,10 @@
       "minTriangleTwist": -1
     },
     "layering_relaxed": {
-      "maxNonOrtho": 80,
-      "maxInternalSkewness": 8
+      "maxNonOrtho": 65,
+      "maxBoundarySkewness": 22,
+      "maxInternalSkewness": 5,
+      "maxConcave": 82
     }
   },
   "surface_check": {
@@ -358,7 +364,7 @@
       50,
       390
     ],
-    "nCellsBetweenLevels": 2,
+    "nCellsBetweenLevels": 3,
     "maxGlobalCells": 20000000,
     "maxLocalCells": 2000000,
     "minRefinementCells": 10,

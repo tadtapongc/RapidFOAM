@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -51,6 +52,32 @@ def _write_stop_trigger(case_dir: Path) -> None:
     control_dict.write_text("\n".join(new_lines), encoding="utf-8")
 
 
+def detect_blowup(
+    drags: list[float],
+    downforces: list[float],
+    factor: float = 50.0,
+    window: int = 50,
+) -> tuple[str, float, float] | None:
+    """Return (name, value, reference) when a force has blown up, else None.
+
+    The latest sample is compared against the median of the trailing window: a
+    smooth transient tracks its own median, while an exponential divergence
+    outruns it by orders of magnitude within a few iterations. The 1 N floor
+    keeps a near-zero reference from turning numerical noise into a trigger.
+    """
+    if factor <= 0 or window < 2 or len(drags) < window:
+        return None
+    for name, series in (("drag", drags), ("downforce", downforces)):
+        recent = series[-window:]
+        if not all(math.isfinite(v) for v in recent):
+            return name, float("nan"), 0.0
+        value = recent[-1]
+        reference = statistics.median(recent)
+        if abs(value) > factor * max(abs(reference), 1.0):
+            return name, value, reference
+    return None
+
+
 def monitor(
     case_dir: Path | None = None,
     config_path: str | None = None,
@@ -58,8 +85,9 @@ def monitor(
     min_iters: int = 300,
     threshold: float = 0.5,
     window: int = 200,
+    blowup_factor: float = 50.0,
 ) -> bool:
-    """Monitor forces and stop solver when converged.
+    """Monitor forces and stop solver when converged (or blown up).
 
     Args:
         case_dir: Path to the OpenFOAM case (default: cwd)
@@ -68,9 +96,12 @@ def monitor(
         min_iters: Minimum iterations before checking convergence
         threshold: Convergence threshold (% variation)
         window: Number of iterations to average over
+        blowup_factor: Stop when a force exceeds this multiple of its rolling
+            median (divergence guard); <= 0 disables the guard
 
     Returns:
-        True if convergence was detected and stop triggered.
+        True if convergence was detected and stop triggered; False when the
+        divergence guard (or an explicit stop) ended the run.
     """
     if case_dir is None:
         case_dir = Path.cwd()
@@ -81,6 +112,8 @@ def monitor(
         raise ValueError("interval must be finite and > 0, min_iters >= 1, and window >= 2")
     if threshold <= 0 or not math.isfinite(threshold):
         raise ValueError("threshold must be finite and > 0")
+    if not math.isfinite(blowup_factor):
+        raise ValueError("blowup_factor must be finite")
     drag_idx, drag_sign, df_idx, df_sign, drag_axis, df_axis = load_axis_config(
         config_path, case_dir=case_dir
     )
@@ -89,6 +122,8 @@ def monitor(
     print(f"    Threshold: ±{threshold}% | Window: {window} iters | Min: {min_iters} iters")
     print(f"    Check interval: {interval}s")
     print(f"    Drag axis: {drag_axis} | Downforce axis: {df_axis}")
+    if blowup_factor > 0:
+        print(f"    Divergence guard: |force| > {blowup_factor:g}x rolling median")
     print()
 
     while True:
@@ -99,6 +134,17 @@ def monitor(
             continue
 
         times, drags, downforces = read_forces(files, drag_idx, drag_sign, df_idx, df_sign)
+
+        blowup = detect_blowup(drags, downforces, factor=blowup_factor)
+        if blowup is not None:
+            name, value, reference = blowup
+            print()
+            print(f"  ✗ DIVERGING at iteration {len(times)}: {name} = {value:.4g} N "
+                  f"(rolling median {reference:.4g} N)")
+            print("  → Triggering solver stop (writeNow) to preserve the state...")
+            _write_stop_trigger(case_dir)
+            print("  → Done. Solver will write current state and exit.")
+            return False
 
         if len(times) < min_iters:
             continue
@@ -146,6 +192,9 @@ def main() -> None:
                         help="Convergence threshold %% (default: 0.5)")
     parser.add_argument("--window", "-w", type=int, default=200,
                         help="Averaging window (default: 200)")
+    parser.add_argument("--blowup-factor", type=float, default=50.0,
+                        help="Divergence guard: stop when |force| exceeds this multiple "
+                             "of its rolling median (default: 50; 0 disables)")
     args = parser.parse_args()
 
     try:
@@ -155,6 +204,7 @@ def main() -> None:
             min_iters=args.min_iters,
             threshold=args.threshold,
             window=args.window,
+            blowup_factor=args.blowup_factor,
         )
     except KeyboardInterrupt:
         print("\n  Monitor stopped by user.")

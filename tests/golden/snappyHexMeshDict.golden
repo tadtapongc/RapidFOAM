@@ -30,7 +30,7 @@ castellatedMeshControls
     maxGlobalCells      20000000;
     minRefinementCells  10;
     maxLoadUnbalance    0.25;
-    nCellsBetweenLevels 2;
+    nCellsBetweenLevels 3;
 
     features
     (
@@ -80,7 +80,7 @@ addLayersControls
     nGrow                   0;
     featureAngle            170;
     slipFeatureAngle        30;
-    maxFaceThicknessRatio   0.7;
+    maxFaceThicknessRatio   0.5;
     nSmoothSurfaceNormals   3;
     nSmoothThickness        20;
     nSmoothNormals          3;

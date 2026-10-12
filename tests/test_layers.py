@@ -313,10 +313,11 @@ class TestTwoPassLayering(unittest.TestCase):
         self.assertIn("castellatedMesh false;", lay)
         self.assertIn("snap            false;", lay)
         self.assertIn("addLayers       true;", lay)
-        # Layering pass uses the configured layering_relaxed limits (a real
-        # relaxation), not a total disable: maxNonOrtho 80 / maxInternalSkewness 8.
-        self.assertIn("maxNonOrtho         80;", lay)
-        self.assertIn("maxInternalSkewness 8;", lay)
+        # Layering pass uses the configured layering_relaxed limits (a bounded
+        # relaxation of the main gate), not a total disable:
+        # maxNonOrtho 65 / maxInternalSkewness 5.
+        self.assertIn("maxNonOrtho         65;", lay)
+        self.assertIn("maxInternalSkewness 5;", lay)
         self.assertNotIn("-1e30", lay)
 
     def test_layering_relaxed_override_is_honoured(self):
