@@ -405,6 +405,31 @@ every geometry without CFD validation; the goal is a predictable mesh with no
 obvious defects (the `surfaceCheck` gate) and no obvious quality failures (the
 `checkMesh` verdict), then iterate on a single knob when needed.
 
+### Solver Stability & Divergence
+
+The generated numerics are deliberately conservative: bounded `limitedLinear 1`
+momentum, upwind turbulence, cell-limited gradients, corrected-0.5
+non-orthogonal correction, SIMPLEC (`consistent true`) with p/U 0.7 and k/ω 0.5,
+and two non-orthogonal correctors. A healthy case solves p in 2–5 GAMG iterations
+per solve and converges in ~500–1500 outer iterations. The pressure equation
+dominates the iteration cost (three p solves per iteration), which is why the
+corrector count is not raised globally.
+
+If a case still diverges after the mesh-quality retune, change **one** thing in
+this order and re-run:
+
+| Order | Knob | Effect | Cost |
+| :--- | :--- | :--- | :--- |
+| 1 | `simple.nNonOrthogonalCorrectors: 3` | more accurate p equation at high non-orthogonality | ~+15% runtime |
+| 2 | `relaxation.equations.U: 0.6` | calmer momentum update | slower convergence |
+| 3 | `schemes.div_U: "bounded Gauss upwind"` | first-order momentum, very hard to destabilise | accuracy loss |
+
+The background monitor stops a diverging run gracefully (`writeNow`) and prints
+these knobs. After a divergence stop, `startFrom latestTime` would restart from
+the diverged state: run `./Allclean` first, or point `startFrom startTime` at the
+last good write (`purgeWrite 2` keeps the last two writes, so the previous good
+state is usually still on disk).
+
 ---
 
 ## Data, Diagnostics & ParaView

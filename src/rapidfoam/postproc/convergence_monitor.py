@@ -142,6 +142,9 @@ def monitor(
             print(f"  ✗ DIVERGING at iteration {len(times)}: {name} = {value:.4g} N "
                   f"(rolling median {reference:.4g} N)")
             print("  → Triggering solver stop (writeNow) to preserve the state...")
+            print("     Next: check the mesh (read_forces.py --mesh) and the y+ tail;")
+            print("     if quality is fine, try simple.nNonOrthogonalCorrectors 3,")
+            print("     then relaxation.equations.U 0.6, then div_U upwind.")
             _write_stop_trigger(case_dir)
             print("  → Done. Solver will write current state and exit.")
             return False

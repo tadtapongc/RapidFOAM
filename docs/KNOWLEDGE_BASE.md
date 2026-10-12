@@ -678,7 +678,12 @@ downforce vary < ±0.5% over 200 iters after 300, and independently guards again
 (a force > 50x the median of its trailing 50 iters) by stopping the solver the same way —
 preserving the state instead of failing in an FPE. Per-case monitor constants
 (`BLOWUP_FACTOR`, `BLOWUP_WINDOW`) live in `runtime/convergence_monitor.py`; the standalone
-`rapidfoam-monitor` exposes `--blowup-factor`.
+`rapidfoam-monitor` exposes `--blowup-factor`. The guard also prints the remediation ladder
+(correctors 3 → U 0.6 → upwind div_U). After a divergence stop, `startFrom latestTime`
+restarts from the diverged state — `./Allclean` first, or restart from the last good write.
+The numerics are conservative by design (SIMPLEC consistent, p/U 0.7, k/ω 0.5, 2 correctors,
+bounded `limitedLinear 1`); a healthy iteration spends most of its time in 3 GAMG p solves,
+so the corrector count is not raised globally.
 
 ### 15.3 Telemetry (Studio)
 The front end polls `/api/telemetry/{forces,residuals,solver,mesh,surface,logs}` every 5 s.

@@ -15,7 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   floating-point exception, preserving the state for diagnosis instead of
   losing every result since the last write. Exposed as `--blowup-factor` on the
   standalone `rapidfoam-monitor`; the per-case generated monitor uses the
-  rolling-median rule with the 50x default.
+  rolling-median rule with the 50x default. The stop message prints the solver
+  remediation ladder (correctors 3 → U 0.6 → upwind `div_U`), documented in a new
+  README **Solver Stability & Divergence** section together with the
+  restart-after-divergence caveat.
 
 ### Changed
 - **Mesher robustness retune (stability-first)**: the two-pass layering gate

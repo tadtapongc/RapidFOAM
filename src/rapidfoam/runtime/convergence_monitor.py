@@ -188,6 +188,9 @@ def main():
             print("\n  DIVERGING at iteration %d: %s = %.4g N (rolling median %.4g N)"
                   % (len(times), name, value, reference))
             print("  -> Triggering solver stop (writeNow) to preserve the state...")
+            print("     Next: check the mesh (read_forces.py --mesh) and the y+ tail;")
+            print("     if quality is fine, try simple.nNonOrthogonalCorrectors 3,")
+            print("     then relaxation.equations.U 0.6, then div_U upwind.")
             sys.stdout.flush()
             trigger_stop()
             break
