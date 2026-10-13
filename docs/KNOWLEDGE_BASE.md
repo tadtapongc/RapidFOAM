@@ -176,7 +176,8 @@ The override-aware single source for case config values (depends only on `rapidf
 - `has_symmetry(cfg)` (75) — explicit `domain_faces` authoritative; `symmetry_plane`/
   `centerline` only when no face list. `has_symmetry_for_case` (99) adds a polyMesh fallback.
 - `yplus_target` (118), `solver_end_time` (141), `stl_files` (160), `vehicle_geometry` (170),
-  `mesh_targets` (188), `verdict_bands` (210), `surface_policy` (232) + `*_from_case` wrappers.
+  `mesh_targets` (188 — uses the layering pass gate for a two-pass case, since that is what
+  bounds the final mesh), `verdict_bands` (210), `surface_policy` (232) + `*_from_case` wrappers.
 
 ---
 

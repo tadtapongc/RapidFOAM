@@ -68,6 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typo used to fall back silently), `vehicle` ranges/consistency, and
   `grid_study` levels/thresholds/SLURM list lengths. `solver.write_interval >=
   end_time` now warns (no intermediate write, so a crash loses the whole run).
+- **checkMesh targets for two-pass cases**: the mesh-quality report now judges the
+  final mesh against the layering pass gate (`mesh_quality.layering_relaxed`)
+  instead of the stricter main gate, because the second pass is what actually
+  bounds the final mesh. A designed 65° final mesh no longer reads as
+  "violates <= 60"; single-pass cases keep the main gate.
 
 ## [1.6.0] - 2026-09-29
 

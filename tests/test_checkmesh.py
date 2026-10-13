@@ -563,13 +563,58 @@ class TestCheckmeshTargets(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             case = Path(tmp)
             (case / "case_config.json").write_text(json.dumps({
-                "layers": {"n_layers": 3},
+                "layers": {"n_layers": 3, "two_pass": False},
                 "mesh_quality": {"maxNonOrtho": 70, "maxInternalSkewness": 5},
             }), encoding="utf-8")
             targets = checkmesh_targets_from_case(case_dir=case)
             self.assertEqual(targets["target_layers"], 3.0)
             self.assertEqual(targets["max_non_ortho"], 70.0)
             self.assertEqual(targets["max_skewness"], 5.0)
+
+    def test_two_pass_uses_the_layering_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / "case_config.json").write_text(json.dumps({
+                "layers": {"n_layers": 8, "two_pass": True},
+                "mesh_quality": {
+                    "maxNonOrtho": 60, "maxInternalSkewness": 3.5,
+                    "layering_relaxed": {"maxNonOrtho": 65, "maxInternalSkewness": 5},
+                },
+            }), encoding="utf-8")
+            targets = checkmesh_targets_from_case(case_dir=case)
+            # The final mesh is bounded by the layer pass, not the main gate.
+            self.assertEqual(targets["max_non_ortho"], 65.0)
+            self.assertEqual(targets["max_skewness"], 5.0)
+
+    def test_single_pass_keeps_the_main_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / "case_config.json").write_text(json.dumps({
+                "layers": {"n_layers": 8, "two_pass": False},
+                "mesh_quality": {
+                    "maxNonOrtho": 60, "maxInternalSkewness": 3.5,
+                    "layering_relaxed": {"maxNonOrtho": 65, "maxInternalSkewness": 5},
+                },
+            }), encoding="utf-8")
+            targets = checkmesh_targets_from_case(case_dir=case)
+            self.assertEqual(targets["max_non_ortho"], 60.0)
+            self.assertEqual(targets["max_skewness"], 3.5)
+
+    def test_two_pass_falls_back_per_missing_layering_key(self):
+        # Direct call with a partial block: a key absent from layering_relaxed
+        # keeps the strict main value (read_case_config would merge defaults, so
+        # exercise the resolver itself).
+        from rapidfoam.core.caseconfig import mesh_targets
+
+        targets = mesh_targets({
+            "layers": {"n_layers": 8, "two_pass": True},
+            "mesh_quality": {
+                "maxNonOrtho": 60, "maxInternalSkewness": 3.5,
+                "layering_relaxed": {"maxNonOrtho": 65},
+            },
+        })
+        self.assertEqual(targets["max_non_ortho"], 65.0)
+        self.assertEqual(targets["max_skewness"], 3.5)
 
     def test_missing_config_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmp:

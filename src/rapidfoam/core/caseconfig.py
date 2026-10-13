@@ -186,22 +186,33 @@ def vehicle_geometry(cfg: dict[str, Any] | None) -> dict[str, Optional[float]]:
 
 
 def mesh_targets(cfg: dict[str, Any] | None) -> dict[str, float]:
-    """Layer/quality targets a case was generated with (see checkMesh verdict)."""
+    """Layer/quality targets a case was generated with (see checkMesh verdict).
+
+    A two-pass case's *final* mesh is bounded by the layering pass gate
+    (``mesh_quality.layering_relaxed``), not the stricter main gate the first
+    pass uses, so the report judges the final mesh against the gate that
+    actually produced it. Missing layering keys fall back to the main gate.
+    """
     if not isinstance(cfg, dict):
         return {}
     targets: dict[str, float] = {}
     layers = cfg.get("layers", {})
+    two_pass = isinstance(layers, dict) and layers.get("two_pass") is True
     if isinstance(layers, dict):
         n_layers = layers.get("n_layers")
         if isinstance(n_layers, int) and not isinstance(n_layers, bool) and n_layers > 0:
             targets["target_layers"] = float(n_layers)
     quality = cfg.get("mesh_quality", {})
     if isinstance(quality, dict):
+        source = quality
+        layering = quality.get("layering_relaxed")
+        if two_pass and isinstance(layering, dict):
+            source = {**quality, **layering}
         for key, target in (
             ("maxNonOrtho", "max_non_ortho"),
             ("maxInternalSkewness", "max_skewness"),
         ):
-            value = quality.get(key)
+            value = source.get(key)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 targets[target] = float(value)
     return targets
