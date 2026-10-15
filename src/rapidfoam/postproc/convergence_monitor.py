@@ -1,8 +1,11 @@
-"""Convergence monitor — stops OpenFOAM solver when forces converge.
+"""Convergence monitor — CLI wrapper over the case-local runtime kernel.
 
-Runs alongside simpleFoam, periodically checks force data, and writes
-a trigger file to stop the solver cleanly when both drag and downforce
-variation drop below the threshold.
+The kernel (force parsing, convergence check, divergence guard and the
+``stopAt writeNow`` trigger) lives in
+:mod:`rapidfoam.runtime.convergence_monitor` — the file copied into generated
+cases. This module only resolves the case's axis config and exposes the
+``rapidfoam-monitor`` console entry point, so the local and cluster monitors
+cannot drift apart.
 
 Usage:
     python -m rapidfoam.postproc.convergence_monitor [--interval 10] [--config case_config.json]
@@ -13,69 +16,17 @@ The solver must have `runTimeModifiable true` and `writeAtEnd true` in controlDi
 from __future__ import annotations
 
 import argparse
-import math
-import statistics
 import sys
-import time
 from pathlib import Path
 
-from rapidfoam.postproc.forces import (
-    check_convergence,
-    find_force_files,
-    load_axis_config,
-    read_forces,
-)
+from rapidfoam.core import caseconfig
+from rapidfoam.runtime.convergence_monitor import check_convergence as check_convergence
+from rapidfoam.runtime.convergence_monitor import detect_blowup as detect_blowup
+from rapidfoam.runtime.convergence_monitor import find_force_files as find_force_files
+from rapidfoam.runtime.convergence_monitor import monitor as _kernel_monitor
+from rapidfoam.runtime.convergence_monitor import read_forces as read_forces
 
-
-def _write_stop_trigger(case_dir: Path) -> None:
-    """Write trigger to stop OpenFOAM solver cleanly.
-
-    Modifies controlDict to set stopAt=writeNow, which causes the solver
-    to write the current time step and exit gracefully.
-    """
-    control_dict = case_dir / "system" / "controlDict"
-    if not control_dict.exists():
-        return
-
-    text = control_dict.read_text(encoding="utf-8")
-
-    # Replace stopAt line
-    lines = text.split("\n")
-    new_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("stopAt"):
-            new_lines.append("stopAt          writeNow;")
-        else:
-            new_lines.append(line)
-
-    control_dict.write_text("\n".join(new_lines), encoding="utf-8")
-
-
-def detect_blowup(
-    drags: list[float],
-    downforces: list[float],
-    factor: float = 50.0,
-    window: int = 50,
-) -> tuple[str, float, float] | None:
-    """Return (name, value, reference) when a force has blown up, else None.
-
-    The latest sample is compared against the median of the trailing window: a
-    smooth transient tracks its own median, while an exponential divergence
-    outruns it by orders of magnitude within a few iterations. The 1 N floor
-    keeps a near-zero reference from turning numerical noise into a trigger.
-    """
-    if factor <= 0 or window < 2 or len(drags) < window:
-        return None
-    for name, series in (("drag", drags), ("downforce", downforces)):
-        recent = series[-window:]
-        if not all(math.isfinite(v) for v in recent):
-            return name, float("nan"), 0.0
-        value = recent[-1]
-        reference = statistics.median(recent)
-        if abs(value) > factor * max(abs(reference), 1.0):
-            return name, value, reference
-    return None
+__all__ = ["check_convergence", "detect_blowup", "find_force_files", "main", "monitor", "read_forces"]
 
 
 def monitor(
@@ -103,81 +54,24 @@ def monitor(
         True if convergence was detected and stop triggered; False when the
         divergence guard (or an explicit stop) ended the run.
     """
-    if case_dir is None:
-        case_dir = Path.cwd()
-    else:
-        case_dir = Path(case_dir)
-
-    if interval <= 0 or not math.isfinite(interval) or min_iters < 1 or window < 2:
-        raise ValueError("interval must be finite and > 0, min_iters >= 1, and window >= 2")
-    if threshold <= 0 or not math.isfinite(threshold):
-        raise ValueError("threshold must be finite and > 0")
-    if not math.isfinite(blowup_factor):
-        raise ValueError("blowup_factor must be finite")
-    drag_idx, drag_sign, df_idx, df_sign, drag_axis, df_axis = load_axis_config(
-        config_path, case_dir=case_dir
+    base = Path(case_dir) if case_dir else Path.cwd()
+    axes = caseconfig.axis_config(
+        caseconfig.read_case_config(config_path=config_path, case_dir=base)
     )
-
-    print("  Convergence monitor started")
-    print(f"    Threshold: ±{threshold}% | Window: {window} iters | Min: {min_iters} iters")
-    print(f"    Check interval: {interval}s")
-    print(f"    Drag axis: {drag_axis} | Downforce axis: {df_axis}")
-    if blowup_factor > 0:
-        print(f"    Divergence guard: |force| > {blowup_factor:g}x rolling median")
-    print()
-
-    while True:
-        time.sleep(interval)
-
-        files = find_force_files(case_dir)
-        if not files:
-            continue
-
-        times, drags, downforces = read_forces(files, drag_idx, drag_sign, df_idx, df_sign)
-
-        blowup = detect_blowup(drags, downforces, factor=blowup_factor)
-        if blowup is not None:
-            name, value, reference = blowup
-            print()
-            print(f"  ✗ DIVERGING at iteration {len(times)}: {name} = {value:.4g} N "
-                  f"(rolling median {reference:.4g} N)")
-            print("  → Triggering solver stop (writeNow) to preserve the state...")
-            print("     Next: check the mesh (read_forces.py --mesh) and the y+ tail;")
-            print("     if quality is fine, try simple.nNonOrthogonalCorrectors 3,")
-            print("     then relaxation.equations.U 0.6, then div_U upwind.")
-            _write_stop_trigger(case_dir)
-            print("  → Done. Solver will write current state and exit.")
-            return False
-
-        if len(times) < min_iters:
-            continue
-
-        converged, d_pct, f_pct, d_avg, f_avg = check_convergence(
-            drags, downforces, window=window, threshold=threshold
-        )
-
-        iter_count = len(times)
-        status = "✓" if converged else "…"
-        print(
-            f"  [{status}] iter {iter_count:>5} | "
-            f"drag: {d_avg:>8.3f} N (±{d_pct:.3f}%) | "
-            f"df: {f_avg:>8.3f} N (±{f_pct:.3f}%)",
-            flush=True,
-        )
-
-        if converged:
-            print()
-            print(f"  ✓ CONVERGED at iteration {iter_count}")
-            print(f"    Drag:      {d_avg:.3f} N (±{d_pct:.3f}%)")
-            print(f"    Downforce: {f_avg:.3f} N (±{f_pct:.3f}%)")
-            print(f"    L/D:       {abs(f_avg / d_avg):.3f}" if d_avg != 0 else "")
-            print()
-            print("  → Triggering solver stop (writeNow)...")
-
-            _write_stop_trigger(case_dir)
-
-            print("  → Done. Solver will write current state and exit.")
-            return True
+    return _kernel_monitor(
+        case_dir=base,
+        interval=interval,
+        min_iters=min_iters,
+        threshold=threshold,
+        window=window,
+        blowup_factor=blowup_factor,
+        drag_idx=axes.drag_index,
+        drag_sign=axes.drag_sign,
+        df_idx=axes.downforce_index,
+        df_sign=axes.downforce_sign,
+        drag_axis=axes.drag_axis,
+        df_axis=axes.downforce_axis,
+    )
 
 
 def main() -> None:

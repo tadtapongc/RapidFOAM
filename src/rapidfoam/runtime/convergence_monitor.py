@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Auto-stop monitor: stops simpleFoam on convergence or divergence.
 
-This file is the canonical source copied verbatim into generated cases (with a
-small generated constants header). It is deliberately dependency-free and
-annotation-free so it runs on the cluster's Python (3.6+).
+This file is the canonical kernel, copied verbatim into generated cases (with a
+small generated constants header) and imported by
+``rapidfoam.postproc.convergence_monitor`` for the local ``rapidfoam-monitor``
+CLI — keeping it the only copy of the force-parsing/convergence/guard logic so
+the local and cluster monitors cannot drift. It is deliberately
+dependency-free and annotation-free so it runs on the cluster's Python (3.6+).
 
 Checks force.dat every INTERVAL seconds. When both drag and downforce variation
 drop below THRESHOLD over the last WINDOW iterations, modifies controlDict to set
@@ -19,8 +22,9 @@ import sys
 import time
 from pathlib import Path
 
-# Axis indices/signs are injected by the generator (casegen/writers.scripts.py)
-# ahead of this file; see DRAG_IDX/DRAG_SIGN/DF_IDX/DF_SIGN.
+# Axis indices/signs are injected by the generator (casegen/scripts.py) ahead of
+# this file when it is copied into a case; main() reads them. Importing this
+# module (e.g. from the postproc CLI) does not require them.
 THRESHOLD = 0.5     # percent
 WINDOW = 200        # iterations to average
 MIN_ITERS = 300     # minimum before checking
@@ -128,9 +132,10 @@ def check_convergence(drags, downforces, window=WINDOW, threshold=THRESHOLD):
     return (d_pct < threshold and f_pct < threshold), d_pct, f_pct, d_avg, f_avg
 
 
-def trigger_stop():
-    """Modify controlDict to stop the solver cleanly."""
-    control_dict = Path("system/controlDict")
+def trigger_stop(case_dir=None):
+    """Modify <case>/system/controlDict to stop the solver cleanly."""
+    base = Path(case_dir) if case_dir else Path(".")
+    control_dict = base / "system" / "controlDict"
     if not control_dict.exists():
         return
     text = control_dict.read_text(encoding="utf-8")
@@ -164,42 +169,67 @@ def detect_blowup(drags, downforces, factor=BLOWUP_FACTOR, window=BLOWUP_WINDOW)
     return None
 
 
-def main():
-    print("  Convergence monitor started (threshold: +/-%s%%, window: %s, min: %s)"
-          % (THRESHOLD, WINDOW, MIN_ITERS))
-    print("    Divergence guard: stop when |force| > %s x rolling median (%s iters)"
-          % (BLOWUP_FACTOR, BLOWUP_WINDOW))
+def monitor(case_dir=None, interval=INTERVAL, min_iters=MIN_ITERS, threshold=THRESHOLD,
+            window=WINDOW, blowup_factor=BLOWUP_FACTOR,
+            drag_idx=2, drag_sign=-1.0, df_idx=1, df_sign=-1.0,
+            drag_axis=None, df_axis=None):
+    """Poll forces until convergence, divergence, or Ctrl-C.
+
+    Returns True on convergence and False when the divergence guard fired.
+    ``drag_idx``/``drag_sign``/``df_idx``/``df_sign`` default to the FSAE
+    convention (drag -z, downforce -y); the generated case script and the
+    postproc CLI both pass explicit values. ``drag_axis``/``df_axis`` are only
+    used for the banner. A ``blowup_factor`` <= 0 disables the divergence guard.
+    """
+    base = Path(case_dir) if case_dir else Path(".")
+    if interval <= 0 or not math.isfinite(interval) or min_iters < 1 or window < 2:
+        raise ValueError("interval must be finite and > 0, min_iters >= 1, and window >= 2")
+    if threshold <= 0 or not math.isfinite(threshold):
+        raise ValueError("threshold must be finite and > 0")
+    if not math.isfinite(blowup_factor):
+        raise ValueError("blowup_factor must be finite")
+
+    print("  Convergence monitor started")
+    print("    Threshold: +/-%s%% | Window: %s iters | Min: %s iters"
+          % (threshold, window, min_iters))
+    print("    Check interval: %ss" % interval)
+    if drag_axis and df_axis:
+        print("    Drag axis: %s | Downforce axis: %s" % (drag_axis, df_axis))
+    if blowup_factor > 0:
+        print("    Divergence guard: |force| > %sx rolling median" % blowup_factor)
+    print()
     sys.stdout.flush()
 
     while True:
-        time.sleep(INTERVAL)
+        time.sleep(interval)
 
-        files = find_force_files()
+        files = find_force_files(base)
         if not files:
             continue
 
-        times, drags, downforces = read_forces(
-            files, DRAG_IDX, DRAG_SIGN, DF_IDX, DF_SIGN  # noqa: F821  (injected by the generator)
-        )
+        times, drags, downforces = read_forces(files, drag_idx, drag_sign, df_idx, df_sign)
 
-        blowup = detect_blowup(drags, downforces)
+        blowup = detect_blowup(drags, downforces, factor=blowup_factor)
         if blowup is not None:
             name, value, reference = blowup
-            print("\n  DIVERGING at iteration %d: %s = %.4g N (rolling median %.4g N)"
+            print()
+            print("  DIVERGING at iteration %d: %s = %.4g N (rolling median %.4g N)"
                   % (len(times), name, value, reference))
             print("  -> Triggering solver stop (writeNow) to preserve the state...")
             print("     Next: check the mesh (read_forces.py --mesh) and the y+ tail;")
             print("     if quality is fine, try simple.nNonOrthogonalCorrectors 3,")
             print("     then relaxation.equations.U 0.6, then div_U upwind.")
             sys.stdout.flush()
-            trigger_stop()
-            break
+            trigger_stop(base)
+            print("  -> Done. Solver will write current state and exit.")
+            sys.stdout.flush()
+            return False
 
-        if len(times) < MIN_ITERS:
+        if len(times) < min_iters:
             continue
 
         converged, d_pct, f_pct, d_avg, f_avg = check_convergence(
-            drags, downforces, window=WINDOW, threshold=THRESHOLD
+            drags, downforces, window=window, threshold=threshold
         )
 
         n = len(times)
@@ -210,16 +240,27 @@ def main():
 
         if converged:
             ld = abs(f_avg / d_avg) if d_avg != 0 else 0
-            print("\n  CONVERGED at iteration %d" % n)
+            print()
+            print("  CONVERGED at iteration %d" % n)
             print("    Drag:      %.3f N (+/-%.3f%%)" % (d_avg, d_pct))
             print("    Downforce: %.3f N (+/-%.3f%%)" % (f_avg, f_pct))
             print("    L/D:       %.3f" % ld)
+            print()
             print("  -> Triggering solver stop (writeNow)...")
             sys.stdout.flush()
-            trigger_stop()
-            print("  -> Done. Solver will write and exit.")
+            trigger_stop(base)
+            print("  -> Done. Solver will write current state and exit.")
             sys.stdout.flush()
-            break
+            return True
+
+
+def main():
+    monitor(
+        drag_idx=DRAG_IDX,      # noqa: F821  (injected by the generator)
+        drag_sign=DRAG_SIGN,    # noqa: F821
+        df_idx=DF_IDX,          # noqa: F821
+        df_sign=DF_SIGN,        # noqa: F821
+    )
 
 
 if __name__ == "__main__":

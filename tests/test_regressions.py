@@ -20,6 +20,7 @@ from rapidfoam.config import load_config, validate
 from rapidfoam.core.faces import face_assignments
 from rapidfoam.geometry.stl import copy_stl, stl_bounds, stl_info, write_stl
 from rapidfoam.meshing.domain import compute_domain_box
+from rapidfoam.postproc import convergence_monitor
 from rapidfoam.postproc.convergence_monitor import monitor
 from rapidfoam.postproc.forces import check_convergence, find_force_files, is_symmetry_case, read_forces
 from rapidfoam.postproc.plotting import _force_stats, _rolling_average
@@ -282,6 +283,17 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(blown[0], "drag")
         self.assertIsNone(detect([10.0] * 40, [20.0] * 40))  # too few samples
 
+    def test_generated_monitor_shares_the_postproc_kernel(self):
+        """The generated cluster script and the postproc CLI use one kernel."""
+        cfg = load_config(self.config())
+        namespace = {"__name__": "standalone_parity_test"}
+        exec(_convergence_monitor_script(cfg), namespace)
+        for name in ("read_forces", "check_convergence", "detect_blowup"):
+            generated = namespace[name]
+            kernel = getattr(convergence_monitor, name)
+            self.assertEqual(generated.__code__.co_code, kernel.__code__.co_code, name)
+            self.assertEqual(generated.__defaults__, kernel.__defaults__, name)
+
     def test_monitor_stops_on_divergence(self):
         case = self.root / "diverge_case"
         (case / "system").mkdir(parents=True)
@@ -291,7 +303,7 @@ class ProjectTest(unittest.TestCase):
         rows = [force_row(t, 10) for t in range(300)]
         rows.append(force_row(300, 1.0e9))
         path.write_text("".join(rows))
-        blowup_poll = patch("rapidfoam.postproc.convergence_monitor.time.sleep",
+        blowup_poll = patch("rapidfoam.runtime.convergence_monitor.time.sleep",
                             side_effect=[None, RuntimeError("second poll")])
         with blowup_poll, contextlib.redirect_stdout(io.StringIO()):
             self.assertFalse(monitor(case_dir=case))
@@ -306,7 +318,7 @@ class ProjectTest(unittest.TestCase):
         path.parent.mkdir(parents=True)
         path.write_text("".join(f"{t} (10 -20 0) (0 0 0) (0 0 0)\n" for t in range(300)))
         # A second poll would expose incorrect axes without hanging the test.
-        axes_poll = patch("rapidfoam.postproc.convergence_monitor.time.sleep",
+        axes_poll = patch("rapidfoam.runtime.convergence_monitor.time.sleep",
                           side_effect=[None, RuntimeError("second poll")])
         with axes_poll, contextlib.redirect_stdout(io.StringIO()):
             self.assertTrue(monitor(case_dir=case))
