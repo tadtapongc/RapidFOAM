@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from rapidfoam.core import caseconfig
+from rapidfoam.postproc import layerfields
 
 # --- checkMesh metric patterns (tolerant of spacing and exponent signs) ---
 _CELLS_RE = re.compile(r"^\s*cells:\s+(\d+)", re.MULTILINE)
@@ -783,7 +784,7 @@ def mesh_quality_report(
     layers = read_layer_coverage(find_snappy_logs(base))
     config_dict = _load_config_dict(config_path, base)
     targets = checkmesh_targets_from_dict(config_dict)
-    return check_mesh_quality(
+    summary = check_mesh_quality(
         stats,
         layers,
         int(targets["target_layers"]) if "target_layers" in targets else None,
@@ -792,3 +793,9 @@ def mesh_quality_report(
         bands=verdict_bands_from_dict(config_dict),
         has_symmetry=_config_has_symmetry(config_dict),
     )
+    # First-layer coverage from snappy's preserved nSurfaceLayers field: the
+    # per-patch average cannot show how many faces carry no prism layer at all.
+    summary["first_layer"] = layerfields.first_layer_coverage(
+        layerfields.find_layer_field_files(base)
+    )
+    return summary

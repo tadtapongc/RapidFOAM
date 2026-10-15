@@ -113,6 +113,16 @@ fi
 echo ">>> Checking mesh (parallel)"
 mpirun -np $SLURM_NTASKS checkMesh -allGeometry -allTopology -noFunctionObjects -parallel > log.checkMesh 2>&1
 
+# Preserve snappy layer fields for the first-layer coverage metric
+mkdir -p meshDiagnostics
+for d in constant 0 processor*/constant processor*/0 processor*; do
+    if [ -f "$d/nSurfaceLayers" ]; then
+        name=$(echo "$d" | sed 's|/|_|g')
+        mkdir -p "meshDiagnostics/$name"
+        cp "$d/nSurfaceLayers" "$d/thickness" "$d/thicknessFraction" "meshDiagnostics/$name/" 2>/dev/null || true
+    fi
+done
+
 echo ">>> Reconstructing mesh"
 reconstructParMesh -constant > log.reconstructParMesh 2>&1
 rm -rf processor*

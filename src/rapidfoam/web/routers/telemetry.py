@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import math
@@ -19,6 +21,10 @@ from rapidfoam.postproc.checkmesh import (
     parse_checkmesh,
     parse_layer_coverage,
     verdict_bands_from_dict,
+)
+from rapidfoam.postproc.layerfields import (
+    find_layer_field_files,
+    first_layer_coverage,
 )
 from rapidfoam.postproc.forces import (
     axis_config_from_dict,
@@ -747,6 +753,7 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
     yplus_files: list[Path] = []
     yplus_data: dict[str, dict[str, float]] = {}
     field_min_max: dict[str, Any] = {}
+    layer_field_bytes: list[bytes] = []
 
     # 1. Remote cluster first (only when the case is cluster-only).
     local_case = PROJECT_ROOT / "cases" / case_name
@@ -762,6 +769,11 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
         for path, text in bundle.items():
             if path.endswith("/fieldMinMax.dat"):
                 field_min_max.update(parse_field_min_max(text))
+            elif path.endswith("/nSurfaceLayers"):
+                try:
+                    layer_field_bytes.append(base64.b64decode(text, validate=True))
+                except (binascii.Error, ValueError):
+                    continue
         cfg_text = next(
             (value for path, value in bundle.items() if path.endswith("/case_config.json")), ""
         )
@@ -786,6 +798,10 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
             yplus_data = read_yplus(yplus_files)
     if local_case.is_dir() and not field_min_max:
         field_min_max = read_field_min_max(find_field_min_max_files(local_case))
+    if not layer_field_bytes:
+        layer_sources: list[Path | bytes] = find_layer_field_files(local_case)
+    else:
+        layer_sources = list(layer_field_bytes)
     if config_dict is None:
         config_dict = caseconfig.read_case_config(
             config_path=str(PROJECT_ROOT / "configs" / f"{case_name}.json"),
@@ -818,6 +834,9 @@ async def api_telemetry_mesh(case_name: str) -> dict[str, Any]:
     yplus_target = _yplus_target_from_config(config_dict)
     summary["y_plus"] = _summarise_yplus(yplus_data, yplus_target)
     summary["field_min_max"] = field_min_max
+    # First-layer coverage from snappy's preserved nSurfaceLayers field: the
+    # per-patch average cannot show how many faces carry no prism layer at all.
+    summary["first_layer"] = first_layer_coverage(layer_sources)
 
     return {"has_data": True, "case_name": case_name, **summary}
 

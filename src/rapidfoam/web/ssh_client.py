@@ -444,7 +444,7 @@ class ClusterSSHClient:
 
     def read_remote_bundle(
         self,
-        specs: list[tuple[str, Optional[int]]],
+        specs: list[tuple],
         timeout: float = 10.0,
         report: Optional[dict] = None,
     ) -> dict[str, str]:
@@ -454,8 +454,12 @@ class ClusterSSHClient:
         telemetry latency. Glob patterns are relative to the remote repo path.
 
         Args:
-            specs: list of ``(glob_pattern, tail_lines)``. ``tail_lines=None``
-                reads the whole file; otherwise only the last N lines.
+            specs: list of ``(glob_pattern, tail_lines)`` or
+                ``(glob_pattern, tail_lines, "base64")``. ``tail_lines=None``
+                reads the whole file; otherwise only the last N lines. A
+                ``"base64"`` spec returns the file base64-encoded, for binary
+                fields (e.g. snappy's layer fields) that must survive the text
+                transport.
             report: optional dict populated with diagnostics on failure, e.g.
                 ``{"ok": False, "reason": "cd failed", "stderr": "..."}``.
 
@@ -475,8 +479,12 @@ class ClusterSSHClient:
             return _fail("no specs")
 
         segments: list[str] = []
-        for pattern, tail_lines in specs:
-            if tail_lines:
+        for spec in specs:
+            pattern, tail_lines = spec[0], spec[1]
+            encoding = spec[2] if len(spec) > 2 else None
+            if encoding == "base64":
+                cat_cmd = 'base64 -w0 "$f"'
+            elif tail_lines:
                 cat_cmd = f'tail -n {max(1, int(tail_lines))} "$f"'
             else:
                 cat_cmd = 'cat "$f"'

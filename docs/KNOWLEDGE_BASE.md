@@ -408,12 +408,15 @@ At solve time the time dirs also receive the optional diagnostic fields (`wallSh
 - `write_fv_schemes` (203), `write_fv_solution` (242), `write_decompose_par_dict` (316).
 
 ### 8.5 `casegen/scripts.py` (418)
-`MONITOR_CLEANUP` / `STOPAT_RESTORE`; `_convergence_monitor_script(cfg)` (44) copies
-`runtime/convergence_monitor.py` verbatim with a `DRAG_IDX/DRAG_SIGN/DF_IDX/DF_SIGN` header.
-`write_scripts` (67) writes the surfaceCheck gate (report-only unless `enforce`) and
+`MONITOR_CLEANUP` / `STOPAT_RESTORE` / `PRESERVE_LAYER_FIELDS`; `_convergence_monitor_script(cfg)`
+(44) copies `runtime/convergence_monitor.py` verbatim with a `DRAG_IDX/DRAG_SIGN/DF_IDX/DF_SIGN`
+header. `write_scripts` (67) writes the surfaceCheck gate (report-only unless `enforce`) and
 `Allrun.parallel`, `Allrun`, `Allclean`, `run.sh`. Two-pass adds a conditional
 `snappyHexMesh -s layering` step; SLURM `run.sh` has a `cleanup` trap that reconstructs on
-interrupt.
+interrupt. `PRESERVE_LAYER_FIELDS` runs after checkMesh and before `reconstructParMesh` /
+`rm -rf processor*`: it copies snappy's `nSurfaceLayers`/`thickness` fields from
+`processor*/constant` (or `0/`, or the case root in serial) into `meshDiagnostics/` so the
+first-layer coverage metric survives; `Allclean` removes `meshDiagnostics/`.
 
 ---
 
@@ -471,6 +474,22 @@ fields.
 - `find_field_min_max_files` (32); `parse_field_min_max` (40) — v2606 columns
   `Time field min location(min) [processor] max location(max) [processor]`; `location` is the
   max location; later rows win. `read_field_min_max` (94).
+
+### 10.5 `postproc/layerfields.py` — first-layer coverage
+Turns snappy's preserved `nSurfaceLayers` volScalarField (ASCII or binary; the case
+writeFormat) into the fraction of wetted faces that carry a prism layer at all — the metric
+that predicts the y+ tail, which the per-patch average cannot show.
+- `find_layer_field_files` (48) — `meshDiagnostics/*/nSurfaceLayers` (fallbacks `constant/`, `0/`).
+- `parse_layer_field` (159) — mini volScalarField parser: skips the internal field, then reads
+  each patch's `value` (uniform or nonuniform). Binary lists try both OpenFOAM layouts
+  (`(<data>)` / `(\n<data>)`) and require the decoded values to be finite, plausible
+  (nSurfaceLayers bounds) *and* followed by the closing `)`, so a layout surprise returns
+  `{}` instead of garbage.
+- `read_layer_fields` (232) / `first_layer_coverage` (250) — merge per-processor sources
+  (paths or raw bytes) and report per-patch coverage, mean, histogram, and the wetted-body
+  aggregate (domain patches excluded). Consumed by `mesh_quality_report`
+  (`summary["first_layer"]`), `read_forces.py --mesh` and the Studio mesh panel (remote
+  bundle fetches the field base64-encoded).
 
 ---
 
@@ -849,7 +868,11 @@ scaling, unavailable viewer and `dispose`.
 - **`dev` (unreleased)**: **mesher robustness retune** — quality tiers centralized in
   `meshing/quality.py`, layering gate bounded to `{maxNonOrtho 65, maxBoundarySkewness 22,
   maxInternalSkewness 5, maxConcave 82}` (was 80/8), `nCellsBetweenLevels` 3 in every preset,
-  `maxFaceThicknessRatio` 0.5 (was 0.7); **physics robustness** — backflow-robust outlet BCs
+  `maxFaceThicknessRatio` 0.5 (was 0.7), `expansion_ratio` 1.1 for `standard` (measured
+  coverage 44% -> 50%); **first-layer coverage metric** (`postproc/layerfields.py`; the
+  pipeline preserves snappy's `nSurfaceLayers` into `meshDiagnostics/`, surfaced in
+  `read_forces.py --mesh` and the Studio, fetched base64 over the remote bundle);
+  **physics robustness** — backflow-robust outlet BCs
   (`pressureInletOutletVelocity`, `inletOutlet` turbulence) and turbulence guardrails
   (model/wall-function mismatch, percentage-vs-fraction intensity); **layer-coverage tiers**
   (full ≥ 0.9 / partial 0.5-0.9 warning / dropout < 0.5, tunable via

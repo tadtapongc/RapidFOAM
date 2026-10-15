@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **First-layer coverage metric**: the pipeline now preserves snappyHexMesh's
+  `nSurfaceLayers` field (into `meshDiagnostics/`, before the processor
+  directories are removed) and `read_forces.py --mesh` plus the Studio mesh
+  panel report the **fraction of wetted faces that carry a prism layer at all**
+  — the number that predicts the y+ tail, which snappy's per-patch average
+  cannot show. The parser handles the ASCII and binary field layouts (validated
+  offsets, fails safe to "unavailable") and the remote telemetry bundle fetches
+  the field base64-encoded. New cases get the metric; older cases show it as
+  unavailable until re-meshed.
 - **Divergence guard**: the background convergence monitor now also detects
   blow-ups — when a force exceeds 50x the median of its trailing 50 iterations
   it writes `stopAt writeNow;` and lets the solver exit cleanly. Measured on the

@@ -473,6 +473,9 @@ def _remote_bundle_specs(case_name: str) -> list[tuple[str, Any]]:
         (f"cases/{case_name}/postProcessing/yPlus/*/yPlus.dat", None),
         (f"cases/{case_name}/postProcessing/fieldMinMax/*/fieldMinMax.dat", None),
         (f"cases/{case_name}/case_config.json", None),
+        # snappy's layer fields are binary; base64 keeps them intact through the
+        # text bundle (first-layer coverage metric).
+        (f"cases/{case_name}/meshDiagnostics/*/nSurfaceLayers", None, "base64"),
     ]
 
 

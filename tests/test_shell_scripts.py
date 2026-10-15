@@ -255,6 +255,19 @@ esac
         log = (self.root/"snappy.log").read_text(encoding="utf-8")
         self.assertIn("layering", log)
 
+    def test_layer_fields_are_preserved_before_processor_cleanup(self):
+        """snappy's nSurfaceLayers must survive the `rm -rf processor*` step."""
+        self.generate()
+        field = self.case/"processor0/constant/nSurfaceLayers"
+        field.parent.mkdir(parents=True)
+        field.write_text("dummy layer field\n", encoding="utf-8")
+        result = self.run_script("Allrun.parallel")
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        preserved = self.case/"meshDiagnostics/processor0_constant/nSurfaceLayers"
+        self.assertTrue(preserved.is_file())
+        self.assertEqual(preserved.read_text(encoding="utf-8"), "dummy layer field\n")
+        self.assertFalse((self.case/"processor0").exists())
+
     def test_sigterm_attempts_recovery_without_losing_failed_results(self):
         self.generate()
         proc = subprocess.Popen(["bash", str(self.case/"run.sh")], cwd=self.case,

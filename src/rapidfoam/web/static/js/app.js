@@ -3997,10 +3997,19 @@ class CFDApp {
       fieldParts.push(`max y+ ${num(yPlusFmm.max).toFixed(1)}${loc}`);
     }
     const yPlusNote = yPlus.available && yPlus.note ? `Near-wall y+: ${yPlus.note}` : '';
+    // First-layer coverage from snappy's nSurfaceLayers field: how many wetted
+    // faces carry a prism layer at all (the y+ tail driver).
+    const firstLayer = data.first_layer || {};
+    const firstBody = firstLayer.body || {};
+    const firstCoverage = num(firstBody.coverage);
+    const firstNote = (firstLayer.available && firstCoverage !== null)
+      ? `First layer: ${Math.round(firstCoverage * 100)}% of `
+        + `${Number(firstBody.faces || 0).toLocaleString()} wetted faces carry a prism layer`
+      : '';
     const fieldNote = fieldParts.length ? `Field diagnostics: ${fieldParts.join(' | ')}` : '';
     this.setValText(
       'mesh-quality-note-yplus',
-      [yPlusNote, fieldNote].filter(Boolean).join('  |  '),
+      [yPlusNote, firstNote, fieldNote].filter(Boolean).join('  |  '),
     );
 
     // Boundary patches: closure status.

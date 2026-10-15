@@ -49,6 +49,15 @@ if [ -f system/snappyHexMeshDict_layering ]; then
     runParallel -s layering snappyHexMesh -overwrite -noFunctionObjects -dict system/snappyHexMeshDict_layering
 fi
 runParallel checkMesh -allGeometry -allTopology -noFunctionObjects
+# Preserve snappy layer fields for the first-layer coverage metric
+mkdir -p meshDiagnostics
+for d in constant 0 processor*/constant processor*/0 processor*; do
+    if [ -f "$d/nSurfaceLayers" ]; then
+        name=$(echo "$d" | sed 's|/|_|g')
+        mkdir -p "meshDiagnostics/$name"
+        cp "$d/nSurfaceLayers" "$d/thickness" "$d/thicknessFraction" "meshDiagnostics/$name/" 2>/dev/null || true
+    fi
+done
 runApplication reconstructParMesh -constant
 rm -rf processor*
 runApplication renumberMesh -overwrite -noFunctionObjects

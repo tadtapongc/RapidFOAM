@@ -392,6 +392,33 @@ class TestWebAPI(unittest.TestCase):
         self.assertAlmostEqual(res["y_plus"]["patches"]["geometry"]["average"], 45.0)
         self.assertEqual(res["y_plus"]["missed"], [])
 
+    def test_telemetry_mesh_first_layer_coverage(self):
+        """The mesh endpoint reports first-layer coverage from the preserved field."""
+        case_name = "test_case_mesh_first_layer"
+        case_dir = Path(f"cases/{case_name}")
+        case_dir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(case_dir, ignore_errors=True))
+        (case_dir / "log.checkMesh").write_text("    cells: 100\nMesh OK.\n", encoding="utf-8")
+        (case_dir / "case_config.json").write_text(
+            json.dumps({"layers": {"n_layers": 8}}), encoding="utf-8"
+        )
+        field_dir = case_dir / "meshDiagnostics" / "processor0_constant"
+        field_dir.mkdir(parents=True, exist_ok=True)
+        (field_dir / "nSurfaceLayers").write_bytes(
+            b"FoamFile\n{\n    version 2.0;\n    format ascii;\n    class volScalarField;\n}\n\n"
+            b"dimensions [0 0 0 0 0 0 0];\n\ninternalField uniform 0;\n\nboundaryField\n{\n"
+            b"    geometry\n    {\n        type calculated;\n"
+            b"        value nonuniform List<scalar> \n4\n(\n0\n2\n8\n8\n)\n;\n    }\n}\n"
+        )
+
+        res = asyncio.run(api_telemetry_mesh(case_name))
+        self.assertTrue(res["has_data"])
+        first = res["first_layer"]
+        self.assertTrue(first["available"])
+        self.assertEqual(first["body"]["faces"], 4)
+        self.assertEqual(first["body"]["layered"], 3)
+        self.assertAlmostEqual(first["body"]["coverage"], 0.75)
+
     def test_telemetry_mesh_reads_layering_log(self):
         """Two-pass layering coverage must come from log.snappyHexMesh.layering."""
         case_name = "test_case_mesh_layering"
@@ -546,7 +573,7 @@ class TestWebAPI(unittest.TestCase):
             svc.clear_remote_telemetry_cache()
             asyncio.run(svc._read_remote_telemetry("remote_case_surface"))
 
-        patterns = [pattern for pattern, _ in captured["specs"]]
+        patterns = [spec[0] for spec in captured["specs"]]
         self.assertTrue(any("log.surfaceCheck" in p for p in patterns), patterns)
 
     def test_remote_telemetry_bundle_includes_layering_log(self):
@@ -566,7 +593,7 @@ class TestWebAPI(unittest.TestCase):
             svc.clear_remote_telemetry_cache()
             asyncio.run(svc._read_remote_telemetry("remote_case_layering"))
 
-        patterns = [pattern for pattern, _ in captured["specs"]]
+        patterns = [spec[0] for spec in captured["specs"]]
         self.assertTrue(
             any(fnmatch.fnmatch("log.snappyHexMesh.layering", Path(p).name) for p in patterns),
             patterns,

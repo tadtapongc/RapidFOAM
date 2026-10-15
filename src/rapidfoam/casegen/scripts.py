@@ -32,6 +32,21 @@ if [ -f system/controlDict ]; then
     sed -i 's/stopAt.*writeNow/stopAt          endTime/' system/controlDict
 fi"""
 
+# Preserve snappyHexMesh's layer fields (nSurfaceLayers + thickness) before the
+# processor directories are removed, so the first-layer coverage metric
+# (postproc/layerfields.py) can read them. Plain copies, no OpenFOAM utility;
+# a case without the fields is simply skipped.
+PRESERVE_LAYER_FIELDS = """\
+# Preserve snappy layer fields for the first-layer coverage metric
+mkdir -p meshDiagnostics
+for d in constant 0 processor*/constant processor*/0 processor*; do
+    if [ -f "$d/nSurfaceLayers" ]; then
+        name=$(echo "$d" | sed 's|/|_|g')
+        mkdir -p "meshDiagnostics/$name"
+        cp "$d/nSurfaceLayers" "$d/thickness" "$d/thicknessFraction" "meshDiagnostics/$name/" 2>/dev/null || true
+    fi
+done"""
+
 
 def _write_script(path: Path, content: str) -> None:
     """Write script file with executable permission."""
@@ -173,6 +188,7 @@ if [ -f system/snappyHexMeshDict_layering ]; then
     runParallel -s layering snappyHexMesh -overwrite -noFunctionObjects -dict system/snappyHexMeshDict_layering
 fi
 runParallel checkMesh -allGeometry -allTopology -noFunctionObjects
+{PRESERVE_LAYER_FIELDS}
 runApplication reconstructParMesh -constant
 rm -rf processor*
 runApplication renumberMesh -overwrite -noFunctionObjects
@@ -224,6 +240,7 @@ if [ -f system/snappyHexMeshDict_layering ]; then
     runApplication -s layering snappyHexMesh -overwrite -noFunctionObjects -dict system/snappyHexMeshDict_layering
 fi
 runApplication checkMesh -allGeometry -allTopology -noFunctionObjects
+{PRESERVE_LAYER_FIELDS}
 runApplication renumberMesh -overwrite -noFunctionObjects
 # potentialFoam only initialises the flow field; a failure is non-fatal but is
 # surfaced so a poor start field is not later mistaken for a solver problem.
@@ -255,6 +272,7 @@ rm -rf constant/polyMesh constant/extendedFeatureEdgeMesh
 rm -f constant/triSurface/*.eMesh
 rm -f log.*
 rm -rf postProcessing
+rm -rf meshDiagnostics
 # Restore stopAt in controlDict if it was changed by convergence monitor
 if [ -f system/controlDict ]; then
     sed -i 's/stopAt.*writeNow/stopAt          endTime/' system/controlDict
@@ -374,6 +392,8 @@ fi
 
 echo ">>> Checking mesh (parallel)"
 mpirun -np $SLURM_NTASKS checkMesh -allGeometry -allTopology -noFunctionObjects -parallel > log.checkMesh 2>&1
+
+{PRESERVE_LAYER_FIELDS}
 
 echo ">>> Reconstructing mesh"
 reconstructParMesh -constant > log.reconstructParMesh 2>&1

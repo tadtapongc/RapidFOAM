@@ -1566,3 +1566,44 @@ test('form sync keeps the grid study card selected in grid mode', async () => {
   assert.ok(doc.querySelector('.fidelity-card[data-fidelity="standard"]').classList.contains('selected'));
   assert.ok(!grid.classList.contains('selected'));
 });
+
+// ---------------------------------------------- First-layer coverage metric
+
+const MESH_PANEL_BODY = `
+  <span id="mesh-cells"></span><span id="mesh-nonortho"></span>
+  <span id="mesh-skewness"></span><span id="mesh-aspect"></span>
+  <span id="mesh-quality-badge"></span>
+  <table><tbody id="mesh-metrics-tbody"></tbody></table>
+  <table><tbody id="mesh-layer-tbody"></tbody></table>
+  <table><tbody id="mesh-patch-tbody"></tbody></table>
+  <table><tbody id="mesh-celltype-tbody"></tbody></table>
+  <div id="mesh-quality-note-yplus"></div>
+  <div id="mesh-quality-note"></div>
+`;
+
+test('renderMeshQuality reports the first-layer coverage note', async () => {
+  const app = await makeApp(MESH_PANEL_BODY);
+  app.renderMeshQuality({
+    stats: { cells: 100 },
+    layers: {},
+    y_plus: { available: false },
+    first_layer: { available: true, body: { faces: 878693, coverage: 0.58 } },
+    note: 'mesh quality OK',
+  });
+  const note = app._window.document.getElementById('mesh-quality-note-yplus').textContent;
+  assert.ok(note.includes('First layer: 58%'), note);
+  assert.ok(note.includes('wetted faces'), note);
+});
+
+test('renderMeshQuality omits the first-layer note when unavailable', async () => {
+  const app = await makeApp(MESH_PANEL_BODY);
+  app.renderMeshQuality({
+    stats: { cells: 100 },
+    layers: {},
+    y_plus: { available: false },
+    first_layer: { available: false, note: 'no snappy layer field preserved' },
+    note: 'mesh quality OK',
+  });
+  const note = app._window.document.getElementById('mesh-quality-note-yplus').textContent;
+  assert.ok(!note.includes('First layer'), note);
+});

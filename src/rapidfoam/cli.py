@@ -344,6 +344,17 @@ def forces_main() -> None:
             thickness = info.get("thickness_fraction")
             th_txt = f", {thickness * 100:.0f}% thickness" if isinstance(thickness, (int, float)) else ""
             print(f"    layers {patch:<16} {achieved}{cov_txt}{th_txt}")
+        first_layer = summary.get("first_layer") or {}
+        if first_layer.get("available"):
+            body = first_layer.get("body", {})
+            print(f"    first layer      {body.get('coverage', 0) * 100:.0f}% of "
+                  f"{body.get('faces', 0):,} wetted faces carry a prism layer")
+            histogram = body.get("histogram", {})
+            faces = body.get("faces") or 1
+            hist_txt = " ".join(
+                f"{key}:{count * 100.0 / faces:.0f}%" for key, count in sorted(histogram.items())
+            )
+            print(f"    layer histogram  {hist_txt}")
         for warning in summary.get("warnings", []):
             print(f"    ⚠  {warning}")
         print(f"    {summary['note']}")
