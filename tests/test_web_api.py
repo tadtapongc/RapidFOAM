@@ -2121,6 +2121,26 @@ class TestWebAPI(unittest.TestCase):
             with patch.object(c, "get_slurm_queue", return_value=[{"name": "cfd_RP14", "state": "PENDING"}]):
                 self.assertTrue(c.is_case_running("RP14"))
 
+    def test_is_case_running_ignores_full_name_of_another_case(self):
+        """A running sibling must not make a finished prefix-named case look running."""
+        c = ClusterSSHClient()
+        jobs = [{"name": "alpha_run", "state": "RUNNING"}]
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(c, "get_slurm_queue", return_value=jobs):
+                with patch.object(c, "remote_file_exists",
+                                  side_effect=lambda path: path.endswith("/cases/alpha_run")):
+                    self.assertTrue(c.is_case_running("alpha_run"))
+                    self.assertFalse(c.is_case_running("alpha_run_fast"))
+
+    def test_is_case_running_still_matches_scheduler_truncation(self):
+        """A truncated job name still matches when no case carries that exact name."""
+        c = ClusterSSHClient()
+        jobs = [{"name": "test_afterRe", "state": "RUNNING"}]
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(c, "get_slurm_queue", return_value=jobs):
+                with patch.object(c, "remote_file_exists", return_value=False):
+                    self.assertTrue(c.is_case_running("test_afterRefac_fast"))
+
     def test_remote_merge_does_not_regress_local_progress(self):
         """A stale remote snapshot must not overwrite newer local iteration data."""
         case_name = "test_merge_no_regress"

@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - A running case's SLURM job no longer hijacks a finished sibling whose name starts with it
   (`alpha_run` vs `alpha_run_fast`): the archive pinned the finished case to "Solving" even
-  though its log ended with `End` and its forces had converged.
+  though its log ended with `End` and its forces had converged, and `is_case_running` (the
+  exists/running dialog) had the same prefix-match flaw.
 - `mesh_regions` per-surface levels and layer overrides now actually reach the emitted
   `snappyHexMeshDict`; a layers-only region no longer raises `KeyError` during generation.
 - `GET /api/case/check-exists` validates the case name like every other case endpoint.

@@ -561,6 +561,10 @@ class ClusterSSHClient:
         except (IOError, OSError):
             return False
 
+    @staticmethod
+    def _job_is_active(job: dict[str, Any]) -> bool:
+        return str(job.get("state", "")).upper() in ("R", "RUNNING", "PD", "PENDING", "CF", "CONFIGURING")
+
     @_synchronized
     def is_case_running(self, case_name: str) -> bool:
         """Check if a case currently has an active (RUNNING or PENDING) SLURM job."""
@@ -573,10 +577,16 @@ class ClusterSSHClient:
                 # a scheduler-truncated prefix of at least 8 characters. Plain
                 # substring matching produced false positives (e.g. "R" vs "RP14").
                 jname = job.get("name", "")
-                truncated = len(jname) >= 8 and case_name.startswith(jname)
-                if jname == case_name or jname == f"cfd_{case_name}" or truncated:
-                    state = job.get("state", "").upper()
-                    if state in ("R", "RUNNING", "PD", "PENDING", "CF", "CONFIGURING"):
+                if jname == case_name or jname == f"cfd_{case_name}":
+                    if self._job_is_active(job):
+                        return True
+                    continue
+                if len(jname) >= 8 and case_name.startswith(jname) and self._job_is_active(job):
+                    # A job named exactly after another remote case is that case's
+                    # job, not a scheduler truncation of this one (job
+                    # "alpha_run" must not make the finished "alpha_run_fast"
+                    # look running). A genuinely truncated name has no directory.
+                    if not self.remote_file_exists(f"{self.remote_repo_path}/cases/{jname}"):
                         return True
         except Exception:
             pass
