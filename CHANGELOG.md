@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-15
+
 ### Added
 - **First-layer coverage metric**: the pipeline now preserves snappyHexMesh's
   `nSurfaceLayers` field (into `meshDiagnostics/`, before the processor
