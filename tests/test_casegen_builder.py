@@ -112,6 +112,68 @@ class BuildCaseTest(unittest.TestCase):
         self.assertNotIn("Open surface allowed", allrun)
 
 
+class MeshRegionEmissionTest(unittest.TestCase):
+    """Per-surface refinement must reach the emitted dicts via build_case.
+
+    Regression: auto_size per-surface levels and mesh_regions overrides were
+    folded into ``cfg["mesh_params"]`` after ``apply_plan_to_cfg`` had already
+    deep-copied the plan, so the writers (which consume the plan) emitted the
+    global values while ``case_config.json`` and the console report showed the
+    overrides. Tests only covered the ``emit_mesh_files_from_config`` shim,
+    which aliases ``cfg["mesh_params"]`` by reference, hiding the divergence.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        triangle = ((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 3))
+        write_stl(self.root / "stl" / "body.stl", "body", [triangle])
+        write_stl(self.root / "stl" / "bracket.stl", "bracket", [triangle])
+
+    def _generate(self, name, **extra):
+        cfg = {
+            "case_name": name,
+            "stl_files": ["body.stl", "bracket.stl"],
+            "fidelity": "fast",
+            "flow": {"velocity": 20.0, "direction": "-z", "ground": True},
+            "outputs": {"drag_axis": "-z", "downforce_axis": "-y"},
+        }
+        cfg.update(extra)
+        path = self.root / f"{name}.json"
+        path.write_text(json.dumps(cfg), encoding="utf-8")
+        return build_case(path, self.root, reporter=lambda _: None)
+
+    def test_mesh_regions_override_reaches_snappy_dict(self):
+        case = self._generate("regions", mesh_regions={
+            "bracket": {"surface_level": [5, 7], "edge_level": 8, "n_layers": 0},
+        })
+        text = (case / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
+        self.assertIn("body { level (3 4);", text)
+        self.assertIn("bracket { level (5 7);", text)
+        self.assertIn('file "bracket.eMesh"; level 8;', text)
+        self.assertIn('"bracket" { nSurfaceLayers 0; }', text)
+
+    def test_layers_only_region_does_not_crash(self):
+        case = self._generate("layers_only", mesh_regions={"bracket": {"n_layers": 0}})
+        text = (case / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
+        self.assertIn('"bracket" { nSurfaceLayers 0; }', text)
+        case_cfg = json.loads((case / "case_config.json").read_text(encoding="utf-8"))
+        mesh = case_cfg["mesh_params"]
+        self.assertEqual(mesh["layer_overrides"]["bracket"], 0)
+        self.assertNotIn("bracket", mesh.get("surface_levels", {}))
+
+    def test_auto_size_levels_reach_snappy_dict(self):
+        case = self._generate("autosize", mesh_params={"auto_size": True})
+        case_cfg = json.loads((case / "case_config.json").read_text(encoding="utf-8"))
+        per_surface = case_cfg["mesh_params"]["surface_levels"]
+        self.assertTrue(per_surface)
+        text = (case / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
+        for stem, info in per_surface.items():
+            level = info["surface_level"]
+            self.assertIn(f"{stem} {{ level ({level[0]} {level[1]});", text)
+
+
 class PhysicsConfigTest(unittest.TestCase):
     """Physics-related robustness: outlet backflow BCs and turbulence guards."""
 

@@ -193,11 +193,19 @@ def apply_mesh_regions(cfg: dict[str, Any], stl_names: list[str]) -> dict[str, A
     for stem, spec in regions.items():
         if stem not in known or not isinstance(spec, dict):
             continue
-        entry = surface_levels.setdefault(stem, {})
-        if isinstance(spec.get("surface_level"), (list, tuple)) and len(spec["surface_level"]) == 2:
-            entry["surface_level"] = [int(spec["surface_level"][0]), int(spec["surface_level"][1])]
-        if isinstance(spec.get("edge_level"), int) and not isinstance(spec["edge_level"], bool):
-            entry["edge_level"] = int(spec["edge_level"])
+        surface = spec.get("surface_level")
+        edge = spec.get("edge_level")
+        has_surface = isinstance(surface, (list, tuple)) and len(surface) == 2
+        has_edge = isinstance(edge, int) and not isinstance(edge, bool)
+        # Only create the entry when a level was actually given: a layers-only
+        # region must not leave an empty stub that callers then index for
+        # surface_level (KeyError in the builder report / writer fallbacks).
+        if has_surface or has_edge:
+            entry = surface_levels.setdefault(stem, {})
+            if has_surface:
+                entry["surface_level"] = [int(surface[0]), int(surface[1])]
+            if has_edge:
+                entry["edge_level"] = int(edge)
         n = spec.get("n_layers")
         if isinstance(n, int) and not isinstance(n, bool) and n >= 0:
             layer_overrides[stem] = int(n)

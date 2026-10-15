@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
@@ -200,6 +201,11 @@ def build_case(
     # Manual per-surface overrides (mesh_regions: {stem: {surface_level, edge_level,
     # n_layers}}); explicit user intent wins over the geometry-derived/global value.
     apply_mesh_regions(cfg, stl_names)
+    # The writers consume ``plan``, while the two blocks above mutate the
+    # deep-copied ``cfg["mesh_params"]`` (apply_plan_to_cfg copies the plan).
+    # Re-point the plan at the updated dict so auto_size per-surface levels and
+    # mesh_regions overrides actually reach the emitted dictionaries.
+    plan = replace(plan, mesh_params=cfg["mesh_params"])
     if layer_resolution.get("y_plus_target") is not None and _is_set("layers", "first_layer_thickness"):
         report("  ⚠  layers.first_layer_thickness overrides layers.y_plus_target")
 
@@ -261,7 +267,9 @@ def build_case(
         report("  Per-surface levels (geometry-derived):")
         for stem in sorted(per_surface):
             info = per_surface[stem]
-            report(f"    {stem}: surface {info['surface_level']}, edge {info['edge_level']}"
+            surface = info.get("surface_level", mesh.get("surface_level"))
+            edge = info.get("edge_level", mesh.get("edge_level"))
+            report(f"    {stem}: surface {surface}, edge {edge}"
                    + (" (capped)" if info.get("capped") else ""))
 
     fangle = mesh.get("feature_angle")
