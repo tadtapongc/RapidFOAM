@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -44,26 +45,41 @@ ALLOWED_LOG_TYPES = {
     "potentialFoam",
 }
 
-# In-memory progress for case downloads (case_name -> snapshot)
+# In-memory progress for case downloads (case_name -> snapshot). Finished
+# entries are kept for a while so late pollers still see the completion, then
+# pruned on the next update so the registry cannot grow without bound.
+_DOWNLOAD_RETENTION_S = 900.0
 _download_progress: dict[str, dict[str, Any]] = {}
 _download_progress_lock = threading.Lock()
 
 
 def _set_download_progress(case_name: str, **fields: Any) -> None:
+    now = time.monotonic()
     with _download_progress_lock:
-        _download_progress.setdefault(case_name, {}).update(fields)
+        entry = _download_progress.setdefault(case_name, {})
+        entry.update(fields)
+        entry["_updated"] = now
+        cutoff = now - _DOWNLOAD_RETENTION_S
+        stale = [
+            name for name, state in _download_progress.items()
+            if not state.get("active") and state.get("_updated", now) < cutoff
+        ]
+        for name in stale:
+            del _download_progress[name]
 
 
 def _get_download_progress(case_name: str) -> dict[str, Any]:
     with _download_progress_lock:
-        return dict(_download_progress.get(case_name, {"active": False}))
+        state = dict(_download_progress.get(case_name, {"active": False}))
+    state.pop("_updated", None)
+    return state
 
 
 def _list_download_progress(active_only: bool = False) -> list[dict[str, Any]]:
     with _download_progress_lock:
         items: list[dict[str, Any]] = []
         for name, state in _download_progress.items():
-            entry = {"case_name": name, **state}
+            entry = {"case_name": name, **{k: v for k, v in state.items() if k != "_updated"}}
             if active_only and not entry.get("active"):
                 continue
             items.append(entry)

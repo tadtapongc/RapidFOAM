@@ -46,6 +46,23 @@ class ReadFilesTest(unittest.TestCase):
             fmm = read_field_min_max(fmm_files)
             self.assertAlmostEqual(fmm["yPlus"]["max"], 80.14)
 
+    def test_numeric_time_dirs_override_lexically(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "postProcessing" / "fieldMinMax"
+            for time_dir, value in (("2", "1.0e+01"), ("10", "2.0e+02")):
+                d = base / time_dir
+                d.mkdir(parents=True)
+                (d / "fieldMinMax.dat").write_text(
+                    "# Time\tfield\tmin\tlocation(min)\tprocessor\tmax\tlocation(max)\tprocessor\n"
+                    f"{time_dir}\tyPlus\t0.0e+00\t(0 0 0)\t0\t{value}\t(1 1 1)\t0\n",
+                    encoding="utf-8",
+                )
+            files = find_field_min_max_files(root)
+            # Numeric order: the later write time must win over lexical order.
+            self.assertEqual(["2", "10"], [p.parent.name for p in files])
+            self.assertEqual(200.0, read_field_min_max(files)["yPlus"]["max"])
+
 
 if __name__ == "__main__":
     unittest.main()

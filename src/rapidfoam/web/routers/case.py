@@ -122,6 +122,11 @@ async def api_case_check_exists(case_name: str) -> dict[str, Any]:
     safe_name = case_name.strip()
     if not safe_name:
         return {"case_name": "", "exists": False, "local_exists": False, "cluster_exists": False, "is_running": False}
+    if not CASE_NAME_REGEX.match(safe_name):
+        raise HTTPException(
+            status_code=400,
+            detail="case_name must contain only alphanumeric characters, underscores, and hyphens",
+        )
 
     local_case = (PROJECT_ROOT / "cases" / safe_name).is_dir()
     local_cfg = (PROJECT_ROOT / "configs" / f"{safe_name}.json").is_file()

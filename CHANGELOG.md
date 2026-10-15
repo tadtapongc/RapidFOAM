@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Engineering baseline**: CI now gates ruff `E/W/F/I/B` (94 findings cleared), coverage
+  (`coverage report --fail-under=65`, ~70% baseline) and runs an informational `mypy` pass
+  (pinned `<2` for the py3.9 floor) over `core`/`meshing`/`casegen`; Python 3.14 joined the
+  matrix; `tests/golden/regenerate.py` regenerates the snapshots byte-for-byte on demand.
+- **Single config read path**: the force summary, `--compare`, symmetry detection and the
+  monitor resolve case configs through `core.caseconfig` — `overrides` are applied and the
+  effective `case_config.json` snapshot wins over an explicit path, matching the
+  y+/mesh/surface readers. Adds the `caseconfig.AxisConfig` typed accessor.
+- **Single convergence-monitor kernel**: `runtime/convergence_monitor.py` is the only copy of
+  the force-parsing/convergence/divergence/stop logic; `postproc/convergence_monitor.py` is a
+  thin CLI wrapper, and a parity test pins the generated cluster script to the kernel.
+
+### Fixed
+- `mesh_regions` per-surface levels and layer overrides now actually reach the emitted
+  `snappyHexMeshDict`; a layers-only region no longer raises `KeyError` during generation.
+- `GET /api/case/check-exists` validates the case name like every other case endpoint.
+- `mesh_quality.relaxed` overrides are validated as finite numbers.
+- `fieldMinMax` reductions are ordered by numeric write time (was lexical, so `10` sorted
+  before `2` and an older extremum could win).
+- Finished download-progress entries are pruned after 15 minutes so the registry cannot grow
+  without bound.
+
 ## [1.7.0] - 2026-10-15
 
 ### Added

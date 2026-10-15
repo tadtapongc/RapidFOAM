@@ -19,6 +19,7 @@ from typing import Any
 
 from rapidfoam.core import caseconfig
 from rapidfoam.postproc import layerfields
+from rapidfoam.postproc.patchsets import is_domain_patch
 
 # --- checkMesh metric patterns (tolerant of spacing and exponent signs) ---
 _CELLS_RE = re.compile(r"^\s*cells:\s+(\d+)", re.MULTILINE)
@@ -605,17 +606,13 @@ def check_mesh_quality(
     # severity meshing defect, but only a FULL model can leak: a half model cut
     # on a symmetry plane is legitimately open along the cut, as are the domain
     # boundary patches (symmetry/inlet/outlet/ground/farField, the catch-all
-    # ".*"). So on a symmetry case we do not report open patches at all; on a
-    # full model we flag any non-domain patch that is not closed.
-    _DOMAIN_PATCHES = {
-        "symmetry", "inlet", "outlet", "ground", "farfield", "front", "back", ".*",
-    }
+    # ".*"; see postproc.patchsets). So on a symmetry case we do not report open
+    # patches at all; on a full model we flag any non-domain patch not closed.
     open_patches: list[str] = []
     patch_info = stats.get("patches")
     if isinstance(patch_info, dict) and not has_symmetry:
         for name, info in patch_info.items():
-            key = name.strip('"').lower()
-            if key in _DOMAIN_PATCHES or key.startswith(("inlet", "outlet", "symmetry", "ground", "farfield")):
+            if is_domain_patch(name):
                 continue
             if info.get("closed") is False:
                 open_patches.append(name)

@@ -24,11 +24,20 @@ def _num(token: str) -> Optional[float]:
     return value if math.isfinite(value) else None
 
 
+def _time_dir_key(path: Path) -> tuple[float, str]:
+    """Sort key: numeric write time first, then path (object name, tie-break)."""
+    try:
+        return (float(path.parent.name), str(path))
+    except ValueError:
+        return (0.0, str(path))
+
+
 def find_field_min_max_files(base_dir: str | Path | None = None) -> list[Path]:
-    """Find ``fieldMinMax.dat`` files (one per write time)."""
+    """Find ``fieldMinMax.dat`` files (one per write time), oldest first."""
     base = Path(base_dir) if base_dir else Path(".")
     return sorted(
-        p for p in base.glob("postProcessing/*/*/fieldMinMax.dat") if p.is_file()
+        (p for p in base.glob("postProcessing/*/*/fieldMinMax.dat") if p.is_file()),
+        key=_time_dir_key,
     )
 
 

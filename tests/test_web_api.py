@@ -1317,6 +1317,14 @@ class TestWebAPI(unittest.TestCase):
             if cfg_file.exists():
                 cfg_file.unlink()
 
+    def test_case_check_exists_rejects_invalid_name(self):
+        """check-exists must not probe paths outside cases/ (it must validate)."""
+        for bad in ("../evil", "bad;name", "bad name"):
+            with self.subTest(name=bad):
+                with self.assertRaises(HTTPException) as ctx:
+                    asyncio.run(api_case_check_exists(bad))
+                self.assertEqual(400, ctx.exception.status_code)
+
     def test_telemetry_logs_api_contract(self):
         """Test that api_telemetry_logs returns log_file and size_bytes metadata."""
         case_dir = Path("cases") / "test_log_contract"
@@ -2411,6 +2419,21 @@ class TestWebAPI(unittest.TestCase):
         res = asyncio.run(api_case_download_active())
         names = [d["case_name"] for d in res["downloads"]]
         self.assertIn("active_probe", names)
+
+    def test_download_progress_registry_prunes_finished_entries(self):
+        """Finished entries are kept for late pollers, then pruned on update."""
+        from rapidfoam.web import state as web_state
+
+        retention = web_state._DOWNLOAD_RETENTION_S
+        with patch.object(web_state.time, "monotonic", return_value=1000.0):
+            web_state._set_download_progress("stale_done", active=False, done=True)
+        with patch.object(web_state.time, "monotonic", return_value=1000.0 + retention + 1):
+            web_state._set_download_progress("fresh_done", active=False, done=True)
+        self.addCleanup(web_state._download_progress.pop, "fresh_done", None)
+        self.assertNotIn("stale_done", web_state._download_progress)
+        self.assertIn("fresh_done", web_state._download_progress)
+        # The internal bookkeeping timestamp never leaks into API snapshots.
+        self.assertNotIn("_updated", web_state._get_download_progress("fresh_done"))
 
 
 if __name__ == "__main__":

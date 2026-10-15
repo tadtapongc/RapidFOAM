@@ -114,6 +114,16 @@ class LayerGateValidationTest(unittest.TestCase):
             "layering_relaxed": {"maxNonOrtho": 55},
         }))
 
+    def test_relaxed_override_must_be_numeric(self):
+        path = self.root / "bad_relaxed.json"
+        path.write_text(json.dumps({
+            "case_name": "quality_case",
+            "stl_files": ["body.stl"],
+            "mesh_quality": {"relaxed": {"maxNonOrtho": "tight"}},
+        }), encoding="utf-8")
+        errors, _ = validate(load_config(path), self.root)
+        self.assertTrue(any("mesh_quality.relaxed.maxNonOrtho" in e for e in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

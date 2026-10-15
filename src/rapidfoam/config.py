@@ -734,6 +734,14 @@ def validate(cfg: dict[str, Any], project_dir: Path) -> tuple[list[str], list[st
                     if value is not None and (
                             not isinstance(value, int) or isinstance(value, bool) or value < 0):
                         errors.append(f"mesh_regions.{stem}.{key} must be a nonnegative integer")
+    relaxed = cfg.get("mesh_quality", {}).get("relaxed")
+    if relaxed is not None:
+        if not isinstance(relaxed, dict):
+            errors.append("mesh_quality.relaxed must be an object")
+        else:
+            for key, value in relaxed.items():
+                if not finite(value):
+                    errors.append(f"mesh_quality.relaxed.{key} must be a finite number")
     layering_relaxed = cfg.get("mesh_quality", {}).get("layering_relaxed")
     if layering_relaxed is not None:
         if not isinstance(layering_relaxed, dict):

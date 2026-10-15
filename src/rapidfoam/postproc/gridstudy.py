@@ -334,7 +334,8 @@ def _finish_study(
         result["note"] = f"need at least three levels with data; found {len(available)}"
         return result
 
-    # Coarsest three, in the provided order.
+    # Finest three, in the provided order (levels are sorted coarse -> fine;
+    # extra coarser rungs are not used for the Richardson estimate).
     f_fast, f_std, f_fine = available[-3], available[-2], available[-1]
     cd_fast, cd_std, cd_fine = (per_fidelity[f]["cd"] for f in (f_fast, f_std, f_fine))
     cl_fast, cl_std, cl_fine = (per_fidelity[f]["cl"] for f in (f_fast, f_std, f_fine))

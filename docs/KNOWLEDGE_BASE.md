@@ -1,10 +1,9 @@
 # RapidFOAM — Knowledge Base
 
 > Comprehensive reverse-engineering / onboarding reference. Every claim below is grounded in
-> code on disk. `__version__ = "1.6.0"`, but the `dev` branch additionally carries an
-> unreleased set of diagnostics (opt-in y+ fit, softened two-pass gate, field outputs,
-> per-part telemetry); those are called out as **[dev]**. Line numbers are 1-based and refer
-> to the files as they exist now. This document supersedes all earlier `docs/` notes.
+> code on disk. `__version__ = "1.7.0"`; the **[dev]** markers were written pre-release and
+> shipped in 1.7.0 — they are kept for provenance. Line numbers are 1-based and refer to the
+> files as they exist now. This document supersedes all earlier `docs/` notes.
 
 ---
 
@@ -28,13 +27,15 @@ aero pipeline of the **Rapidamente Formula Student** team (Chulalongkorn Univers
 
 | Property | Value |
 | --- | --- |
-| Version | `1.6.0` (`src/rapidfoam/__init__.py`) |
-| Python | `>=3.9`; CI matrix 3.9–3.13; dev machine observed on 3.14 |
+| Version | `1.7.0` (`src/rapidfoam/__init__.py`) |
+| Python | `>=3.9`; CI matrix 3.9–3.14 |
 | Build | hatchling; package root `src/rapidfoam` (`pyproject.toml`) |
-| Lint | Ruff (`select = ["F"]`, line-length 120, target py39) |
-| Python tests | ~384 test methods across 19 files (`unittest`) |
-| JS tests | 62 (`node --test` + JSDOM) |
-| CI | `.github/workflows/ci.yml`: ubuntu+windows × py3.9–3.13 (ruff + unittest + build); separate Node-20 JSDOM job |
+| Lint | Ruff (`select = ["E","W","F","I","B"]`, line-length 120, target py39) |
+| Type check | `mypy` over `core`/`meshing`/`casegen` (informational, pinned `<2` for py39) |
+| Coverage | `coverage report --fail-under=65` in CI (local baseline ~70%) |
+| Python tests | ~483 test methods across 23 files (`unittest`) |
+| JS tests | 89 (`node --test` + JSDOM) |
+| CI | `.github/workflows/ci.yml`: ubuntu+windows × py3.9–3.14 (ruff + coverage-gated unittest + build); separate Node-20 JSDOM job |
 | External tools | `surfaceCheck`, `surfaceFeatureExtract`, `blockMesh`, `decomposePar`, `snappyHexMesh`, `checkMesh`, `renumberMesh`, `potentialFoam`, `simpleFoam` |
 
 ### 1.2 Entry points
@@ -88,8 +89,8 @@ fixed base for path-traversal checks.
 | `geometry/` | `stl.py` 462 |
 | `meshing/` | `presets.py` 201, `domain.py` 127, `sizing.py` 136, `grading.py` 174, `layers.py` 332, `params.py` 288, `plan.py` 157, `context.py` 52, `pipeline.py` 26, `writers/{block_mesh.py 107, feature_extract.py 39, snappy.py 276}` |
 | `casegen/` | `builder.py` 353, `constants.py` 38, `fields.py` 231, `solver.py` 325, `scripts.py` 418 |
-| `runtime/` | `convergence_monitor.py` 187, `remote_cases.py` 229 |
-| `postproc/` | `forces.py` 569, `checkmesh.py` 775, `surfacecheck.py` 350, `yplus.py` 157, `residuals.py` 90, `compare.py` 88, `convergence_monitor.py` 165, `plotting.py` 312, `fielddata.py` 173 |
+| `runtime/` | `convergence_monitor.py` 270, `remote_cases.py` 229 |
+| `postproc/` | `forces.py` 560, `checkmesh.py` 775, `surfacecheck.py` 350, `yplus.py` 157, `residuals.py` 90, `compare.py` 88, `convergence_monitor.py` 112, `plotting.py` 312, `fielddata.py` 113, `patchsets.py` 23 |
 | `web/` | `app.py` 183, `state.py` 137, `schemas.py` 55, `ssh_client.py` 715, `routers/{case.py 335, cases.py 316, cluster.py 88, config.py 109, stl.py 132, telemetry.py 847}`, `services/{telemetry.py 786, geometry.py 46, downloads.py 48}` |
 | `web/static/` | `index.html` 1643, `css/style.css` 2623, `js/app.js` 4355, `js/viewer.js` 1122, `js/charts.js` 636, `js/telemetry2d.js` 330, `js/telemetry3d.js` 159, svg assets |
 
@@ -202,7 +203,7 @@ fallback) and `LAYERING_LIMITS` — the two-pass layer gate defaults to a bounde
 of the main gate, `{maxNonOrtho 65, maxBoundarySkewness 22, maxInternalSkewness 5,
 maxConcave 82}`. `config.py` builds `DEFAULT_CONFIG["mesh_quality"]` from those constants and
 `writers/snappy.py` renders whatever `resolve_quality` returns, so the emitted dictionaries
-cannot drift from the documented defaults. The **[dev]**
+cannot drift from the documented defaults. The
 `field_outputs` block is:
 
 ```python
@@ -422,9 +423,10 @@ first-layer coverage metric survives; `Allclean` removes `meshDiagnostics/`.
 
 ## 9. `runtime/` — reproducible assets copied to cases/clusters
 
-- `runtime/convergence_monitor.py` (187) — canonical dependency-free auto-stop monitor
+- `runtime/convergence_monitor.py` (270) — canonical dependency-free auto-stop monitor
   (`THRESHOLD 0.5%`, `WINDOW 200`, `MIN_ITERS 300`, `INTERVAL 10 s`); writes
-  `stopAt writeNow;` on convergence.
+  `stopAt writeNow;` on convergence. Since 1.7.x it is the **single kernel**: the generated
+  case script and `postproc/convergence_monitor.py` (a thin CLI wrapper) both use it.
 - `runtime/remote_cases.py` (229) — cluster inventory/status/force summary, printed between
   `__CASE_JSON_START__`/`__CASE_JSON_END__`; parity-tested against the canonical reader.
 
@@ -432,8 +434,10 @@ first-layer coverage metric survives; `Allclean` removes `meshDiagnostics/`.
 
 ## 10. `postproc/` — measurement (never runs OpenFOAM)
 
-### 10.1 `postproc/forces.py` (569)
-- `load_axis_config` (16); `_load_case_configs` (51); `is_symmetry_case` (77) —
+### 10.1 `postproc/forces.py` (560)
+- `load_axis_config` (30) resolves the axes through the shared override-aware reader
+  (`core.caseconfig.read_case_config` + `axis_config`, case snapshot wins); `_load_case_configs`
+  (54) applies `effective_config` per candidate; `is_symmetry_case` (83) —
   delegates to `caseconfig.has_symmetry`, defaults a no-faces config to a half model.
 - `_dir_time` (119); `force_layout_from_header` (126); `find_force_files` (143).
 - **[dev]** `find_per_part_force_files(base_dir)` (170) → `{part: [force.dat, ...]}` from the
@@ -460,7 +464,7 @@ first-layer coverage metric survives; `Allclean` removes `meshDiagnostics/`.
   `cell_types`, **`failures`**, `issues`, `warnings`, `ok`, `note`. `mesh_quality_report`
   (757) is the end-to-end wrapper.
 
-### 10.3 `postproc/surfacecheck.py` (350), `yplus.py` (157), `residuals.py` (90), `compare.py` (88), `convergence_monitor.py` (165), `plotting.py` (312)
+### 10.3 `postproc/surfacecheck.py` (350), `yplus.py` (157), `residuals.py` (90), `compare.py` (88), `convergence_monitor.py` (112), `plotting.py` (312)
 - surfacecheck: parses closure/open edges/self-intersection/illegal triangles/normals;
   `check_surface` (222) exempts symmetry/allow_open.
 - yplus: `find_yplus_files` (18), `read_yplus` (44, per patch min/max/average/time),
@@ -710,7 +714,8 @@ monitor → simpleFoam → reconstructPar. The monitor writes `stopAt writeNow;`
 downforce vary < ±0.5% over 200 iters after 300, and independently guards against divergence
 (a force > 50x the median of its trailing 50 iters) by stopping the solver the same way —
 preserving the state instead of failing in an FPE. Per-case monitor constants
-(`BLOWUP_FACTOR`, `BLOWUP_WINDOW`) live in `runtime/convergence_monitor.py`; the standalone
+(`BLOWUP_FACTOR`, `BLOWUP_WINDOW`) live in `runtime/convergence_monitor.py`, which the
+`postproc` CLI imports directly (one kernel, no copy); the standalone
 `rapidfoam-monitor` exposes `--blowup-factor`. The guard also prints the remediation ladder
 (correctors 3 → U 0.6 → upwind div_U). After a divergence stop, `startFrom latestTime`
 restarts from the diverged state — `./Allclean` first, or restart from the last good write.
@@ -742,7 +747,7 @@ README table for the full list, including the **[dev]** `layers.y_plus_fit`, `la
 
 ## 17. Test suite, CI and tooling
 
-### 17.1 Python tests (~384 methods, 19 files)
+### 17.1 Python tests (~483 methods, 23 files)
 
 | File | Focus |
 | --- | --- |
@@ -757,13 +762,13 @@ README table for the full list, including the **[dev]** `layers.y_plus_fit`, `la
 | `test_mesh_plan.py` | plan purity/determinism |
 | `test_mesh_preview_equivalence.py` | preview == generation |
 | `test_preset_coverage.py` | preset SLURM time/mem |
-| `test_regressions.py` | broad behavioural net (37) |
+| `test_regressions.py` | broad behavioural net (41) |
 | `test_remote_cases.py` | runtime inventory parity |
 | `test_shell_scripts.py` | real bash execution (posix-only, 16) |
 | `test_studio_config_sync.py` | symmetry detectors agree |
 | `test_surfacecheck.py` | surfaceCheck parsing/verdicts |
 | `test_telemetry_config.py` | overrides honoured, preset y+, export full history |
-| `test_web_api.py` | ~86 tests over the HTTP surface + SSH client (incl. **[dev]** per-part, field diagnostics, layering-log bundle) |
+| `test_web_api.py` | 98 tests over the HTTP surface + SSH client (incl. per-part, field diagnostics, layering-log bundle) |
 | `test_yplus.py` | y+ file discovery/reading/verdict |
 
 SSH is mocked by patching `ClusterSSHClient` methods / the `ssh_client` singleton (no paramiko
@@ -772,15 +777,16 @@ sockets); downloads use hand-rolled `FakeClient`/`FakeStream`.
 ### 17.2 Golden tests, CI, how to run
 - Golden: CRLF-normalised text of `blockMeshDict`, `snappyHexMeshDict`,
   `surfaceFeatureExtractDict`, `Allrun.parallel`, `run.sh`, plus parsed `case_config.json`
-  (which now includes `field_outputs`). `controlDict` is **not** snapshotted. No regen script.
-- CI: ubuntu+windows × py3.9–3.13; `ruff check src tests`, `python -m unittest discover
-  tests`, `python -m build`; separate Node-20 `npm ci && npm test`. Gaps: no coverage/types,
-  no JS on Windows/macOS, matrix tops at 3.13 while dev runs 3.14.
+  (which now includes `field_outputs`). `controlDict` is **not** snapshotted. Regenerate only
+  deliberately via `python tests/golden/regenerate.py` (byte-stable; review the diff).
+- CI: ubuntu+windows × py3.9–3.14; `ruff check src tests`, coverage-gated `unittest`, a
+  non-blocking `mypy` pass, `python -m build`; separate Node-20 `npm ci && npm test`.
+  Remaining gaps: no mypy gate (informational), no JS on Windows/macOS.
 - Run: `python -m unittest discover tests`; `ruff check src tests`; `npm ci && npm test`;
   `python -m build`. `test_web_api.py`/`test_telemetry_config.py` write into the repo's real
   `cases/`/`configs/` (cwd must be the repo root).
 
-### 17.3 JS tests (62)
+### 17.3 JS tests (89)
 `harness.mjs` builds a JSDOM, loads `charts.js → viewer.js → app.js` via `window.eval`,
 stubs THREE/Chart, and can build a bare `CFDApp`/`STLViewer`. `app.test.mjs` covers XSS,
 solver health, telemetry switching/errors, viewer lifecycle, form↔JSON merge (incl. two_pass,
@@ -818,7 +824,11 @@ scaling, unavailable viewer and `dispose`.
 - SSH bundle markers — fixed literal `__RAPIDFOAM_FILE_BEGIN__`/`END`; a crafted cluster file
   could spoof framing.
 - Untrusted STL parsing in the browser (Three.js `STLLoader` trusts the binary face count).
-- `load_axis_config` / `_load_case_configs` read raw JSON, not the override-aware reader.
+- `load_axis_config` / `_load_case_configs` / `compare_cases` read raw JSON, not the
+  override-aware reader — **resolved**: all postproc config reads go through
+  `core.caseconfig` (PR 252e7de).
+- `mesh_quality.relaxed` overrides were unvalidated while `layering_relaxed` was — **resolved**
+  (finite-number check added).
 - Architecture test blind spot: relative/dynamic imports are not scanned.
 - `fieldMinMax`/`wallPressure` FO types are version-sensitive (wallPressure absent in v2606);
   `surfaceFieldValue` was removed (aborted the solve on a missing patch).
@@ -840,7 +850,8 @@ scaling, unavailable viewer and `dispose`.
 - CSS rules duplicated/stale; `resetMeshQuality` uses a `colspan="5"` layer-empty row while the
   table has 6 columns; the hidden `btn-load-template` remains bound; front-end fallback
   placeholder tables duplicate server knowledge; `STL_PALETTE`/`STL_CHIP_COLORS` duplicated.
-- `docs/` now holds only `KNOWLEDGE_BASE.md`.
+- `docs/` holds `KNOWLEDGE_BASE.md` plus `design/` proposals (`validation.md`,
+  `mesh_regions.md`) — both of which describe shipped features.
 
 ---
 
@@ -870,7 +881,7 @@ scaling, unavailable viewer and `dispose`.
   `min_thickness_ratio` removed; architecture refactor into bounded contexts; SLURM time/mem
   follow the preset; full-car symmetry fix; telemetry honours overrides and exports full
   history.
-- **`dev` (unreleased)**: **mesher robustness retune** — quality tiers centralized in
+- **1.7.0** (2026-10-15): **mesher robustness retune** — quality tiers centralized in
   `meshing/quality.py`, layering gate bounded to `{maxNonOrtho 65, maxBoundarySkewness 22,
   maxInternalSkewness 5, maxConcave 82}` (was 80/8), `nCellsBetweenLevels` 3 in every preset,
   `maxFaceThicknessRatio` 0.5 (was 0.7), `expansion_ratio` 1.1 for `standard` (measured

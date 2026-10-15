@@ -22,12 +22,7 @@ import struct
 from pathlib import Path
 from typing import Any, Iterable
 
-# Boundary patches that are not wetted body surfaces (same set the checkMesh
-# verdict treats as domain boundaries).
-_DOMAIN_PATCHES = {
-    "symmetry", "inlet", "outlet", "ground", "farfield", "front", "back", ".*",
-}
-_DOMAIN_PREFIXES = ("inlet", "outlet", "symmetry", "ground", "farfield")
+from rapidfoam.postproc.patchsets import is_domain_patch
 
 # nSurfaceLayers is a small non-negative count; the range also disambiguates the
 # binary data offset (a one-byte shift produces implausible doubles).
@@ -252,11 +247,6 @@ def read_layer_fields(sources: Iterable[Path | bytes]) -> dict[str, dict[str, An
     return merged
 
 
-def _is_domain_patch(name: str) -> bool:
-    key = name.strip('"').lower()
-    return key in _DOMAIN_PATCHES or key.startswith(_DOMAIN_PREFIXES)
-
-
 def first_layer_coverage(sources: Iterable[Path | bytes]) -> dict[str, Any]:
     """Per-patch and wetted-body first-layer coverage from ``nSurfaceLayers``.
 
@@ -290,7 +280,7 @@ def first_layer_coverage(sources: Iterable[Path | bytes]) -> dict[str, Any]:
                 "mean": round(sum(values) / len(values), 3),
                 "histogram": dict(sorted(histogram.items())),
             })
-            if not _is_domain_patch(name):
+            if not is_domain_patch(name):
                 body_faces += len(values)
                 body_layered += layered
                 for key, count in histogram.items():
