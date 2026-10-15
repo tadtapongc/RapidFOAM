@@ -16,9 +16,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.config import DEFAULT_CONFIG, deep_merge, load_config, validate
-from rapidfoam.meshing.params import compute_mesh_params
-from rapidfoam.meshing.presets import FIDELITY_PRESETS
-from rapidfoam.meshing.sizing import apply_mesh_regions, resolve_per_surface_levels
 from rapidfoam.geometry.stl import (
     EdgeStats,
     FeatureAngleStats,
@@ -28,6 +25,9 @@ from rapidfoam.geometry.stl import (
     stl_info,
     write_stl,
 )
+from rapidfoam.meshing.params import compute_mesh_params
+from rapidfoam.meshing.presets import FIDELITY_PRESETS
+from rapidfoam.meshing.sizing import apply_mesh_regions, resolve_per_surface_levels
 
 BOUNDS = ((-0.745, 0.0, -2.961), (0.745, 1.145, 0.296))
 BODY_TRIANGLES = [((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 3))]

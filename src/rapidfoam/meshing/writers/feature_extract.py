@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rapidfoam.core.foam import FOOTER, foam_header
 from rapidfoam.meshing.context import MeshContext
 from rapidfoam.meshing.plan import MeshPlan
-from rapidfoam.core.foam import FOOTER, foam_header
 
 
 def write_surface_feature_extract_dict(plan: MeshPlan, ctx: MeshContext, case_dir: Path) -> None:

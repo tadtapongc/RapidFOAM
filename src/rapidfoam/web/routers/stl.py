@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -89,8 +89,8 @@ async def api_stl_check_exists(filename: str) -> dict[str, Any]:
 
 @router.post("/api/stl/upload")
 async def api_stl_upload(
-    file: UploadFile = File(...),
-    override_name: Optional[str] = Form(None),
+    file: Annotated[UploadFile, File()],
+    override_name: Annotated[Optional[str], Form()] = None,
 ) -> dict[str, Any]:
     """Upload an STL file to local stl/ directory and inspect its bounds."""
     chosen_name = (override_name.strip() if override_name else "") or file.filename or "uploaded.stl"

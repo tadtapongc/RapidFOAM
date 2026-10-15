@@ -9,10 +9,10 @@ final mesh at ~80 deg non-orthogonality and "Bad" verdicts on every real case).
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 

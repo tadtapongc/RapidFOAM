@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import copy
 import os
-from pathlib import Path
 import shutil
 import signal
 import subprocess
@@ -11,10 +10,11 @@ import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from rapidfoam.config import DEFAULT_CONFIG
 from rapidfoam.casegen.scripts import write_scripts
+from rapidfoam.config import DEFAULT_CONFIG
 
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Requires Linux bash")

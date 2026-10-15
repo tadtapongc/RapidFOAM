@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import Mapping
 
 from rapidfoam.core.faces import patch_role
+from rapidfoam.core.foam import FOOTER, bool_str, foam_header
 from rapidfoam.meshing.context import MeshContext
 from rapidfoam.meshing.plan import MeshPlan
 from rapidfoam.meshing.quality import resolve_quality
-from rapidfoam.core.foam import FOOTER, bool_str, foam_header
 
 
 def _location_in_mesh(plan: MeshPlan, ctx: MeshContext) -> list[float]:
@@ -159,7 +159,7 @@ def write_snappy_hex_mesh_dict(plan: MeshPlan, ctx: MeshContext, case_dir: Path)
 
     ref_region_lines = []
     if distance_levels:
-        levels_str = " ".join(f"({d} {l})" for d, l in distance_levels)
+        levels_str = " ".join(f"({d} {lvl})" for d, lvl in distance_levels)
         for name in stl_names:
             ref_region_lines.append(
                 f"        {name} {{ mode distance; levels ({levels_str}); }}")

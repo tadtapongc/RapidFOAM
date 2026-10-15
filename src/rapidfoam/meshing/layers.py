@@ -11,8 +11,8 @@ import math
 from typing import Any
 
 from rapidfoam.core.axes import flow_axis_index_sign, up_axis_index
-from rapidfoam.meshing.domain import GROUND_EMBED
 from rapidfoam.geometry.stl import BBox
+from rapidfoam.meshing.domain import GROUND_EMBED
 
 # Upper bound on the value ``layers.y_plus_fit`` will auto-set for
 # ``maxFaceThicknessRatio``. snappyHexMesh will not extrude a layer thicker than

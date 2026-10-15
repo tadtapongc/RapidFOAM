@@ -9,9 +9,9 @@ structural assertions so the stall class of bugs cannot silently return.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))

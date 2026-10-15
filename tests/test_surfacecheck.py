@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.config import load_config, validate
+from rapidfoam.geometry.stl import write_stl
 from rapidfoam.postproc.surfacecheck import (
     check_surface,
     find_surfacecheck_logs,
@@ -19,7 +20,6 @@ from rapidfoam.postproc.surfacecheck import (
     surface_check_policy_from_dict,
     surface_check_report,
 )
-from rapidfoam.geometry.stl import write_stl
 
 BODY_TRIANGLES = [((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 3))]
 

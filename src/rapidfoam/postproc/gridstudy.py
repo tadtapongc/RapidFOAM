@@ -229,7 +229,9 @@ def grid_study(
             cfg = caseconfig.read_case_config(case_dir=case_dir)
             mesh = cfg.get("mesh_params", {})
             cells = mesh.get("block_cells")
-            n = int(cells[0]) * int(cells[1]) * int(cells[2]) if isinstance(cells, (list, tuple)) and len(cells) == 3 else None
+            n = None
+            if isinstance(cells, (list, tuple)) and len(cells) == 3:
+                n = int(cells[0]) * int(cells[1]) * int(cells[2])
             # Screened physics: confirm the near-wall/solver settings are identical
             # across the ladder (they must be for a valid Richardson estimate).
             # surface_level/edge_level are included so a co-refined ladder (which
@@ -253,7 +255,10 @@ def grid_study(
         report["pinned"] = pinned
         report["pinned_consistent"] = len({tuple(sorted(v.items())) for v in pinned.values()}) <= 1
         if not report["pinned_consistent"]:
-            report["note"] = "⚠ near-wall/solver settings differ between levels — Richardson p is not strictly valid. " + report.get("note", "")
+            report["note"] = (
+                "⚠ near-wall/solver settings differ between levels — "
+                "Richardson p is not strictly valid. " + report.get("note", "")
+            )
         return report
 
     def _resolve(fidelity: str) -> Optional[Path]:

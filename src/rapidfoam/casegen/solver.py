@@ -14,7 +14,6 @@ from typing import Any
 from rapidfoam.core.axes import parse_axis
 from rapidfoam.core.foam import FOOTER, bool_str, foam_header
 
-
 # ============================================================
 # CONTROLDICT
 # ============================================================

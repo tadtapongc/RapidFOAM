@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Optional
 
 from rapidfoam.core import caseconfig
-from rapidfoam.core.axes import AXIS_MAP as AXIS_MAP, axis_index_sign
+from rapidfoam.core.axes import AXIS_MAP as AXIS_MAP
+from rapidfoam.core.axes import axis_index_sign
 
 
 def axis_config_from_dict(cfg: dict | None) -> tuple[int, int, int, int, str, str]:

@@ -11,19 +11,19 @@ from __future__ import annotations
 
 import copy
 import json
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.config import effective_config
+from rapidfoam.geometry.stl import stl_bounds, write_stl
 from rapidfoam.meshing.layers import resolve_layers
 from rapidfoam.meshing.params import compute_mesh_params
 from rapidfoam.meshing.plan import apply_plan_to_cfg, build_mesh_plan
 from rapidfoam.meshing.presets import apply_fidelity_preset
-from rapidfoam.geometry.stl import stl_bounds, write_stl
 
 
 class MeshPlanTest(unittest.TestCase):

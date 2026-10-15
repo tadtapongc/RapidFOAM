@@ -9,9 +9,9 @@ that removes them; a new violation is a hard failure.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src" / "rapidfoam"

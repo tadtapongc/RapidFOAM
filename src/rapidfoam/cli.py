@@ -57,10 +57,10 @@ Examples:
         sys.exit(1)
 
     if args.grid_refine:
-        from rapidfoam.postproc.gridstudy import configure_refinement_study
         from rapidfoam.casegen.builder import CaseGenerationError, build_case
         from rapidfoam.config import effective_config
         from rapidfoam.meshing.presets import FIDELITY_PRESETS
+        from rapidfoam.postproc.gridstudy import configure_refinement_study
 
         base_cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
         fidelity = effective_config(base_cfg).get("fidelity", "standard")

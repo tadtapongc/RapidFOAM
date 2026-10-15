@@ -106,4 +106,4 @@ async def api_config_load_file(filename: str = "config.json") -> dict[str, Any]:
             "merged_config": effective_config(content),
         }
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Error reading config: {exc}")
+        raise HTTPException(status_code=400, detail=f"Error reading config: {exc}") from exc

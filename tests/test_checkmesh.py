@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rapidfoam.config import load_config, validate
+from rapidfoam.geometry.stl import write_stl
 from rapidfoam.postproc.checkmesh import (
     QUALITY_TIERS,
     _config_has_symmetry,
@@ -28,7 +29,6 @@ from rapidfoam.postproc.checkmesh import (
     resolve_bands,
     verdict_bands_from_dict,
 )
-from rapidfoam.geometry.stl import write_stl
 
 BODY_TRIANGLES = [((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 3))]
 

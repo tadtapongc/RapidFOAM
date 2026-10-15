@@ -11,11 +11,11 @@ from typing import Any
 
 from rapidfoam.core.axes import flow_axis_index_sign, up_axis_index
 from rapidfoam.core.faces import face_assignments, face_role
+from rapidfoam.geometry.stl import BBox, EdgeStats, FeatureAngleStats
 from rapidfoam.meshing.domain import GROUND_EMBED, compute_domain_box
 from rapidfoam.meshing.grading import compute_block_grading
 from rapidfoam.meshing.presets import FIDELITY_PRESETS
 from rapidfoam.meshing.sizing import _resolve_feature_angle, _resolve_feature_sizing
-from rapidfoam.geometry.stl import BBox, EdgeStats, FeatureAngleStats
 
 
 def compute_mesh_params(
@@ -104,7 +104,7 @@ def compute_mesh_params(
         distance_levels = user_mesh["distance_levels"]
     else:
         shells = user_mesh.get("distance_shells", preset.get("distance_shells", []))
-        distance_levels = [(round(float(d) * base_cell, 6), int(l)) for d, l in shells]
+        distance_levels = [(round(float(d) * base_cell, 6), int(lvl)) for d, lvl in shells]
     if distance_levels and isinstance(distance_levels[0], list):
         distance_levels = [tuple(x) for x in distance_levels]
 

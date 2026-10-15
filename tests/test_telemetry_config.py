@@ -15,8 +15,8 @@ Phase 1a (``core.caseconfig`` + full-history export):
 import asyncio
 import json
 import shutil
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from rapidfoam.web.routers.telemetry import (
     api_telemetry_export,

@@ -138,7 +138,8 @@ def _scan_local_cases() -> dict[str, dict[str, Any]]:
                 log_mtime = st.st_mtime
             if "End" in tail or "Finalising parallel run" in tail:
                 status = "Converged" if converged else "Completed"
-            elif any(err in tail for err in ["FOAM FATAL", "Fatal error", "FOAM aborting", "sigFpe", "SIGFPE", "Floating point exception"]):
+            elif any(err in tail for err in ["FOAM FATAL", "Fatal error", "FOAM aborting",
+                                             "sigFpe", "SIGFPE", "Floating point exception"]):
                 status = "Failed"
             elif status != "Converged":
                 # If the log was modified in the last 3 minutes, it's actively solving
@@ -270,7 +271,9 @@ async def api_list_cases() -> list[dict[str, Any]]:
                         local_entry["modified_ts"] = rc["modified_ts"]
                         local_entry["modified"] = rc.get("modified", local_entry["modified"])
                     # If remote has simulation activity or results, update local entry
-                    if final_status in ("Solving", "Meshing", "Queued", "Converged", "Completed", "Failed") or rc.get("latest_iter") is not None:
+                    if (final_status in ("Solving", "Meshing", "Queued",
+                                         "Converged", "Completed", "Failed")
+                            or rc.get("latest_iter") is not None):
                         local_iter = local_entry.get("latest_iter") or 0
                         remote_iter = rc.get("latest_iter") or 0
                         # Status always reflects the newest known state, but numeric

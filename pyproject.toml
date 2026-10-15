@@ -74,9 +74,28 @@ packages = ["src/rapidfoam"]
 line-length = 120
 target-version = "py39"
 
-# High-signal baseline for CI. The broader rule families (UP/BLE/S/SIM/PLR/…)
-# are deliberately not enabled yet; they flag pre-existing style debt that would
-# make the gate red before the refactor lands.
+# CI gate. E/W/F/I/B are enforced; the broader rule families (UP/BLE/S/SIM/PLR/…)
+# still flag pre-existing style debt and stay opt-in for now.
 [tool.ruff.lint]
-select = ["F"]
+select = ["E", "W", "F", "I", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Generated shell/batch text is emitted verbatim; long lines are intentional.
+"src/rapidfoam/casegen/scripts.py" = ["E501"]
+# Verbatim OpenFOAM fieldMinMax.dat header with tab padding.
+"tests/test_fielddata.py" = ["E501"]
+
+[tool.coverage.run]
+branch = true
+source = ["rapidfoam"]
+
+[tool.coverage.report]
+skip_covered = true
+
+# Informational baseline (not yet a blocking gate): the pure derivation
+# packages are checked first; widen the file list as the baseline burns down.
+[tool.mypy]
+python_version = "3.9"
+files = ["src/rapidfoam/core", "src/rapidfoam/meshing", "src/rapidfoam/casegen"]
+ignore_missing_imports = true
 

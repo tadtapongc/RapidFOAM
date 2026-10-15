@@ -1,9 +1,9 @@
 """Tests for postproc.gridstudy (Richardson convergence / verdicts)."""
 
-import unittest
-from pathlib import Path
 import sys
 import tempfile
+import unittest
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -367,6 +367,7 @@ class RefinementStudyConfigTest(unittest.TestCase):
         # must pin the standard preset (y+30, 8 layers, 1500), not the global
         # DEFAULT_CONFIG values (which match fast: 5 layers, 800).
         import json
+
         from rapidfoam.meshing.presets import FIDELITY_PRESETS
 
         base = {
@@ -389,6 +390,7 @@ class RefinementStudyConfigTest(unittest.TestCase):
     def test_fast_preset_pins_when_base_has_no_overrides(self):
         # Symmetrically, fidelity 'fast' must pin 5 layers / 800, not standard.
         import json
+
         from rapidfoam.meshing.presets import FIDELITY_PRESETS
 
         base = {
@@ -410,6 +412,7 @@ class RefinementStudyConfigTest(unittest.TestCase):
     def test_explicit_override_beats_preset(self):
         # A user's explicit layers/solver must win over the fidelity preset.
         import json
+
         from rapidfoam.meshing.presets import FIDELITY_PRESETS
 
         base = {
@@ -429,6 +432,7 @@ class RefinementStudyConfigTest(unittest.TestCase):
 
     def test_only_cells_per_length_differs_from_bare_base(self):
         import json
+
         from rapidfoam.meshing.presets import FIDELITY_PRESETS
 
         base = {

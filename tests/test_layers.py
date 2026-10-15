@@ -12,8 +12,8 @@ from rapidfoam.meshing.layers import (
     resolve_layers,
 )
 from rapidfoam.meshing.params import compute_mesh_params
-from rapidfoam.meshing.presets import FIDELITY_PRESETS
 from rapidfoam.meshing.pipeline import emit_mesh_files_from_config
+from rapidfoam.meshing.presets import FIDELITY_PRESETS
 
 BOUNDS = ((-0.745, 0.0, -2.961), (0.745, 1.145, 0.296))
 NU = 1.516e-5

@@ -114,8 +114,11 @@ def build_mesh_plan(
         explicit_first_layer=explicit_first_layer,
         explicit_min_thickness=explicit_min_thickness,
     )
+    domain_box = work.get("domain_box")
+    if not isinstance(domain_box, dict):
+        domain_box = {}
     return MeshPlan(
-        domain_box=work.get("domain_box") if isinstance(work.get("domain_box"), dict) else {},
+        domain_box=domain_box,
         mesh_params=mesh_params,
         layers=work.get("layers", {}),
         feature_extract=work.get("feature_extract", {}),
@@ -133,8 +136,11 @@ def plan_from_config(cfg: dict[str, Any]) -> MeshPlan:
     if not isinstance(layers, dict):
         layers = {}
     resolved = layers.get("_resolved", {})
+    domain_box = cfg.get("domain_box")
+    if not isinstance(domain_box, dict):
+        domain_box = {}
     return MeshPlan(
-        domain_box=cfg.get("domain_box") if isinstance(cfg.get("domain_box"), dict) else {},
+        domain_box=domain_box,
         mesh_params=cfg.get("mesh_params", {}),
         layers=layers,
         feature_extract=cfg.get("feature_extract", {}),

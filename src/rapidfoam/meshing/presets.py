@@ -97,7 +97,8 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
     },
     "fine": {
         # Wall-resolved low-Re tier (~4-6 hours, ~20-28M cells on 32 cores)
-        "desc": "Wall-resolved tier (y+ ~ 1 first cell, fine near-wall stack); pair with a low-Re-consistent wall treatment and validate",
+        "desc": "Wall-resolved tier (y+ ~ 1 first cell, fine near-wall stack); "
+                "pair with a low-Re-consistent wall treatment and validate",
         "cell_estimate": "~20-28M cells",
         "n_cells_target": 24000000,
         "runtime_estimate": "~4-6 hrs",

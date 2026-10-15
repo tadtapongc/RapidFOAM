@@ -34,7 +34,9 @@ async def api_cluster_connect(req: SSHConnectRequest) -> dict[str, Any]:
     password_to_use = req.password
     # If no password was provided but one is stored locally for this host/user, use it
     if not password_to_use and saved_cfg.get("password"):
-        if (not req.host or req.host == saved_cfg.get("host")) and (not req.username or req.username == saved_cfg.get("username")):
+        host_matches = not req.host or req.host == saved_cfg.get("host")
+        user_matches = not req.username or req.username == saved_cfg.get("username")
+        if host_matches and user_matches:
             password_to_use = saved_cfg.get("password")
 
     try:
@@ -58,7 +60,7 @@ async def api_cluster_connect(req: SSHConnectRequest) -> dict[str, Any]:
         })
         return res
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/api/cluster/status")

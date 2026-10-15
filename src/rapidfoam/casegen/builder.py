@@ -43,16 +43,16 @@ def build_case(
     report: Reporter = reporter if reporter is not None else _default_reporter
 
     from rapidfoam.config import CASE_DIR, STL_DIR, find_stl, load_config, user_set, validate
+    from rapidfoam.core.axes import vec_str
     from rapidfoam.core.faces import face_assignments, face_role
     from rapidfoam.core.fields import turbulence_values, velocity_vector
-    from rapidfoam.core.axes import vec_str
-    from rapidfoam.meshing.domain import compute_domain_box
+    from rapidfoam.geometry.stl import EdgeStats, FeatureAngleStats, copy_stl, stl_analyze_full
     from rapidfoam.meshing.context import build_mesh_context
+    from rapidfoam.meshing.domain import compute_domain_box
     from rapidfoam.meshing.pipeline import emit_mesh_files
     from rapidfoam.meshing.plan import apply_plan_to_cfg, build_mesh_plan
     from rapidfoam.meshing.presets import FIDELITY_PRESETS, apply_fidelity_preset
     from rapidfoam.meshing.sizing import apply_mesh_regions, resolve_per_surface_levels
-    from rapidfoam.geometry.stl import EdgeStats, FeatureAngleStats, copy_stl, stl_analyze_full
 
     if not cfg_path.exists():
         raise CaseGenerationError(f"ERROR: {cfg_path} not found")
@@ -61,7 +61,7 @@ def build_case(
     try:
         cfg = load_config(cfg_path)
     except (OSError, ValueError) as exc:
-        raise CaseGenerationError(f"ERROR: {exc}")
+        raise CaseGenerationError(f"ERROR: {exc}") from exc
 
     # Load raw config to correctly handle user overrides
     with open(cfg_path, encoding="utf-8") as f:
@@ -111,7 +111,7 @@ def build_case(
             angle_stats.merge(angles)
             smin, smax = bbox
         except (OSError, ValueError) as exc:
-            raise CaseGenerationError(f"ERROR: {exc}")
+            raise CaseGenerationError(f"ERROR: {exc}") from exc
         for i in range(3):
             all_min[i] = min(all_min[i], smin[i])
             all_max[i] = max(all_max[i], smax[i])
@@ -119,7 +119,8 @@ def build_case(
     if all_min[0] == float("inf"):
         raise CaseGenerationError("ERROR: No valid STL files found — cannot compute domain")
 
-    combined_bounds = (tuple(all_min), tuple(all_max))
+    combined_bounds = ((all_min[0], all_min[1], all_min[2]),
+                       (all_max[0], all_max[1], all_max[2]))
 
     # Auto-compute domain box if requested or missing
     if cfg.get("domain_box") in ("auto", None) or not isinstance(cfg.get("domain_box"), dict):
@@ -228,7 +229,7 @@ def build_case(
     report(f"    Edge level:     {mesh['edge_level']}")
     dist_levels = mesh.get('distance_levels', [])
     if dist_levels:
-        shells = ", ".join(f"{d*1000:.0f}mm→L{l}" for d, l in dist_levels)
+        shells = ", ".join(f"{d*1000:.0f}mm→L{lvl}" for d, lvl in dist_levels)
         report(f"    Distance shells: {shells}")
     for r in mesh.get("refinement_regions", []):
         report(f"    Region {r['name']}: Level {r['level']}")
@@ -354,7 +355,7 @@ def build_case(
             report(f"    ✓ {stem} ({n_tri:,} triangles)")
         except ValueError as e:
             report(f"    ✗ {stem} ERROR: {e}")
-            raise CaseGenerationError(f"ERROR: {stem}: {e}")
+            raise CaseGenerationError(f"ERROR: {stem}: {e}") from e
 
     # Write all OpenFOAM files
     from rapidfoam.casegen.constants import write_constant

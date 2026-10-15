@@ -6,7 +6,11 @@ case in ``<repo>/cases`` (metadata, status, latest forces). Run as a script:
 ``__CASE_JSON_START__``/``__CASE_JSON_END__`` markers.
 """
 
-import sys, json, re, statistics, datetime
+import datetime
+import json
+import re
+import statistics
+import sys
 from pathlib import Path
 
 repo = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
@@ -84,7 +88,8 @@ if cases_dir.is_dir():
             boundary = d / "constant" / "polyMesh" / "boundary"
             if boundary.is_file():
                 try:
-                    if re.search(r"\btype\s+symmetry(?:Plane)?\s*;", boundary.read_text(encoding="utf-8", errors="replace")):
+                    pattern = r"\btype\s+symmetry(?:Plane)?\s*;"
+                    if re.search(pattern, boundary.read_text(encoding="utf-8", errors="replace")):
                         is_sym = True
                 except Exception:
                     pass
@@ -126,8 +131,10 @@ if cases_dir.is_dir():
                                         drg = float(parts[1 + drag_idx]) * drag_sign * sym_scale
                                         df = float(parts[1 + df_idx]) * df_sign * sym_scale
                                     else:
-                                        drg = (float(parts[1 + drag_idx]) + float(parts[4 + drag_idx])) * drag_sign * sym_scale
-                                        df = (float(parts[1 + df_idx]) + float(parts[4 + df_idx])) * df_sign * sym_scale
+                                        drg = (float(parts[1 + drag_idx])
+                                               + float(parts[4 + drag_idx])) * drag_sign * sym_scale
+                                        df = (float(parts[1 + df_idx])
+                                              + float(parts[4 + df_idx])) * df_sign * sym_scale
                                     samples[t] = (t, drg, df)
                                 except ValueError:
                                     continue
@@ -174,7 +181,8 @@ if cases_dir.is_dir():
             tail = read_tail(log_simple)
             if "End" in tail or "Finalising parallel run" in tail:
                 status = "Converged" if converged else "Completed"
-            elif any(err in tail for err in ["FOAM FATAL", "Fatal error", "FOAM aborting", "sigFpe", "SIGFPE", "Floating point exception"]):
+            elif any(err in tail for err in ["FOAM FATAL", "Fatal error", "FOAM aborting",
+                                             "sigFpe", "SIGFPE", "Floating point exception"]):
                 status = "Failed"
             else:
                 status = "Solving"

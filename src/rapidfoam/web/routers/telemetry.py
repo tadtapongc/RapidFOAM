@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Response
 
+from rapidfoam.core import caseconfig
 from rapidfoam.postproc.checkmesh import (
     check_mesh_quality,
     checkmesh_targets_from_dict,
@@ -22,9 +23,10 @@ from rapidfoam.postproc.checkmesh import (
     parse_layer_coverage,
     verdict_bands_from_dict,
 )
-from rapidfoam.postproc.layerfields import (
-    find_layer_field_files,
-    first_layer_coverage,
+from rapidfoam.postproc.fielddata import (
+    find_field_min_max_files,
+    parse_field_min_max,
+    read_field_min_max,
 )
 from rapidfoam.postproc.forces import (
     axis_config_from_dict,
@@ -41,6 +43,10 @@ from rapidfoam.postproc.forces import (
     read_forces,
     window_stats,
 )
+from rapidfoam.postproc.layerfields import (
+    find_layer_field_files,
+    first_layer_coverage,
+)
 from rapidfoam.postproc.residuals import find_residual_files, read_residuals
 from rapidfoam.postproc.surfacecheck import (
     check_surface,
@@ -49,19 +55,13 @@ from rapidfoam.postproc.surfacecheck import (
     surface_check_policy_from_dict,
 )
 from rapidfoam.postproc.yplus import find_yplus_files, read_yplus
-from rapidfoam.postproc.fielddata import (
-    find_field_min_max_files,
-    parse_field_min_max,
-    read_field_min_max,
-)
-from rapidfoam.core import caseconfig
 from rapidfoam.web.services.telemetry import (
     _average_vector,
     _compute_aero_balance,
     _compute_coefficients,
     _downsample_columns,
-    _latest_vector,
     _lateral_axis_index,
+    _latest_vector,
     _load_reference_quantities,
     _load_solver_end_time,
     _load_stl_files,
@@ -74,9 +74,6 @@ from rapidfoam.web.services.telemetry import (
     _read_text_files,
     _read_text_tail_lines,
     _read_yplus_texts,
-    parse_solver_equations,
-    remote_telemetry_status,
-    should_read_remote,
     _shift_moment_columns,
     _sorted_segments,
     _subsample_indices,
@@ -85,8 +82,11 @@ from rapidfoam.web.services.telemetry import (
     _yplus_target_from_config,
     parse_residuals_from_log,
     parse_solver_diagnostics_from_log,
+    parse_solver_equations,
     parse_solver_info_text,
     prepare_study_root,
+    remote_telemetry_status,
+    should_read_remote,
 )
 from rapidfoam.web.state import ALLOWED_LOG_TYPES, CASE_NAME_REGEX, PROJECT_ROOT, ssh_client
 
@@ -255,7 +255,7 @@ async def api_telemetry_forces(
         try:
             parsed_cofr = [float(part) for part in str(cofr).split(",")]
         except ValueError:
-            raise HTTPException(status_code=400, detail="cofr must be three comma-separated numbers")
+            raise HTTPException(status_code=400, detail="cofr must be three comma-separated numbers") from None
         if len(parsed_cofr) != 3:
             raise HTTPException(status_code=400, detail="cofr must be three comma-separated numbers")
         cofr_effective = parsed_cofr

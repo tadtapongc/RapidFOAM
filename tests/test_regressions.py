@@ -5,25 +5,25 @@ import ast
 import contextlib
 import io
 import json
-from pathlib import Path
 import runpy
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from rapidfoam.casegen.scripts import _convergence_monitor_script
 from rapidfoam.cli import _do_generate, _do_init
 from rapidfoam.config import load_config, validate
 from rapidfoam.core.faces import face_assignments
+from rapidfoam.geometry.stl import copy_stl, stl_bounds, stl_info, write_stl
 from rapidfoam.meshing.domain import compute_domain_box
-from rapidfoam.postproc.forces import check_convergence, find_force_files, read_forces, is_symmetry_case
+from rapidfoam.postproc.convergence_monitor import monitor
+from rapidfoam.postproc.forces import check_convergence, find_force_files, is_symmetry_case, read_forces
 from rapidfoam.postproc.plotting import _force_stats, _rolling_average
 from rapidfoam.postproc.residuals import read_residuals
-from rapidfoam.postproc.convergence_monitor import monitor
-from rapidfoam.geometry.stl import copy_stl, stl_bounds, stl_info, write_stl
-from rapidfoam.casegen.scripts import _convergence_monitor_script
 
 
 def force_row(time, drag, downforce=20):
@@ -291,7 +291,9 @@ class ProjectTest(unittest.TestCase):
         rows = [force_row(t, 10) for t in range(300)]
         rows.append(force_row(300, 1.0e9))
         path.write_text("".join(rows))
-        with patch("rapidfoam.postproc.convergence_monitor.time.sleep", side_effect=[None, RuntimeError("second poll")]), contextlib.redirect_stdout(io.StringIO()):
+        blowup_poll = patch("rapidfoam.postproc.convergence_monitor.time.sleep",
+                            side_effect=[None, RuntimeError("second poll")])
+        with blowup_poll, contextlib.redirect_stdout(io.StringIO()):
             self.assertFalse(monitor(case_dir=case))
         self.assertIn("writeNow", (case / "system/controlDict").read_text())
 
@@ -304,7 +306,9 @@ class ProjectTest(unittest.TestCase):
         path.parent.mkdir(parents=True)
         path.write_text("".join(f"{t} (10 -20 0) (0 0 0) (0 0 0)\n" for t in range(300)))
         # A second poll would expose incorrect axes without hanging the test.
-        with patch("rapidfoam.postproc.convergence_monitor.time.sleep", side_effect=[None, RuntimeError("second poll")]), contextlib.redirect_stdout(io.StringIO()):
+        axes_poll = patch("rapidfoam.postproc.convergence_monitor.time.sleep",
+                          side_effect=[None, RuntimeError("second poll")])
+        with axes_poll, contextlib.redirect_stdout(io.StringIO()):
             self.assertTrue(monitor(case_dir=case))
         self.assertIn("writeNow", (case / "system/controlDict").read_text())
 
@@ -353,16 +357,22 @@ class ProjectTest(unittest.TestCase):
         self.assertTrue((self.root / "cases/test_case").exists())
 
     def test_postproc_unification_and_shared_helpers(self):
+        from rapidfoam.core.axes import (
+            AXIS_MAP as G_AXIS_MAP,
+        )
+        from rapidfoam.core.axes import (
+            axis_index_sign as geom_axis_index_sign,
+        )
+        from rapidfoam.postproc.forces import (
+            AXIS_MAP as F_AXIS_MAP,
+        )
         from rapidfoam.postproc.forces import (
             _dir_time as forces_dir_time,
-            AXIS_MAP as F_AXIS_MAP,
+        )
+        from rapidfoam.postproc.forces import (
             axis_index_sign as forces_axis_index_sign,
         )
         from rapidfoam.postproc.residuals import _dir_time as residuals_dir_time
-        from rapidfoam.core.axes import (
-            AXIS_MAP as G_AXIS_MAP,
-            axis_index_sign as geom_axis_index_sign,
-        )
         self.assertIs(forces_dir_time, residuals_dir_time)
         self.assertIs(F_AXIS_MAP, G_AXIS_MAP)
         self.assertIs(forces_axis_index_sign, geom_axis_index_sign)
@@ -441,7 +451,8 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(_rolling_average([]), [])
         vals = [10.0, 20.0, 30.0]
         self.assertEqual(_rolling_average(vals, window=2), [10.0, 15.0, 25.0])
-        import random, statistics
+        import random
+        import statistics
         data = [random.uniform(50, 150) for _ in range(150)]
         expected = [
             statistics.mean(data[max(0, i - 40 + 1) : i + 1])

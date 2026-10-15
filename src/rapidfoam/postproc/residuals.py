@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-
 from rapidfoam.postproc.forces import _dir_time
 
 

@@ -3,12 +3,14 @@
 import asyncio
 import json
 import shutil
-from pathlib import Path
 import unittest
-from unittest.mock import patch, PropertyMock
+from pathlib import Path
+from unittest.mock import PropertyMock, patch
+
 from fastapi import HTTPException
 
 from rapidfoam.config import effective_config as merge_config_with_defaults
+from rapidfoam.postproc.forces import is_symmetry_case
 from rapidfoam.web.routers.case import (
     api_case_cancel,
     api_case_check_exists,
@@ -44,10 +46,8 @@ from rapidfoam.web.schemas import (
 )
 from rapidfoam.web.services import telemetry as _telemetry_service
 from rapidfoam.web.services.telemetry import parse_residuals_from_log, parse_solver_diagnostics_from_log
+from rapidfoam.web.ssh_client import FILE_BEGIN, FILE_END, ClusterSSHClient, _parse_marked_bundle
 from rapidfoam.web.state import _download_progress, ssh_client
-from rapidfoam.web.ssh_client import ClusterSSHClient
-from rapidfoam.web.ssh_client import FILE_BEGIN, FILE_END, _parse_marked_bundle
-from rapidfoam.postproc.forces import is_symmetry_case
 
 
 class TestWebAPI(unittest.TestCase):
@@ -580,6 +580,7 @@ class TestWebAPI(unittest.TestCase):
         """The remote bundle must glob log.snappyHexMesh* so two-pass cases fetch
         log.snappyHexMesh.layering (layer coverage would otherwise be blank)."""
         import fnmatch
+
         from rapidfoam.web.services import telemetry as svc
 
         captured: dict = {}
@@ -620,6 +621,7 @@ class TestWebAPI(unittest.TestCase):
     def test_remote_telemetry_single_flight(self):
         """Concurrent endpoints must share one remote read, not issue their own."""
         import time as _time
+
         from rapidfoam.web.services import telemetry as svc
 
         calls = {"n": 0}
@@ -957,8 +959,8 @@ class TestWebAPI(unittest.TestCase):
 
     def test_geometry_domain_box_per_surface_preview(self):
         """The domain-box payload includes effective per-surface refinement."""
-        from rapidfoam.web.services.geometry import per_surface_preview
         from rapidfoam.geometry.stl import EdgeStats
+        from rapidfoam.web.services.geometry import per_surface_preview
 
         preset_stats = EdgeStats()
         for _ in range(500):
@@ -2319,7 +2321,7 @@ class TestWebAPI(unittest.TestCase):
         with tempfile.TemporaryDirectory() as parent:
             dest = Path(parent) / "case_atomic"
             with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
-                with self.assertRaises(Exception):
+                with self.assertRaises((RuntimeError, tarfile.ReadError, EOFError, OSError)):
                     c.download_directory("/repo/cases/c1", dest)
             self.assertFalse(dest.exists())
             # No staging leftovers either.

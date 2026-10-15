@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import struct
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -45,17 +45,17 @@ boundaryField
 }
 """
 
-ASCII_BODY = b"""\
-nonuniform List<scalar> 
-4
-(
-0
-2
-8
-8
+ASCII_BODY = (
+    b"nonuniform List<scalar> \n"
+    b"4\n"
+    b"(\n"
+    b"0\n"
+    b"2\n"
+    b"8\n"
+    b"8\n"
+    b")\n"
+    b";\n"
 )
-;
-"""
 
 
 def ascii_field() -> bytes:

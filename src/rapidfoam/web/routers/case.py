@@ -12,8 +12,8 @@ from fastapi import APIRouter, HTTPException
 
 from rapidfoam.config import effective_config, find_stl, validate
 from rapidfoam.core.axes import flow_axis_index_sign, up_axis_index
-from rapidfoam.meshing.domain import compute_domain_box
 from rapidfoam.geometry.stl import EdgeStats, FeatureAngleStats, stl_analyze_full
+from rapidfoam.meshing.domain import compute_domain_box
 from rapidfoam.web.schemas import (
     CaseDownloadRequest,
     DomainBoxRequest,
@@ -46,7 +46,7 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
     try:
         merged = effective_config(cfg)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid configuration format: {exc}")
+        raise HTTPException(status_code=400, detail=f"Invalid configuration format: {exc}") from exc
 
     # Gather STL edge and crease-angle statistics for feature-based auto-sizing
     # (and bounds when the caller did not supply them), one streaming pass per file.
@@ -106,11 +106,14 @@ async def api_geometry_domain_box(req: DomainBoxRequest) -> dict[str, Any]:
             "layer_preview": layer_preview(merged, cfg, bounds_tuple, stats_for_sizing, stats_for_angle),
             "per_surface": per_surface_preview(
                 merged, cfg, stats_by_stem, extents_by_stem,
-                list(cfg.get("stl_names") or [n.rsplit(".", 1)[0] if "." in n else n for n in cfg.get("stl_files", [])]),
+                list(
+                    cfg.get("stl_names")
+                    or [n.rsplit(".", 1)[0] if "." in n else n for n in cfg.get("stl_files", [])]
+                ),
             ),
         }
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/api/case/check-exists")
@@ -155,13 +158,16 @@ async def api_case_generate_and_submit(req: GenerateCaseRequest) -> dict[str, An
     if not case_name:
         raise HTTPException(status_code=400, detail="case_name is required")
     if not CASE_NAME_REGEX.match(case_name):
-        raise HTTPException(status_code=400, detail="case_name must contain only alphanumeric characters, underscores, and hyphens")
+        raise HTTPException(
+            status_code=400,
+            detail="case_name must contain only alphanumeric characters, underscores, and hyphens",
+        )
 
     # 1. Validate config
     try:
         merged = effective_config(cfg)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid configuration format: {exc}")
+        raise HTTPException(status_code=400, detail=f"Invalid configuration format: {exc}") from exc
     errors, warnings = validate(merged, PROJECT_ROOT)
     if errors:
         raise HTTPException(status_code=400, detail=f"Config validation errors: {', '.join(errors)}")
@@ -201,7 +207,7 @@ async def api_case_generate_and_submit(req: GenerateCaseRequest) -> dict[str, An
             local_actions["generated_locally"] = True
             local_actions["case_path"] = str(PROJECT_ROOT / "cases" / case_name)
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Local case generation failed: {exc}")
+            raise HTTPException(status_code=500, detail=f"Local case generation failed: {exc}") from exc
 
     # 4. Cluster synchronization and remote execution
     if req.upload_to_cluster:
@@ -236,7 +242,8 @@ async def api_case_generate_and_submit(req: GenerateCaseRequest) -> dict[str, An
 
         # Execute setup_case.py remotely
         if req.generate_remotely:
-            gen_cmd = f"cd {shlex.quote(remote_repo)} && python3 setup_case.py {shlex.quote(f'configs/{case_name}.json')}"
+            remote_cfg_arg = shlex.quote(f"configs/{case_name}.json")
+            gen_cmd = f"cd {shlex.quote(remote_repo)} && python3 setup_case.py {remote_cfg_arg}"
             code, out, err = await asyncio.to_thread(ssh_client.run_command, gen_cmd, timeout=45)
             cluster_actions["setup_exit_code"] = code
             cluster_actions["setup_output"] = out.strip()
@@ -272,9 +279,10 @@ async def api_case_refinement_study(req: RefinementStudyRequest) -> dict[str, An
     uploads + submits all three.
     """
     import json as _json
-    from rapidfoam.postproc.gridstudy import configure_refinement_study
+
     from rapidfoam.config import effective_config
     from rapidfoam.meshing.presets import FIDELITY_PRESETS
+    from rapidfoam.postproc.gridstudy import configure_refinement_study
 
     cfg = req.config
     case_name = cfg.get("case_name", "").strip()

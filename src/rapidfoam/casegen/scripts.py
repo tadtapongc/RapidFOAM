@@ -290,7 +290,7 @@ fi
             load_lines.append(f"module load {openfoam_module}")
     if openfoam_source:
         load_lines.append(f"source {openfoam_source}")
-    
+
     openfoam_load = "\n".join(load_lines) if load_lines else ""
 
     dir_setup_and_cleanup = """\

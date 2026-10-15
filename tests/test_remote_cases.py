@@ -10,11 +10,11 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-from pathlib import Path
 import runpy
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 

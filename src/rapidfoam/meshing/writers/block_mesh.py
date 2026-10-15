@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from rapidfoam.core.faces import patch_role
+from rapidfoam.core.foam import FOOTER, foam_header
 from rapidfoam.meshing.context import MeshContext
 from rapidfoam.meshing.plan import MeshPlan
-from rapidfoam.core.foam import FOOTER, foam_header
 
 log = logging.getLogger(__name__)
 
