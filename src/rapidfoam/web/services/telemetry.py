@@ -114,6 +114,61 @@ def parse_solver_info_text(content: str) -> dict[float, dict[str, float]]:
 
 
 
+def parse_solver_equations(content: str) -> dict[str, dict[str, Any]]:
+    """Per-equation diagnostics from the last ``solverInfo.dat`` row.
+
+    Returns ``{equation: {final, iters, converged, solver}}`` for Ux/Uy/Uz/k/
+    omega/p — the final residual, linear iterations, convergence flag and
+    solver name the residuals series drops. Empty when the table is absent.
+    """
+    headers: list[str] = []
+    last: list[str] = []
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            if "Time" in line:
+                headers = line.strip("# \t\r\n").split()
+            continue
+        if headers:
+            parts = line.split()
+            if len(parts) >= len(headers):
+                last = parts
+    if not headers or not last:
+        return {}
+    row = dict(zip(headers, last))
+
+    def num(key: str) -> Optional[float]:
+        try:
+            value = float(row[key])
+        except (KeyError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    equations: dict[str, dict[str, Any]] = {}
+    for equation, final_key, iters_key, converged_key, solver_key in (
+        ("Ux", "Ux_final", "Ux_iters", "U_converged", "U_solver"),
+        ("Uy", "Uy_final", "Uy_iters", "U_converged", "U_solver"),
+        ("Uz", "Uz_final", "Uz_iters", "U_converged", "U_solver"),
+        ("k", "k_final", "k_iters", "k_converged", "k_solver"),
+        ("omega", "omega_final", "omega_iters", "omega_converged", "omega_solver"),
+        ("p", "p_final", "p_iters", "p_converged", "p_solver"),
+    ):
+        final = num(final_key)
+        iters = num(iters_key)
+        if final is None and iters is None:
+            continue
+        equations[equation] = {
+            "final": final,
+            "iters": int(iters) if iters is not None else None,
+            "converged": str(row.get(converged_key, "")).lower() == "true",
+            "solver": row.get(solver_key) or None,
+        }
+    return equations
+
+
+
 _SOLVE_ITERS_RE = re.compile(r"Solving for (\w+),.*?No Iterations\s+(\d+)")
 _CONTINUITY_RE = re.compile(
     r"time step continuity errors\s*:.*?global\s*=\s*([0-9.eE+\-]+).*?cumulative\s*=\s*([0-9.eE+\-]+)"

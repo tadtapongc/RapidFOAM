@@ -37,11 +37,14 @@ class TelemetryCharts {
     this.residualsChart = null;
     this.coefficientsChart = null;
     this.componentsChart = null;
+    this.componentHistoryChart = null;
+    this._componentHistorySpecs = [];
     this.solverHealthChart = null;
     this.initForcesChart();
     this.initResidualsChart();
     this.initCoefficientsChart();
     this.initComponentsChart();
+    this.initComponentHistoryChart();
     this.initSolverHealthChart();
   }
 
@@ -406,6 +409,92 @@ class TelemetryCharts {
     });
   }
 
+  initComponentHistoryChart() {
+    const ctx = document.getElementById('chart-component-history');
+    if (!ctx || typeof Chart === 'undefined') return;
+
+    // force.dat and moment.dat share the same column names (pressure_x ...), so
+    // each dataset carries its source explicitly. Force pressure per axis shows
+    // by default; the rest are one legend click away.
+    const specs = [
+      ['force', 'pressure_x', 'F pressure x', '#00d2ff', false],
+      ['force', 'pressure_y', 'F pressure y', '#22d3ee', false],
+      ['force', 'pressure_z', 'F pressure z', '#38bdf8', false],
+      ['force', 'viscous_x', 'F viscous x', '#a855f7', true],
+      ['force', 'viscous_y', 'F viscous y', '#c084fc', true],
+      ['force', 'viscous_z', 'F viscous z', '#d8b4fe', true],
+      ['moment', 'pressure_x', 'M pressure x', '#f59e0b', true],
+      ['moment', 'pressure_y', 'M pressure y', '#fbbf24', true],
+      ['moment', 'pressure_z', 'M pressure z', '#fcd34d', true],
+      ['moment', 'viscous_x', 'M viscous x', '#10b981', true],
+      ['moment', 'viscous_y', 'M viscous y', '#34d399', true],
+      ['moment', 'viscous_z', 'M viscous z', '#6ee7b7', true],
+    ];
+    this._componentHistorySpecs = specs;
+
+    this.componentHistoryChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: specs.map(([, , label, color, hidden]) => ({
+          label,
+          data: [],
+          borderColor: color,
+          borderWidth: 1.6,
+          pointRadius: 0,
+          tension: 0.2,
+          hidden,
+        })),
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: {
+              color: '#94a3b8',
+              font: { family: "'Inter', sans-serif", size: 10, weight: '500' },
+              boxWidth: 10,
+              padding: 8,
+              usePointStyle: true,
+              pointStyle: 'circle',
+            },
+          },
+          tooltip: {
+            backgroundColor: '#0c0e14',
+            titleColor: '#38bdf8',
+            bodyColor: '#f1f5f9',
+            borderColor: '#252c3c',
+            borderWidth: 1,
+            padding: 10,
+            cornerRadius: 6,
+            callbacks: {
+              label: (context) => {
+                const label = context.dataset.label || '';
+                const val = context.parsed.y;
+                return `${label}: ${val !== null && val !== undefined ? val.toFixed(2) : '--'}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            title: { display: true, text: 'Iteration', color: '#64748b', font: { size: 10 } },
+            ticks: { color: '#64748b', maxTicksLimit: 10, font: { family: "'JetBrains Mono', monospace", size: 10 } },
+            grid: { color: '#161b26' },
+          },
+          y: {
+            title: { display: true, text: 'Contribution [N] / [N·m]', color: '#94a3b8', font: { size: 10 } },
+            ticks: { color: '#64748b', font: { family: "'JetBrains Mono', monospace", size: 10 } },
+            grid: { color: '#161b26' },
+          },
+        },
+      },
+    });
+  }
+
   initSolverHealthChart() {
     const ctx = document.getElementById('chart-solver-health');
     if (!ctx || typeof Chart === 'undefined') return;
@@ -595,6 +684,31 @@ class TelemetryCharts {
     this.componentsChart.update('none');
   }
 
+  updateComponentHistory(force, moment) {
+    if (!this.componentHistoryChart) return;
+    const forceSeries = (force && force.series) || {};
+    const momentSeries = (moment && moment.series) || {};
+    const iterations = (force && force.iterations) || (moment && moment.iterations) || [];
+    this.componentHistoryChart.data.labels = iterations;
+
+    const specs = this._componentHistorySpecs || [];
+    this.componentHistoryChart.data.datasets.forEach((ds, index) => {
+      const spec = specs[index];
+      if (!spec) {
+        ds.data = [];
+        return;
+      }
+      const [source, key] = spec;
+      const values = source === 'moment' ? momentSeries[key] : forceSeries[key];
+      // Moment series ride their own iteration axis; only align them when the
+      // length matches the shared labels, else leave the dataset empty.
+      ds.data = Array.isArray(values) && (source === 'force' || values.length === iterations.length)
+        ? values
+        : [];
+    });
+    this.componentHistoryChart.update('none');
+  }
+
   clear() {
     if (this.forcesChart) {
       this.forcesChart.data.labels = [];
@@ -622,6 +736,13 @@ class TelemetryCharts {
         ds.data = [];
       });
       this.componentsChart.update('none');
+    }
+    if (this.componentHistoryChart) {
+      this.componentHistoryChart.data.labels = [];
+      this.componentHistoryChart.data.datasets.forEach((ds) => {
+        ds.data = [];
+      });
+      this.componentHistoryChart.update('none');
     }
     if (this.solverHealthChart) {
       this.solverHealthChart.data.labels = [];

@@ -74,6 +74,7 @@ from rapidfoam.web.services.telemetry import (
     _read_text_files,
     _read_text_tail_lines,
     _read_yplus_texts,
+    parse_solver_equations,
     remote_telemetry_status,
     should_read_remote,
     _shift_moment_columns,
@@ -659,6 +660,7 @@ async def api_telemetry_solver(case_name: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Invalid case_name")
 
     content = ""
+    solverinfo_text = ""
     local_case = PROJECT_ROOT / "cases" / case_name
     if should_read_remote(case_name, local_case):
         bundle = await _read_remote_telemetry(case_name)
@@ -666,17 +668,27 @@ async def api_telemetry_solver(case_name: str) -> dict[str, Any]:
             (value for path, value in bundle.items() if path.endswith("/log.simpleFoam")),
             "",
         )
+        solverinfo_text = "\n".join(_sorted_segments(bundle, "/solverInfo.dat"))
 
     if not content and local_case.is_dir():
         local_log = local_case / "log.simpleFoam"
         if local_log.is_file():
             content = _read_text_tail_lines(local_log)
+    if not solverinfo_text and local_case.is_dir():
+        residual_files = find_residual_files(local_case)
+        if residual_files:
+            solverinfo_text = "\n".join(_read_text_files(residual_files))
+
+    # Per-equation final residual / iters / converged flag / solver name from
+    # solverInfo.dat — the residuals series only carries initial residuals.
+    equations = parse_solver_equations(solverinfo_text) if solverinfo_text else {}
 
     rows = parse_solver_diagnostics_from_log(content) if content else {}
     if not rows:
         return {
             "has_data": False,
             "case_name": case_name,
+            "equations": equations,
             "message": f"No solver diagnostics found for case '{case_name}'.",
         }
 
@@ -727,6 +739,7 @@ async def api_telemetry_solver(case_name: str) -> dict[str, Any]:
         "eta_seconds": round(eta_seconds, 1) if eta_seconds is not None else None,
         "latest_continuity_global": latest_continuity,
         "latest_linear_iters": linear_iters[-1],
+        "equations": equations,
         "series": {
             "iterations": [iterations[i] for i in sub_indices],
             "continuity_global": [continuity_global[i] for i in sub_indices],

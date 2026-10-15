@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offsets, fails safe to "unavailable") and the remote telemetry bundle fetches
   the field base64-encoded. New cases get the metric; older cases show it as
   unavailable until re-meshed.
+- **Studio telemetry surfacing**: data the backend already parsed but never
+  showed is now rendered — the **per-equation solver table** (final residual,
+  linear iterations, solver name, converged flag from `solverInfo.dat`), the
+  **pressure-vs-viscous component history** chart (per-iteration force and
+  moment contributions, the moments one legend click away), the per-patch
+  **first-layer coverage** column plus the layer **histogram** and realised
+  stack thickness in mm, and the quantitative `surfaceCheck` stats line
+  (vertices, triangle quality, edge-length range).
 - **Divergence guard**: the background convergence monitor now also detects
   blow-ups — when a force exceeds 50x the median of its trailing 50 iterations
   it writes `stopAt writeNow;` and lets the solver exit cleanly. Measured on the

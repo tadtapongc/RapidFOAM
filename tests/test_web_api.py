@@ -1398,6 +1398,11 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(res["components"]["force"]["latest"]["total"], [10.0, -200.0, -60.0])
         self.assertEqual(res["components"]["force"]["latest"]["viscous"], [1.0, -5.0, -10.0])
         self.assertEqual(res["components"]["moment"]["latest"]["total"], [5.0, -20.0, -8.0])
+        # Per-iteration pressure/viscous histories feed the component-history chart.
+        self.assertEqual(len(res["components"]["force"]["iterations"]), 24)
+        self.assertEqual(res["components"]["force"]["series"]["pressure_z"], [-50.0] * 24)
+        self.assertEqual(res["components"]["force"]["series"]["viscous_x"], [1.0] * 24)
+        self.assertEqual(res["components"]["moment"]["series"]["pressure_x"], [4.0] * 24)
         self.assertAlmostEqual(res["reference"]["velocity"], 20.0)
         self.assertAlmostEqual(res["reference"]["Aref"], 0.5)
 
@@ -1637,6 +1642,24 @@ class TestWebAPI(unittest.TestCase):
             lines.append(f"ExecutionTime = {it * 10} s  ClockTime = {it * 12} s\n")
         (case_dir / "log.simpleFoam").write_text("".join(lines))
 
+        # solverInfo.dat carries the per-equation final residual / iters / flag
+        # the solver endpoint surfaces as the equations table.
+        res_dir = case_dir / "postProcessing" / "residuals" / "0"
+        res_dir.mkdir(parents=True, exist_ok=True)
+        (res_dir / "solverInfo.dat").write_text(
+            "# Time\tU_solver\tUx_initial\tUx_final\tUx_iters\tUy_initial\tUy_final\tUy_iters\t"
+            "Uz_initial\tUz_final\tUz_iters\tU_converged\tk_solver\tk_initial\tk_final\tk_iters\t"
+            "k_converged\tomega_solver\tomega_initial\tomega_final\tomega_iters\tomega_converged\t"
+            "p_solver\tp_initial\tp_final\tp_iters\tp_converged\n"
+            "1\tDILUPBiCGStab\t1e-2\t1e-4\t1\t1e-2\t1e-4\t1\t1e-2\t1e-4\t1\tfalse\t"
+            "DILUPBiCGStab\t1e-3\t1e-5\t1\ttrue\tDILUPBiCGStab\t1e-3\t1e-5\t1\ttrue\t"
+            "GAMG\t1e-1\t1e-3\t8\ttrue\n"
+            "2\tDILUPBiCGStab\t1e-2\t1e-5\t2\t1e-2\t1e-5\t2\t1e-2\t1e-5\t2\ttrue\t"
+            "DILUPBiCGStab\t1e-3\t1e-6\t1\ttrue\tDILUPBiCGStab\t1e-3\t1e-6\t1\ttrue\t"
+            "GAMG\t1e-1\t1e-4\t5\ttrue\n",
+            encoding="utf-8",
+        )
+
         res = asyncio.run(api_telemetry_solver(case_name))
         self.assertTrue(res["has_data"])
         self.assertEqual(res["total_iterations"], 3)
@@ -1648,6 +1671,15 @@ class TestWebAPI(unittest.TestCase):
         self.assertAlmostEqual(res["eta_seconds"], 170.0, places=1)
         self.assertEqual(len(res["series"]["iterations"]), 3)
         self.assertEqual(len(res["series"]["continuity_global"]), 3)
+        # Last solverInfo row wins; strings/flags are parsed, not dropped.
+        equations = res["equations"]
+        self.assertEqual(equations["p"]["iters"], 5)
+        self.assertAlmostEqual(equations["p"]["final"], 1e-4)
+        self.assertEqual(equations["p"]["solver"], "GAMG")
+        self.assertTrue(equations["p"]["converged"])
+        self.assertEqual(equations["Ux"]["iters"], 2)
+        self.assertTrue(equations["Ux"]["converged"])
+        self.assertEqual(equations["omega"]["solver"], "DILUPBiCGStab")
 
     def test_parse_solver_diagnostics_restart(self):
         """A restarted run replaces the previous trajectory in the diagnostics parser."""

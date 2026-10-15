@@ -1607,3 +1607,93 @@ test('renderMeshQuality omits the first-layer note when unavailable', async () =
   const note = app._window.document.getElementById('mesh-quality-note-yplus').textContent;
   assert.ok(!note.includes('First layer'), note);
 });
+
+test('renderMeshQuality surfaces per-patch first-layer coverage and thickness', async () => {
+  const app = await makeApp(MESH_PANEL_BODY);
+  app.renderMeshQuality({
+    stats: { cells: 100 },
+    target_layers: 8,
+    layers: { body: { layers: 4, coverage: 0.5, thickness_fraction: 0.33, overall_thickness: 0.0063 } },
+    y_plus: { available: false },
+    first_layer: {
+      available: true,
+      body: { faces: 1000, coverage: 0.58, histogram: { 0: 420, 8: 580 } },
+      patches: { body: { faces: 1000, coverage: 0.58 } },
+    },
+    note: 'mesh quality OK',
+  });
+  const html = app._window.document.getElementById('mesh-layer-tbody').innerHTML;
+  assert.ok(html.includes('58%'), html);
+  assert.ok(html.includes('6.3mm'), html);
+  const note = app._window.document.getElementById('mesh-quality-note-yplus').textContent;
+  assert.ok(note.includes('hist 0:42% 8:58%'), note);
+});
+
+// ---------------------------------------------- Solver per-equation diagnostics
+
+test('renderSolverHealth renders the per-equation table', async () => {
+  const app = await makeApp('<table><tbody id="solver-equations-tbody"></tbody></table>');
+  app.renderSolverHealth({
+    latest_continuity_global: 1e-5,
+    latest_linear_iters: 13,
+    equations: {
+      Ux: { final: 1e-5, iters: 2, converged: true, solver: 'DILUPBiCGStab' },
+      p: { final: 1e-4, iters: 5, converged: false, solver: 'GAMG' },
+    },
+  });
+  const html = app._window.document.getElementById('solver-equations-tbody').innerHTML;
+  assert.ok(html.includes('DILUPBiCGStab'), html);
+  assert.ok(html.includes('GAMG'), html);
+  assert.ok(html.includes('1.00e-4'), html);
+  assert.ok(html.includes('OK'), html);
+  assert.ok(html.includes('CAUTION'), html);
+});
+
+test('renderSolverHealth shows an empty state without equations', async () => {
+  const app = await makeApp('<table><tbody id="solver-equations-tbody"></tbody></table>');
+  app.renderSolverHealth({ latest_continuity_global: null, latest_linear_iters: null });
+  const html = app._window.document.getElementById('solver-equations-tbody').innerHTML;
+  assert.ok(html.includes('No per-equation data'), html);
+});
+
+// ---------------------------------------------- Surface quantitative stats
+
+test('renderSurfaceQuality shows the quantitative stats line', async () => {
+  const app = await makeApp('<div id="surface-stats-note"></div>');
+  app.renderSurfaceQuality({
+    stats: {
+      triangles: 100, vertices: 50,
+      min_quality: 0.35, max_quality: 1.0,
+      min_edge: 0.0012, max_edge: 0.045,
+    },
+    closed: true,
+    note: 'surface integrity OK',
+  });
+  const text = app._window.document.getElementById('surface-stats-note').textContent;
+  assert.ok(text.includes('vertices 50'), text);
+  assert.ok(text.includes('triangle quality 0.350–1.000'), text);
+  assert.ok(text.includes('edges 1.20–45.0 mm'), text);
+});
+
+// ---------------------------------------------- Component history chart
+
+test('updateComponentHistory maps force and moment series onto datasets', async () => {
+  const dom = createDom('<canvas id="chart-component-history"></canvas>');
+  const window = await loadAppScripts(dom);
+  window.Chart = function Chart(ctx, config) {
+    return { data: config.data, update() {}, resize() {}, destroy() {} };
+  };
+  const charts = new window.TelemetryCharts();
+  charts.updateComponentHistory(
+    { iterations: [1, 2], series: { pressure_x: [1, 2] } },
+    { iterations: [1, 2], series: { pressure_x: [5, 6], viscous_x: [7, 8] } },
+  );
+  const chart = charts.componentHistoryChart;
+  assert.deepEqual(chart.data.labels, [1, 2]);
+  const byLabel = Object.fromEntries(chart.data.datasets.map((d) => [d.label, d.data]));
+  assert.deepEqual(byLabel['F pressure x'], [1, 2]);
+  assert.deepEqual(byLabel['M pressure x'], [5, 6]);
+  assert.deepEqual(byLabel['M viscous x'], [7, 8]);
+  // Not provided: left empty (cross-realm array, compare by length).
+  assert.equal(byLabel['F pressure y'].length, 0);
+});

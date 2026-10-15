@@ -576,11 +576,14 @@ markers), `read_remote_bundle`, connect (key data → key_path → password → 
   has checkboxes `cfg-field-wall-shear`, `cfg-field-yplus`, `cfg-field-minmax`,
   `cfg-field-surfacevalue`, `cfg-field-vorticity`. Boundary-layer controls include
   `cfg-override-layer-twopass` and `cfg-override-layer-yplusfit`.
-- Telemetry tab: KPIs, reference editor, 2D/3D aero views, four charts, analysis tables
+- Telemetry tab: KPIs, reference editor, 2D/3D aero views, five charts, analysis tables
   (coefficient summary, force/moment breakdown, **Build-up by Component**
-  `#per-part-table`/`#per-part-tbody`), solver health, surface integrity, mesh quality (with
-  the layer table columns `Patch | Layers | Coverage | Thickness | Realised y+ | y+ range
-  (min–max)`), log console.
+  `#per-part-table`/`#per-part-tbody`), solver health (incl. the **per-equation table**
+  `#solver-equations-tbody` — final residual / iters / solver / converged flag from
+  `solverInfo.dat`), surface integrity (incl. the quantitative stats line
+  `#surface-stats-note`: vertices, triangle quality, edge-length range), mesh quality (layer
+  table columns `Patch | Layers | Coverage | First layer | Thickness | Realised y+ | y+ range
+  (min–max)`, with the first-layer histogram in the note), log console.
 - Archive tab; modals (SSH, confirm/rename, download overlay); toast container.
 
 ### 12.2 `js/app.js` (4355) — `CFDApp`
@@ -604,8 +607,10 @@ markers), `read_remote_bundle`, connect (key data → key_path → password → 
 - `STLViewer`: `available`/`disposed` flags, camera far & `maxDistance` scaled from bounds,
   `updateFlowArrow` disposes the previous arrow, `updateDomainBox(null,null)` clears state,
   `dispose()` cancels RAF/listeners/observer/renderer.
-- `TelemetryCharts`: forces/residuals/coefficients/components/solver-health charts,
-  `convergenceBandPlugin` (±0.5% bands), `computeRollingAverage`.
+- `TelemetryCharts`: forces/residuals/coefficients/components/**component-history**/solver-health
+  charts, `convergenceBandPlugin` (±0.5% bands), `computeRollingAverage`. The component-history
+  chart carries `_componentHistorySpecs` (source force|moment + column key) because force.dat
+  and moment.dat share column names.
 - `Aero2DView` (cached STL silhouette, CoP, drag/downforce/pitch) and `AeroVectorLayer`
   (force/moment vectors on the viewer).
 

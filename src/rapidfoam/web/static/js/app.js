@@ -3599,6 +3599,17 @@ class CFDApp {
             } else {
               this.charts.updateComponents(null, null);
             }
+            // Per-iteration pressure/viscous histories (force and moment).
+            const historyOverlay = document.getElementById('component-history-empty-overlay');
+            const historyAvailable = !!(
+              (data.components && data.components.force && data.components.force.series)
+              || (data.components && data.components.moment && data.components.moment.series)
+            );
+            if (historyOverlay) historyOverlay.style.display = historyAvailable ? 'none' : 'flex';
+            this.charts.updateComponentHistory(
+              data.components ? data.components.force : null,
+              data.components ? data.components.moment : null,
+            );
           }
         } else {
           // No forces data yet (case generated or meshed but simpleFoam not executed)
@@ -3786,6 +3797,34 @@ class CFDApp {
       const linear = data.latest_linear_iters;
       badge.textContent = linear !== undefined && linear !== null ? `${health} · ${linear} lin iters` : health;
     }
+
+    // Per-equation diagnostics from solverInfo.dat: final residual, linear
+    // iterations, solver name and convergence flag for each equation.
+    const tbody = document.getElementById('solver-equations-tbody');
+    if (tbody) {
+      const equations = data.equations || {};
+      const names = Object.keys(equations);
+      if (!names.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No per-equation data</td></tr>';
+      } else {
+        const num = (value) => (
+          value === null || value === undefined || !isFinite(Number(value)) ? null : Number(value)
+        );
+        tbody.innerHTML = names.map((name) => {
+          const info = equations[name] || {};
+          const final = num(info.final);
+          const iters = num(info.iters);
+          const converged = info.converged === true;
+          const status = converged ? 'OK' : 'CAUTION';
+          const cls = converged ? 'mesh-metric-pass' : 'mesh-metric-usable';
+          return `<tr><td>${this.escapeHtml(name)}</td>`
+            + `<td class="monospace">${final === null ? '--' : final.toExponential(2)}</td>`
+            + `<td class="monospace">${iters === null ? '--' : iters}</td>`
+            + `<td class="monospace text-muted">${this.escapeHtml(info.solver || '--')}</td>`
+            + `<td class="${cls}">${status}</td></tr>`;
+        }).join('');
+      }
+    }
   }
 
   resetSolverHealth() {
@@ -3793,6 +3832,10 @@ class CFDApp {
       this.setValText(id, '--');
     });
     this.setValText('solver-health-badge', '--');
+    const tbody = document.getElementById('solver-equations-tbody');
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No per-equation data</td></tr>';
+    }
     if (this.charts && this.charts.solverHealthChart) {
       this.charts.solverHealthChart.data.labels = [];
       this.charts.solverHealthChart.data.datasets.forEach((ds) => { ds.data = []; });
@@ -3858,11 +3901,29 @@ class CFDApp {
     }
 
     this.setValText('surface-quality-note', data.note || '');
+
+    // Quantitative stats the verdict does not quote: mesh size, triangle
+    // quality and the edge-length range (all from the surfaceCheck log).
+    const statBits = [];
+    const vertices = num(stats.vertices);
+    if (vertices !== null) statBits.push(`vertices ${vertices.toLocaleString()}`);
+    const qMin = num(stats.min_quality);
+    const qMax = num(stats.max_quality);
+    if (qMin !== null && qMax !== null) {
+      statBits.push(`triangle quality ${qMin.toFixed(3)}–${qMax.toFixed(3)}`);
+    }
+    const eMin = num(stats.min_edge);
+    const eMax = num(stats.max_edge);
+    if (eMin !== null && eMax !== null) {
+      statBits.push(`edges ${(eMin * 1000).toFixed(2)}–${(eMax * 1000).toFixed(1)} mm`);
+    }
+    this.setValText('surface-stats-note', statBits.join('  ·  '));
   }
 
   resetSurfaceQuality(message) {
     ['surface-triangles', 'surface-closed', 'surface-illegal', 'surface-self', 'surface-parts']
       .forEach((id) => { this.setValText(id, '--'); });
+    this.setValText('surface-stats-note', '');
     const badge = document.getElementById('surface-quality-badge');
     if (badge) {
       badge.className = 'badge badge-subtle';
@@ -3948,12 +4009,13 @@ class CFDApp {
     // Boundary layers: achieved / target + coverage + realised y+.
     const yPlus = data.y_plus || {};
     const yPlusPatches = yPlus.patches || {};
+    const firstLayerPatches = (data.first_layer && data.first_layer.patches) || {};
     const layerTbody = document.getElementById('mesh-layer-tbody');
     if (layerTbody) {
       const layers = data.layers || {};
       const patches = Object.keys(layers).sort();
       if (!patches.length) {
-        layerTbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No layer data</td></tr>';
+        layerTbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No layer data</td></tr>';
       } else {
         const target = (data.target_layers !== null && data.target_layers !== undefined)
           ? `/${data.target_layers}` : '';
@@ -3962,6 +4024,7 @@ class CFDApp {
           const achieved = num(info.layers);
           const coverage = num(info.coverage);
           const thickness = num(info.thickness_fraction);
+          const thicknessM = num(info.overall_thickness);
           const yp = yPlusPatches[patch] || {};
           const ypAvg = num(yp.average);
           let ypText = '--';
@@ -3973,6 +4036,19 @@ class CFDApp {
           }
           let thCls = 'monospace';
           if (thickness !== null && thickness < 0.7) thCls += ' mesh-metric-usable';
+          const thText = thickness === null
+            ? '--'
+            : `${Math.round(thickness * 100)}%${thicknessM === null ? '' : ` (${(thicknessM * 1000).toFixed(1)}mm)`}`;
+          // First-layer coverage: faces with >= 1 prism layer (nSurfaceLayers).
+          const firstInfo = firstLayerPatches[patch] || {};
+          const firstCov = num(firstInfo.coverage);
+          let firstText = '--';
+          let firstCls = 'monospace';
+          if (firstCov !== null) {
+            firstText = `${Math.round(firstCov * 100)}%`;
+            if (firstCov < 0.5) firstCls += ' mesh-metric-fail';
+            else if (firstCov < 0.9) firstCls += ' mesh-metric-usable';
+          }
           const ypMin = num(yp.min);
           const ypMax = num(yp.max);
           const ypRange = (ypMin !== null && ypMax !== null)
@@ -3980,7 +4056,8 @@ class CFDApp {
           return `<tr><td>${this.escapeHtml(patch)}</td>`
             + `<td class="monospace">${achieved === null ? '--' : achieved}${target}</td>`
             + `<td class="monospace">${coverage === null ? '--' : `${Math.round(coverage * 100)}%`}</td>`
-            + `<td class="${thCls}">${thickness === null ? '--' : `${Math.round(thickness * 100)}%`}</td>`
+            + `<td class="${firstCls}">${firstText}</td>`
+            + `<td class="${thCls}">${thText}</td>`
             + `<td class="${ypCls}">${ypText}</td>`
             + `<td class="monospace">${ypRange}</td></tr>`;
         }).join('');
@@ -4002,10 +4079,20 @@ class CFDApp {
     const firstLayer = data.first_layer || {};
     const firstBody = firstLayer.body || {};
     const firstCoverage = num(firstBody.coverage);
-    const firstNote = (firstLayer.available && firstCoverage !== null)
-      ? `First layer: ${Math.round(firstCoverage * 100)}% of `
+    let firstNote = '';
+    if (firstLayer.available && firstCoverage !== null) {
+      const histogram = firstBody.histogram || {};
+      const faces = Number(firstBody.faces || 0) || 1;
+      const hist = Object.keys(histogram)
+        .map((key) => [Number(key), histogram[key]])
+        .filter(([, count]) => count > 0)
+        .sort((a, b) => a[0] - b[0])
+        .map(([layers, count]) => `${layers}:${Math.round((count / faces) * 100)}%`)
+        .join(' ');
+      firstNote = `First layer: ${Math.round(firstCoverage * 100)}% of `
         + `${Number(firstBody.faces || 0).toLocaleString()} wetted faces carry a prism layer`
-      : '';
+        + (hist ? ` (hist ${hist})` : '');
+    }
     const fieldNote = fieldParts.length ? `Field diagnostics: ${fieldParts.join(' | ')}` : '';
     this.setValText(
       'mesh-quality-note-yplus',

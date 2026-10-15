@@ -1258,6 +1258,23 @@
           </div>
         </div>
 
+        <div class="panel" data-help="components">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h3>Component History</h3>
+              <span class="panel-subtitle">Pressure vs viscous contributions over iterations</span>
+            </div>
+          </div>
+          <div class="chart-container" id="chart-component-history-container">
+            <canvas id="chart-component-history"></canvas>
+            <div class="chart-empty-overlay" id="component-history-empty-overlay" style="display: none;">
+              <div class="empty-icon">🧩</div>
+              <div class="empty-title">No Component History</div>
+              <div class="empty-desc">Per-iteration pressure/viscous breakdown from force.dat / moment.dat.</div>
+            </div>
+          </div>
+        </div>
+
         <div class="panel" data-help="residuals">
           <div class="panel-header">
             <div class="panel-title-group">
@@ -1414,6 +1431,16 @@
               <div class="empty-desc">Continuity, linear iterations, and timing appear once log.simpleFoam has solver output.</div>
             </div>
           </div>
+          <div class="table-responsive">
+            <table class="data-table mini-table" id="solver-equations-table">
+              <thead>
+                <tr><th>Equation</th><th>Final residual</th><th>Iters</th><th>Solver</th><th>Status</th></tr>
+              </thead>
+              <tbody id="solver-equations-tbody">
+                <tr><td colspan="5" class="text-center text-muted">No per-equation data</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -1468,6 +1495,7 @@
             </div>
           </div>
 
+          <p class="mesh-quality-note" id="surface-stats-note"></p>
           <p class="mesh-quality-note" id="surface-quality-note">No surface report yet.</p>
         </div>
       </div>
@@ -1523,10 +1551,10 @@
               <div class="table-responsive">
                 <table class="data-table mini-table" id="mesh-layer-table">
                   <thead>
-                    <tr><th>Patch</th><th>Layers</th><th>Coverage</th><th>Thickness</th><th>Realised y+</th><th>y+ range (min&ndash;max)</th></tr>
+                    <tr><th>Patch</th><th>Layers</th><th>Coverage</th><th>First layer</th><th>Thickness</th><th>Realised y+</th><th>y+ range (min&ndash;max)</th></tr>
                   </thead>
                   <tbody id="mesh-layer-tbody">
-                    <tr><td colspan="5" class="text-center text-muted">No layer data</td></tr>
+                    <tr><td colspan="7" class="text-center text-muted">No layer data</td></tr>
                   </tbody>
                 </table>
               </div>
