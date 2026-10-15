@@ -231,7 +231,7 @@ class CFDApp {
         },
         layers: {
           _n_layers: 8,
-          _expansion_ratio: 1.2,
+          _expansion_ratio: 1.1,
           _first_layer_thickness: 0.3,
           _min_thickness: 0.05,
         },
@@ -1286,8 +1286,8 @@ class CFDApp {
       if (base) fidelity = base;
     }
     const fallback = {
-      fast: { base_cell: 'L/20', surf_min: '3', surf_max: '4', edge: '5', nearwake: '2', farwake: '1', featurecells: '3', maxsurflevel: '6', endtime: '800', writeint: '400', n_layers: '5', expansion: '1.20', yplus: '50' },
-      standard: { base_cell: 'L/30', surf_min: '4', surf_max: '5', edge: '6', nearwake: '3', farwake: '1', featurecells: '4', maxsurflevel: '7', endtime: '1500', writeint: '500', n_layers: '8', expansion: '1.20', yplus: '30' },
+      fast: { base_cell: 'L/20', surf_min: '3', surf_max: '4', edge: '5', nearwake: '2', farwake: '1', featurecells: '3', maxsurflevel: '6', endtime: '800', writeint: '400', n_layers: '5', expansion: '1.15', yplus: '50' },
+      standard: { base_cell: 'L/30', surf_min: '4', surf_max: '5', edge: '6', nearwake: '3', farwake: '1', featurecells: '4', maxsurflevel: '7', endtime: '1500', writeint: '500', n_layers: '8', expansion: '1.10', yplus: '30' },
       fine: { base_cell: 'L/37.5', surf_min: '4', surf_max: '5', edge: '7', nearwake: '4', farwake: '2', featurecells: '5', maxsurflevel: '8', endtime: '2500', writeint: '500', n_layers: '20', expansion: '1.10', yplus: '1' },
     };
     const p = { ...(fallback[fidelity] || fallback.standard) };
