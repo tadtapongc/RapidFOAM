@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
 from rapidfoam.config import effective_config
+from rapidfoam.core.axes import axis_index_sign
 
 _SYMMETRY_PATCH_FALLBACK = "symmetry"
 
@@ -31,6 +33,40 @@ def _read_json_object(path: Path) -> Optional[dict[str, Any]]:
     except (OSError, ValueError, TypeError):
         return None
     return raw if isinstance(raw, dict) else None
+
+
+@dataclass(frozen=True)
+class AxisConfig:
+    """Resolved drag/downforce reporting axes (typed accessor for readers)."""
+
+    drag_index: int
+    drag_sign: int
+    downforce_index: int
+    downforce_sign: int
+    drag_axis: str
+    downforce_axis: str
+
+    def as_tuple(self) -> tuple[int, int, int, int, str, str]:
+        """Legacy 6-tuple (drag_idx, drag_sign, df_idx, df_sign, drag, df)."""
+        return (self.drag_index, self.drag_sign, self.downforce_index,
+                self.downforce_sign, self.drag_axis, self.downforce_axis)
+
+
+def axis_config(cfg: dict[str, Any] | None) -> AxisConfig:
+    """Resolve the reporting axes from an (effective) config mapping."""
+    drag_axis = "-z"
+    downforce_axis = "-y"
+    if isinstance(cfg, dict):
+        outputs = cfg.get("outputs", {})
+        if not isinstance(outputs, dict):
+            outputs = {}
+        drag_axis = outputs.get("drag_axis") or cfg.get("drag_axis") or drag_axis
+        downforce_axis = (
+            outputs.get("downforce_axis") or cfg.get("downforce_axis") or downforce_axis
+        )
+    drag_idx, drag_sign = axis_index_sign(drag_axis)
+    df_idx, df_sign = axis_index_sign(downforce_axis)
+    return AxisConfig(drag_idx, drag_sign, df_idx, df_sign, drag_axis, downforce_axis)
 
 
 def read_case_config(
@@ -258,6 +294,8 @@ def surface_policy(cfg: dict[str, Any] | None) -> dict[str, Any]:
 
 
 __all__ = [
+    "AxisConfig",
+    "axis_config",
     "read_case_config",
     "has_symmetry",
     "has_symmetry_for_case",

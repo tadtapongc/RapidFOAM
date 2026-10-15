@@ -9,46 +9,32 @@ import statistics
 from pathlib import Path
 from typing import Optional
 
+from rapidfoam.config import effective_config
 from rapidfoam.core import caseconfig
 from rapidfoam.core.axes import AXIS_MAP as AXIS_MAP
-from rapidfoam.core.axes import axis_index_sign
+from rapidfoam.core.axes import axis_index_sign as axis_index_sign
 
 
 def axis_config_from_dict(cfg: dict | None) -> tuple[int, int, int, int, str, str]:
     """Resolve drag/downforce axes from an already-loaded config mapping."""
-    if isinstance(cfg, dict):
-        outputs = cfg.get("outputs", {})
-        drag_axis = outputs.get("drag_axis") or cfg.get("drag_axis", "-z")
-        df_axis = outputs.get("downforce_axis") or cfg.get("downforce_axis", "-y")
-    else:
-        drag_axis = "-z"
-        df_axis = "-y"
-    drag_idx, drag_sign = axis_index_sign(drag_axis)
-    df_idx, df_sign = axis_index_sign(df_axis)
-    return drag_idx, drag_sign, df_idx, df_sign, drag_axis, df_axis
+    return caseconfig.axis_config(cfg).as_tuple()
 
 
 def load_axis_config(
     config_path: str | None = None,
     case_dir: str | Path | None = None,
 ) -> tuple[int, int, int, int, str, str]:
-    """Load drag/downforce axis from config or case_config.json.
+    """Load drag/downforce axes through the shared effective-config reader.
+
+    Precedence follows :func:`rapidfoam.core.caseconfig.read_case_config`: the
+    generated ``<case>/case_config.json`` snapshot (with ``overrides`` already
+    applied) wins over an explicit path, so the force summary agrees with the
+    y+/mesh/surface verdicts. Returns the legacy 6-tuple.
 
     Returns:
         (drag_idx, drag_sign, df_idx, df_sign, drag_axis_str, df_axis_str)
     """
-    cfg = None
-    base = Path(case_dir) if case_dir else Path(".")
-    if config_path and Path(config_path).exists():
-        with open(config_path, encoding="utf-8") as f:
-            cfg = json.load(f)
-    elif (base / "case_config.json").exists():
-        with open(base / "case_config.json", encoding="utf-8") as f:
-            cfg = json.load(f)
-    elif Path("case_config.json").exists():
-        with open("case_config.json", encoding="utf-8") as f:
-            cfg = json.load(f)
-
+    cfg = caseconfig.read_case_config(config_path=config_path, case_dir=case_dir)
     return axis_config_from_dict(cfg)
 
 
@@ -72,7 +58,8 @@ def _load_case_configs(config_path: str | None, base: Path) -> list[dict]:
         seen.add(resolved)
         try:
             with open(path, encoding="utf-8") as f:
-                configs.append(json.load(f))
+                raw = json.load(f)
+            configs.append(effective_config(raw) if isinstance(raw, dict) else raw)
         except Exception:
             continue
     return configs

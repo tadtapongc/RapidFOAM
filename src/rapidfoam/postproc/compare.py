@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
+from rapidfoam.core import caseconfig
 from rapidfoam.postproc.forces import (
-    axis_index_sign,
     check_convergence,
     find_force_files,
     is_symmetry_case,
@@ -34,15 +33,8 @@ def compare_cases(cases_dir: Path | None = None) -> None:
 
     results = []
     for d in case_dirs:
-        with open(d / "case_config.json", encoding="utf-8") as f:
-            cfg = json.load(f)
-
-        # Support both config formats
-        outputs = cfg.get("outputs", {})
-        drag_axis = outputs.get("drag_axis") or cfg.get("drag_axis", "-z")
-        df_axis = outputs.get("downforce_axis") or cfg.get("downforce_axis", "-y")
-        di, ds = axis_index_sign(drag_axis)
-        fi, fs = axis_index_sign(df_axis)
+        cfg = caseconfig.read_case_config(case_dir=d)
+        axes = caseconfig.axis_config(cfg)
 
         files = find_force_files(d)
         if not files:
@@ -52,7 +44,9 @@ def compare_cases(cases_dir: Path | None = None) -> None:
             })
             continue
 
-        times, drags, dfs = read_forces(files, di, ds, fi, fs)
+        times, drags, dfs = read_forces(
+            files, axes.drag_index, axes.drag_sign, axes.downforce_index, axes.downforce_sign
+        )
         if not times:
             results.append({
                 "name": cfg.get("case_name", d.name),
