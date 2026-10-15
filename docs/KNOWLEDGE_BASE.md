@@ -269,7 +269,7 @@ default bounded margin; `layers.two_pass` on (bounded relaxed gate notice).
 
 ### 7.1 `meshing/presets.py` (201)
 `FIDELITY_PRESETS` (11-139): `fast`/`standard`/`fine` binding `cells_per_length` (20/30/37.5),
-`surface_level`, `edge_level`, `n_layers` (5/8/20), `expansion_ratio` (1.15/1.15/1.1),
+`surface_level`, `edge_level`, `n_layers` (5/8/20), `expansion_ratio` (1.15/1.1/1.1),
 `y_plus_target` (50/30/1), `ground_layers` (all False), `end_time`/`write_interval`,
 `maxGlobalCells`, `nCellsBetweenLevels` (3 in every preset — buffer cells smooth the
 level-jump transitions), `resolveFeatureAngle` (35/35/30), snap iters,
@@ -625,11 +625,19 @@ non-orthogonality and Bad verdicts. The single-pass `snappyHexMeshDict` main gat
 ### 13.4 Coverage-first, stability-bounded layer defaults
 The shipped defaults are tuned for boundary-layer coverage on real, complex geometry while
 bounding layer-induced skewness: `min_thickness_ratio 0.35` (keep partial stacks),
-`maxFaceThicknessRatio 0.5` (bounds thick-prism skewness; was 0.7), `expansion_ratio 1.15`
-(shorter stack), `nSmoothThickness 20` / `nRelaxIter 15` / `nLayerIter 75`, `two_pass true`.
+`maxFaceThicknessRatio 0.5` (bounds thick-prism skewness; was 0.7), `expansion_ratio 1.1`
+(shorter stack; measured on the full car: coverage 44% -> 50% at equal quality vs 1.15),
+`nSmoothThickness 20` / `nRelaxIter 15` / `nLayerIter 75`, `two_pass true`.
 `y_plus_fit` is deliberately **off**: it is a *target-matching* tool that raises
 `maxFaceThicknessRatio` only as needed to hit y+ and can lift the `min_thickness` floor, so it
 trades coverage for the target rather than raising it.
+
+Measured same-geometry campaign (full car, 9 runs): `expansion_ratio 1.1` is the only lever
+that lifted coverage (3.54 -> 4.00/8); `min_thickness_ratio` 0.30/0.25,
+`maxThicknessToMedialRatio` 0.4 and `maxFaceThicknessRatio` 0.8 were inert or worse, and
+`nBufferCellsNoExtrude`/`nSmoothDisplacement` doubled the first-layer y+ (62 vs 30) — keep
+them at 0. Full-stack coverage >= 50% removes a 2-4% downforce bias; the residual mesh-to-mesh
+scatter at standard fidelity is ~1.3%.
 
 ### 13.5 Interpreting the diagnostics
 - `p` and `wallShearStress` are **kinematic** (×ρ for Pa); `Cp = p / (½U∞²)`.

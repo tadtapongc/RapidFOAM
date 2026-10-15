@@ -312,7 +312,7 @@ neither and should be avoided. The presets follow that rule:
 | Preset | Regime | y+ target | Layers | Growth |
 | :--- | :--- | :--- | :--- | :--- |
 | `fast` | wall function | ~50 | 5 | 1.15 |
-| `standard` | wall function | ~30 | 8 | 1.15 |
+| `standard` | wall function | ~30 | 8 | 1.1 |
 | `fine` | wall-resolved | ~1 | 20 | 1.1 |
 
 A high y+ needs a *thick* first cell, which snappyHexMesh will not build next to

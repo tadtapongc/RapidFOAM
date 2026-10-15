@@ -73,6 +73,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of the stricter main gate, because the second pass is what actually
   bounds the final mesh. A designed 65° final mesh no longer reads as
   "violates <= 60"; single-pass cases keep the main gate.
+- **Layer-coverage campaign result (same-geometry A/B, 9 full-car runs)**:
+  `expansion_ratio` 1.15 → 1.1 in the `standard` preset is the only tested lever
+  that lifts full-stack layer coverage (44% → 50%) at unchanged quality
+  (skewness 4.94, non-ortho 65, y+ 32.1/404, no new failed checks). Falsified:
+  `min_thickness_ratio` 0.30/0.25 (no gain), `maxThicknessToMedialRatio` 0.4
+  (coverage *down*, y+ up), `maxFaceThicknessRatio` 0.8 (inert), and
+  `nBufferCellsNoExtrude`/`nSmoothDisplacement` (silently doubled the first-layer
+  y+ to 62 — keep both at 0). Measured acceptance criterion: full-stack coverage
+  ≥ 50% removes a 2–4% downforce bias; the residual mesh-to-mesh scatter at
+  standard fidelity is ~1.3%.
 
 ## [1.6.0] - 2026-09-29
 

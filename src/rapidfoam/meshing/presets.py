@@ -61,7 +61,9 @@ FIDELITY_PRESETS: dict[str, dict[str, Any]] = {
         "surface_level": [4, 5],       # 6.25mm bodywork, 3.125mm fine features
         "edge_level": 6,               # 1.56mm at sharp aero edges (wings/gurneys)
         "n_layers": 8,
-        "expansion_ratio": 1.15,
+        "expansion_ratio": 1.1,        # shorter stack (16.1mm vs 19.3mm at 1.15): measured on the
+                                       # full car, coverage 44% -> 50% at equal quality (first
+                                       # cell unchanged); see the Aero_Base/test_exp11 A/B
         "y_plus_target": 30,
         "ground_layers": False,
         "end_time": 1500,

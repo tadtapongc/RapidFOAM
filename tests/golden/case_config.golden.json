@@ -121,7 +121,7 @@
   },
   "layers": {
     "n_layers": 8,
-    "expansion_ratio": 1.15,
+    "expansion_ratio": 1.1,
     "relativeSizes": false,
     "first_layer_thickness": 0.0011805798182942158,
     "min_thickness": 0.0004132029364029755,
@@ -154,7 +154,7 @@
       "y_plus_effective": 30.0,
       "first_layer_thickness": 0.0011805798182942158,
       "min_thickness": 0.0004132029364029755,
-      "stack": 0.016205605579466677,
+      "stack": 0.013500978695130991,
       "mode": "absolute",
       "clamped": false,
       "requested_thickness": 0.0011805798182942158,
