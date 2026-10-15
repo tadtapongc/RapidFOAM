@@ -36,7 +36,13 @@ _LAYER_BOUNDS = (-0.5, 1000.0)
 _PATCH_HEADER_RE = re.compile(r'\s*"?([A-Za-z_][A-Za-z0-9_.()\-]*)"?\s*\{')
 _ENTRY_RE = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s+")
 _UNIFORM_RE = re.compile(r"([-+0-9.eE]+)\s*;")
+# Non-empty list: `List<scalar> \nN\n(<data>)`. Empty list (no parens at all):
+# `List<scalar> 0;` — snappy writes this for patches a processor does not own.
 _NONUNIFORM_RE = re.compile(r"List<scalar>\s*\n\s*(\d+)\s*\n\s*\(")
+_EMPTY_LIST_RE = re.compile(r"List<scalar>\s+0\s*;")
+# Recovery when an unknown entry aborts a patch: jump to the next line-start
+# patch header so one bad entry cannot drop every following patch.
+_RECOVERY_RE = re.compile(r'\n[ \t]*"?[A-Za-z_][A-Za-z0-9_.()\-]*"?[ \t]*\n[ \t]*\{')
 
 
 def find_layer_field_files(base_dir: str | Path | None = None) -> list[Path]:
@@ -121,6 +127,10 @@ def _parse_value(
             return None, cursor
         return {"uniform": float(match.group(1))}, match.end()
 
+    empty = _EMPTY_LIST_RE.match(text, cursor)
+    if empty:
+        return {"values": []}, empty.end()
+
     header = _NONUNIFORM_RE.match(text, cursor)
     if not header:
         return None, cursor
@@ -187,7 +197,13 @@ def parse_layer_field(
             break
         header = _PATCH_HEADER_RE.match(text, cursor)
         if header is None:
-            break
+            # One unparseable entry must not drop every following patch: jump to
+            # the next line-start patch header and carry on.
+            recovery = _RECOVERY_RE.search(text, cursor)
+            if recovery is None:
+                break
+            cursor = recovery.start() + 1
+            continue
         name = header.group(1)
         cursor = header.end()
         entry: dict[str, Any] = {}

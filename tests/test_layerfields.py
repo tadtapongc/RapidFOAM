@@ -91,18 +91,60 @@ class ParseLayerFieldTest(unittest.TestCase):
         parsed = parse_layer_field(binary_field(prefix=b"(\n", internal=internal))
         self.assertEqual(parsed["Assem_AERO_BASE"]["values"], [0.0, 2.0, 8.0, 8.0])
 
+    def test_empty_nonuniform_list_does_not_break_later_patches(self):
+        # snappy writes an empty list as `List<scalar> 0;` (no parens) for
+        # patches a processor does not own. Regression: this aborted the whole
+        # patch scan, so the body patch after it never parsed.
+        field = (
+            b"FoamFile\n{\n    version 2.0;\n    format ascii;\n    class volScalarField;\n}\n\n"
+            b"dimensions [0 0 0 0 0 0 0];\n\ninternalField uniform 0;\n\nboundaryField\n{\n"
+            b"    farField\n    {\n        type fixedValue;\n"
+            b"        value nonuniform List<scalar> 0;\n    }\n"
+            b"    geometry\n    {\n        type fixedValue;\n"
+            b"        value nonuniform List<scalar> \n2\n(\n5\n5\n)\n;\n    }\n}\n"
+        )
+        parsed = parse_layer_field(field)
+        self.assertEqual(parsed["geometry"]["values"], [5.0, 5.0])
+        self.assertEqual(parsed["farField"]["values"], [])
+
+    def test_real_binary_layout_data_then_close_paren_semicolon(self):
+        # Real snappy layout: data directly after "(", closed by ");" with no
+        # newline between the blob and the closing token.
+        values = struct.pack("<3d", 5.0, 0.0, 2.0)
+        field = (
+            b"FoamFile\n{\n    version 2.0;\n    format binary;\n    class volScalarField;\n}\n\n"
+            b"dimensions [0 0 0 0 0 0 0];\n\ninternalField uniform 0;\n\nboundaryField\n{\n"
+            b"    geometry\n    {\n        type fixedValue;\n"
+            b"        value nonuniform List<scalar> \n3\n(" + values + b");\n    }\n}\n"
+        )
+        parsed = parse_layer_field(field)
+        self.assertEqual(parsed["geometry"]["values"], [5.0, 0.0, 2.0])
+
+    def test_unknown_entry_recovers_at_the_next_patch(self):
+        field = (
+            b"FoamFile\n{\n    version 2.0;\n    format ascii;\n    class volScalarField;\n}\n\n"
+            b"dimensions [0 0 0 0 0 0 0];\n\ninternalField uniform 0;\n\nboundaryField\n{\n"
+            b"    broken\n    {\n        type fixedValue;\n"
+            b"        value bogus syntax;\n    }\n"
+            b"    geometry\n    {\n        type fixedValue;\n"
+            b"        value nonuniform List<scalar> \n2\n(\n5\n5\n)\n;\n    }\n}\n"
+        )
+        parsed = parse_layer_field(field)
+        self.assertEqual(parsed["geometry"]["values"], [5.0, 5.0])
+
     def test_truncated_blob_is_declined(self):
-        # Declared count exceeds the available bytes.
+        # Declared count exceeds the available bytes: the body patch must not be
+        # parsed (recovery may still find later patches, but never fabricate it).
         body = b"nonuniform List<scalar> \n4\n(\n" + b"\x00" * 8 + b"\n)\n;\n"
         parsed = parse_layer_field(HEADER % (b"binary", body))
-        self.assertEqual(parsed, {})
+        self.assertNotIn("Assem_AERO_BASE", parsed)
 
     def test_missing_close_token_is_declined(self):
         # Data of the right length but no closing ")" after it.
         body = (b"nonuniform List<scalar> \n4\n(\n" + struct.pack("<4d", 0.0, 1.0, 2.0, 3.0)
                 + b"\x00\x00\x00\x00")
         parsed = parse_layer_field(HEADER % (b"binary", body))
-        self.assertEqual(parsed, {})
+        self.assertNotIn("Assem_AERO_BASE", parsed)
 
     def test_garbage_is_declined(self):
         self.assertEqual(parse_layer_field(b"not a field"), {})
