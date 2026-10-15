@@ -2032,6 +2032,55 @@ class TestWebAPI(unittest.TestCase):
                     self.assertNotEqual(matched["status"], "Queued")
                     self.assertEqual(matched["status"], "Generated")
 
+    def test_slurm_full_name_prefix_does_not_hijack_finished_case(self):
+        """Running job 'alpha_run' must not pin the finished 'alpha_run_fast' to Solving."""
+        running_case = {
+            "name": "alpha_run",
+            "status": "Solving",
+            "latest_iter": 120,
+            "modified": "2026-10-15 06:00:00",
+            "modified_ts": 1000.0,
+            "fidelity": "standard",
+            "velocity": "20.0",
+            "direction": "-z",
+            "n_procs": 32,
+            "stl": "wing.stl",
+            "has_forces": True,
+            "has_residuals": True,
+            "converged": False,
+            "downforce": 100.0,
+            "drag": 50.0,
+            "ld_ratio": 2.0,
+        }
+        finished_case = {
+            "name": "alpha_run_fast",
+            "status": "Converged",
+            "latest_iter": 509,
+            "modified": "2026-10-15 06:30:00",
+            "modified_ts": 2000.0,
+            "fidelity": "fast",
+            "velocity": "20.0",
+            "direction": "-z",
+            "n_procs": 32,
+            "stl": "wing.stl",
+            "has_forces": True,
+            "has_residuals": True,
+            "converged": True,
+            "downforce": 105.0,
+            "drag": 51.0,
+            "ld_ratio": 2.06,
+        }
+        slurm_queue = [{"job_id": "333234", "name": "alpha_run", "state": "RUNNING"}]
+        with patch.object(ClusterSSHClient, "is_connected", new_callable=PropertyMock, return_value=True):
+            with patch.object(ClusterSSHClient, "get_slurm_queue", return_value=slurm_queue):
+                with patch.object(ClusterSSHClient, "list_remote_cases_detailed",
+                                  return_value=[running_case, finished_case]):
+                    cases = asyncio.run(api_list_cases())
+                    by_name = {c["name"]: c for c in cases}
+                    self.assertEqual(by_name["alpha_run"]["status"], "Solving")
+                    # The finished sibling keeps its disk verdict, not the other job's state.
+                    self.assertEqual(by_name["alpha_run_fast"]["status"], "Converged")
+
     def test_inactive_remote_case_zombie_solving_transition(self):
         """Test that an inactive remote case without a SLURM job transitions from Solving to Completed."""
         remote_case = {

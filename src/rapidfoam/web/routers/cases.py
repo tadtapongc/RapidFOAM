@@ -225,6 +225,7 @@ async def api_list_cases() -> list[dict[str, Any]]:
             }
 
             remote_cases = await asyncio.to_thread(ssh_client.list_remote_cases_detailed)
+            remote_names = {rc["name"] for rc in remote_cases if rc.get("name")}
             for rc in remote_cases:
                 cname = rc["name"]
 
@@ -232,6 +233,11 @@ async def api_list_cases() -> list[dict[str, Any]]:
                 sjob = slurm_by_name.get(cname)
                 if not sjob:
                     for jn, job_obj in slurm_by_name.items():
+                        # A job named after a *different, fully named* case is not
+                        # this case's truncated name: never let case A's running
+                        # job hijack case B just because B starts with A.
+                        if jn in remote_names:
+                            continue
                         # Only match prefix if the scheduler truncated a long job name (>= 8 chars)
                         if len(jn) >= 8 and cname.startswith(jn):
                             sjob = job_obj
