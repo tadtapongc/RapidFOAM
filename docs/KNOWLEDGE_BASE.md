@@ -1,7 +1,7 @@
 # RapidFOAM — Knowledge Base
 
 > Comprehensive reverse-engineering / onboarding reference. Every claim below is grounded in
-> code on disk. `__version__ = "1.7.0"`; the **[dev]** markers were written pre-release and
+> code on disk. `__version__ = "1.7.1"`; the **[dev]** markers were written pre-release and
 > shipped in 1.7.0 — they are kept for provenance. Line numbers are 1-based and refer to the
 > files as they exist now. This document supersedes all earlier `docs/` notes.
 
@@ -27,13 +27,13 @@ aero pipeline of the **Rapidamente Formula Student** team (Chulalongkorn Univers
 
 | Property | Value |
 | --- | --- |
-| Version | `1.7.0` (`src/rapidfoam/__init__.py`) |
+| Version | `1.7.1` (`src/rapidfoam/__init__.py`) |
 | Python | `>=3.9`; CI matrix 3.9–3.14 |
 | Build | hatchling; package root `src/rapidfoam` (`pyproject.toml`) |
 | Lint | Ruff (`select = ["E","W","F","I","B"]`, line-length 120, target py39) |
 | Type check | `mypy` over `core`/`meshing`/`casegen` (informational, pinned `<2` for py39) |
 | Coverage | `coverage report --fail-under=65` in CI (local baseline ~70%) |
-| Python tests | ~483 test methods across 23 files (`unittest`) |
+| Python tests | 491 test methods across 24 files (`unittest`) |
 | JS tests | 89 (`node --test` + JSDOM) |
 | CI | `.github/workflows/ci.yml`: ubuntu+windows × py3.9–3.14 (ruff + coverage-gated unittest + build); separate Node-20 JSDOM job |
 | External tools | `surfaceCheck`, `surfaceFeatureExtract`, `blockMesh`, `decomposePar`, `snappyHexMesh`, `checkMesh`, `renumberMesh`, `potentialFoam`, `simpleFoam` |
@@ -749,7 +749,7 @@ README table for the full list, including the **[dev]** `layers.y_plus_fit`, `la
 
 ## 17. Test suite, CI and tooling
 
-### 17.1 Python tests (~483 methods, 23 files)
+### 17.1 Python tests (491 methods, 24 files)
 
 | File | Focus |
 | --- | --- |
@@ -905,6 +905,15 @@ scaling, unavailable viewer and `dispose`.
   `forces_<part>` build-up table; checkMesh failure-reason detail; per-patch y+ min–max range;
   remote bundle now fetches the layering log and the field reductions; `wallPressure` FO removed
   (unknown in v2606).
+- **1.7.1** (2026-10-25): **config-read hardening** — `is_symmetry_case` resolves one
+  effective config (a raw `symmetry_plane` can no longer override a full-car snapshot and a
+  cwd config cannot contaminate case-scoped reads); case-scoped reads no longer fall back to
+  `./case_config.json`; **per-surface auto-size** starts from the preset/user floor instead of
+  the merged auto-raised level, and the Studio preview follows the active fidelity preset;
+  **engineering baseline** gated in CI (ruff E/W/F/I/B, 65% branch coverage, informational
+  mypy, Python 3.14); single convergence-monitor kernel shared by the CLI and generated case
+  script; SLURM sibling-name fixes; numeric `fieldMinMax` ordering; bounded download-progress
+  registry.
 
 ---
 

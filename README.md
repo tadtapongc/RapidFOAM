@@ -531,7 +531,7 @@ RapidFOAM/
 
 ### Python (core, API, post-processing)
 
-Run the backend suite with Python's standard `unittest` (384 tests across 19
+Run the backend suite with Python's standard `unittest` (491 tests across 24
 modules, including the architecture boundary test and golden casegen snapshots):
 
 ```bash
@@ -546,7 +546,7 @@ ruff check src tests
 
 ### Front-end (Web Studio)
 
-The browser logic is covered by a JSDOM + `node:test` suite (62 tests).
+The browser logic is covered by a JSDOM + `node:test` suite (89 tests).
 Node.js 18+ is required:
 
 ```bash

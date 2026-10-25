@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-10-25
+
 ### Changed
 - **Engineering baseline**: CI now gates ruff `E/W/F/I/B` (94 findings cleared), coverage
   (`coverage report --fail-under=65`, ~70% baseline) and runs an informational `mypy` pass
