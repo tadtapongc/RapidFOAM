@@ -127,9 +127,13 @@ class MeshRegionEmissionTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        triangle = ((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 3))
-        write_stl(self.root / "stl" / "body.stl", "body", [triangle])
-        write_stl(self.root / "stl" / "bracket.stl", "bracket", [triangle])
+        body_triangle = ((0, 0, 1), (0, 0, 0), (1, 0, 0), (0, 1, 3))
+        # A deliberately tiny part: auto_size must give it a finer level than
+        # the large body, otherwise the regression below cannot distinguish the
+        # plan re-point from the old global-level output.
+        tiny_triangle = ((0, 0, 1), (2, 0, 0.01), (2.01, 0, 0.01), (2, 0.01, 0.01))
+        write_stl(self.root / "stl" / "body.stl", "body", [body_triangle])
+        write_stl(self.root / "stl" / "bracket.stl", "bracket", [tiny_triangle])
 
     def _generate(self, name, **extra):
         cfg = {
@@ -168,10 +172,20 @@ class MeshRegionEmissionTest(unittest.TestCase):
         case_cfg = json.loads((case / "case_config.json").read_text(encoding="utf-8"))
         per_surface = case_cfg["mesh_params"]["surface_levels"]
         self.assertTrue(per_surface)
+        # The tiny bracket must be refined beyond the large body — otherwise
+        # this test would pass even if the writer kept the stale global levels.
+        self.assertNotEqual(
+            per_surface["body"]["surface_level"],
+            per_surface["bracket"]["surface_level"],
+        )
+        self.assertGreater(
+            per_surface["bracket"]["edge_level"], per_surface["body"]["edge_level"]
+        )
         text = (case / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
         for stem, info in per_surface.items():
             level = info["surface_level"]
             self.assertIn(f"{stem} {{ level ({level[0]} {level[1]});", text)
+            self.assertIn(f'file "{stem}.eMesh"; level {info["edge_level"]};', text)
 
 
 class PhysicsConfigTest(unittest.TestCase):

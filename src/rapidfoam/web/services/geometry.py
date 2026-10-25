@@ -67,9 +67,14 @@ def per_surface_preview(
     """
     preview_cfg = copy.deepcopy(merged)
     apply_fidelity_preset(preview_cfg, lambda section, key: user_set(raw_cfg, section, key))
+    preset = FIDELITY_PRESETS.get(
+        preview_cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"]
+    )
     mesh = preview_cfg.get("mesh_params", {})
-    global_level = mesh.get("surface_level", FIDELITY_PRESETS["standard"]["surface_level"])
-    global_edge = mesh.get("edge_level", FIDELITY_PRESETS["standard"]["edge_level"])
+    # Mirror the builder's per-part floor: the active preset (or an explicit
+    # user override), not the standard preset.
+    global_level = mesh.get("surface_level", preset["surface_level"])
+    global_edge = mesh.get("edge_level", preset["edge_level"])
     n_layers = preview_cfg.get("layers", {}).get("n_layers")
 
     auto: dict[str, Any] = {}
@@ -79,9 +84,6 @@ def per_surface_preview(
         # unset: derive it the same way the builder does (longest STL extent /
         # cells_per_length) so per-surface levels can be computed here too.
         if not (isinstance(base_cell, (int, float)) and base_cell > 0):
-            preset = FIDELITY_PRESETS.get(
-                preview_cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"]
-            )
             cells_per_length = float(mesh.get("cells_per_length", preset.get("cells_per_length", 30)))
             model_length = max(
                 (max(e) for e in extents_by_stem.values() if e), default=0.0
@@ -91,7 +93,7 @@ def per_surface_preview(
         if isinstance(base_cell, (int, float)) and base_cell > 0 and stats_by_stem:
             auto = resolve_per_surface_levels(
                 mesh,
-                FIDELITY_PRESETS.get(preview_cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"]),
+                preset,
                 float(base_cell),
                 list(global_level),
                 int(global_edge),

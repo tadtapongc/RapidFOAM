@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import sys
 import tempfile
@@ -57,6 +58,48 @@ class SymmetryDetectorTest(unittest.TestCase):
         from_config = _config_has_symmetry(cfg)
         self.assertEqual(from_config, from_faces)
         self.assertFalse(from_faces)
+
+    def test_case_snapshot_beats_raw_symmetry_plane(self):
+        """A raw config's symmetry_plane must not override a full-car snapshot."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case = root / "cases" / "full_car"
+            case.mkdir(parents=True)
+            (case / "case_config.json").write_text(json.dumps({
+                "case_name": "full_car",
+                "symmetry_plane": 0.0,
+                "domain_faces": FULL_CAR_FACES,
+            }), encoding="utf-8")
+            raw = root / "raw.json"
+            raw.write_text(json.dumps({
+                "case_name": "full_car",
+                "symmetry_plane": 0.0,
+            }), encoding="utf-8")
+            self.assertFalse(is_symmetry_case(config_path=str(raw), case_dir=case))
+
+    def test_case_scoped_detection_ignores_cwd_snapshot(self):
+        """A half-car config in the cwd must not double an unrelated full car."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case = root / "cases" / "full_car"
+            case.mkdir(parents=True)
+            (case / "case_config.json").write_text(json.dumps({
+                "case_name": "full_car",
+                "symmetry_plane": 0.0,
+                "domain_faces": FULL_CAR_FACES,
+            }), encoding="utf-8")
+            cwd = root / "cwd"
+            cwd.mkdir()
+            (cwd / "case_config.json").write_text(json.dumps({
+                "case_name": "other",
+                "domain_faces": {"-x": "symmetry", **{k: v for k, v in FULL_CAR_FACES.items() if k != "-x"}},
+            }), encoding="utf-8")
+            old = Path.cwd()
+            os.chdir(cwd)
+            try:
+                self.assertFalse(is_symmetry_case(case_dir=case))
+            finally:
+                os.chdir(old)
 
 
 class StudioPresetSyncTest(unittest.TestCase):

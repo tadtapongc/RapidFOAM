@@ -76,17 +76,19 @@ def read_case_config(
     """Return the effective configuration for a case, or ``{}`` if none found.
 
     Precedence: ``<case_dir>/case_config.json`` (the effective snapshot written
-    by the generator) > an explicit ``config_path`` > ``./case_config.json``.
-    The chosen file is always run through :func:`effective_config`, so a raw
-    user config with an ``overrides`` block yields the same values the solver
-    ran with.
+    by the generator) > an explicit ``config_path``. ``./case_config.json`` is
+    only considered when neither ``case_dir`` nor ``config_path`` is given, so a
+    case-scoped read cannot silently inherit the cwd config. The chosen file is
+    always run through :func:`effective_config`, so a raw user config with an
+    ``overrides`` block yields the same values the solver ran with.
     """
     candidates: list[Path] = []
     if case_dir is not None:
         candidates.append(Path(case_dir) / "case_config.json")
     if config_path is not None:
         candidates.append(Path(config_path))
-    candidates.append(Path("case_config.json"))
+    if case_dir is None and config_path is None:
+        candidates.append(Path("case_config.json"))
 
     seen: set[str] = set()
     for path in candidates:

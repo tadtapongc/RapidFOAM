@@ -21,12 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   thin CLI wrapper, and a parity test pins the generated cluster script to the kernel.
 
 ### Fixed
+- Symmetry detection now resolves exactly one authoritative config: a raw config's
+  `symmetry_plane` can no longer override a full-car `case_config.json` snapshot, and a
+  symmetric `case_config.json` in the caller's cwd can no longer double an unrelated case's
+  forces. Case-scoped config reads also stop falling back to `./case_config.json` when a
+  case directory or explicit path was supplied.
 - A running case's SLURM job no longer hijacks a finished sibling whose name starts with it
   (`alpha_run` vs `alpha_run_fast`): the archive pinned the finished case to "Solving" even
   though its log ended with `End` and its forces had converged, and `is_case_running` (the
   exists/running dialog) had the same prefix-match flaw.
 - `mesh_regions` per-surface levels and layer overrides now actually reach the emitted
   `snappyHexMeshDict`; a layers-only region no longer raises `KeyError` during generation.
+  Auto-sized per-part levels start from the preset (or an explicit user override) as a
+  floor rather than the merged auto-raised level, so one small part no longer refines
+  every part.
 - `GET /api/case/check-exists` validates the case name like every other case endpoint.
 - `mesh_quality.relaxed` overrides are validated as finite numbers.
 - `fieldMinMax` reductions are ordered by numeric write time (was lexical, so `10` sorted

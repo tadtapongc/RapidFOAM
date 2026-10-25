@@ -9,6 +9,7 @@ y+, and surface checks do.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -73,6 +74,30 @@ class LoadAxisConfigReadPathTest(unittest.TestCase):
         other = self.root / "other.json"
         self._write(other, {"overrides": {"outputs": {"drag_axis": "+x"}}})
         self.assertEqual(load_axis_config(str(other)), (0, 1, 1, -1, "+x", "-y"))
+
+    def test_case_scoped_read_does_not_inherit_cwd_snapshot(self):
+        cwd = self.root / "cwd"
+        cwd.mkdir()
+        self._write(cwd / "case_config.json", {"outputs": {"drag_axis": "+x"}})
+        old = Path.cwd()
+        os.chdir(cwd)
+        try:
+            self.assertEqual(caseconfig.read_case_config(case_dir=self.case), {})
+        finally:
+            os.chdir(old)
+
+    def test_cwd_snapshot_still_used_without_explicit_target(self):
+        cwd = self.root / "cwd"
+        cwd.mkdir()
+        self._write(cwd / "case_config.json", {"outputs": {"drag_axis": "+x"}})
+        old = Path.cwd()
+        os.chdir(cwd)
+        try:
+            self.assertEqual(
+                caseconfig.read_case_config().get("outputs", {}).get("drag_axis"), "+x"
+            )
+        finally:
+            os.chdir(old)
 
     def test_raw_dict_helper_matches_typed_accessor(self):
         self.assertEqual(axis_config_from_dict(None), (2, -1, 1, -1, "-z", "-y"))

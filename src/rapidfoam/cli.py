@@ -163,7 +163,10 @@ def forces_main() -> None:
         default=None,
         help="Case directory or name (default: current directory, or auto-detect from cases/)",
     )
-    parser.add_argument("--config", "-c", default=None, help="Config JSON for axis info")
+    parser.add_argument(
+        "--config", "-c", default=None,
+        help="Config JSON for axis info (the case's case_config.json takes precedence)",
+    )
     parser.add_argument("--plot", "-p", action="store_true", help="Convergence plot")
     parser.add_argument("--save", "-s", action="store_true", help="Save plot as PNG")
     parser.add_argument("--live", "-l", action="store_true", help="Real-time monitor")

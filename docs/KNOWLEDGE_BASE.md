@@ -173,7 +173,8 @@ cli / web  ──> casegen ──> meshing ──> geometry ──> core
 ### 4.5 `core/caseconfig.py` (262)
 The override-aware single source for case config values (depends only on `rapidfoam.config`).
 - `read_case_config(config_path, case_dir)` (36) — precedence `<case_dir>/case_config.json` →
-  explicit path → `./case_config.json`; run through `effective_config`.
+  explicit path; `./case_config.json` only when neither is given; run through
+  `effective_config`.
 - `has_symmetry(cfg)` (75) — explicit `domain_faces` authoritative; `symmetry_plane`/
   `centerline` only when no face list. `has_symmetry_for_case` (99) adds a polyMesh fallback.
 - `yplus_target` (118), `solver_end_time` (141), `stl_files` (160), `vehicle_geometry` (170),
@@ -436,9 +437,10 @@ first-layer coverage metric survives; `Allclean` removes `meshDiagnostics/`.
 
 ### 10.1 `postproc/forces.py` (560)
 - `load_axis_config` (30) resolves the axes through the shared override-aware reader
-  (`core.caseconfig.read_case_config` + `axis_config`, case snapshot wins); `_load_case_configs`
-  (54) applies `effective_config` per candidate; `is_symmetry_case` (83) —
-  delegates to `caseconfig.has_symmetry`, defaults a no-faces config to a half model.
+  (`core.caseconfig.read_case_config` + `axis_config`, case snapshot wins); `is_symmetry_case`
+  (53) resolves exactly one effective config (snapshot wins over a raw config, case-scoped
+  reads never inherit the cwd) and defaults a no-faces config to a half model, with the
+  polyMesh boundary as the final fallback.
 - `_dir_time` (119); `force_layout_from_header` (126); `find_force_files` (143).
 - **[dev]** `find_per_part_force_files(base_dir)` (170) → `{part: [force.dat, ...]}` from the
   `forces_<part>` objects.
@@ -824,9 +826,9 @@ scaling, unavailable viewer and `dispose`.
 - SSH bundle markers — fixed literal `__RAPIDFOAM_FILE_BEGIN__`/`END`; a crafted cluster file
   could spoof framing.
 - Untrusted STL parsing in the browser (Three.js `STLLoader` trusts the binary face count).
-- `load_axis_config` / `_load_case_configs` / `compare_cases` read raw JSON, not the
+- `load_axis_config` / `is_symmetry_case` / `compare_cases` read raw JSON, not the
   override-aware reader — **resolved**: all postproc config reads go through
-  `core.caseconfig` (PR 252e7de).
+  `core.caseconfig` (PR 252e7de), and case-scoped reads no longer fall back to the cwd.
 - `mesh_quality.relaxed` overrides were unvalidated while `layering_relaxed` was — **resolved**
   (finite-number check added).
 - Architecture test blind spot: relative/dynamic imports are not scanned.

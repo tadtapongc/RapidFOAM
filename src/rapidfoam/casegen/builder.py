@@ -167,6 +167,16 @@ def build_case(
     # Derive all mesh parameters through the shared plan seam, then apply the
     # result back to cfg (keeps case_config.json and writers unchanged).
     apply_fidelity_preset(cfg, _is_set)
+    preset = FIDELITY_PRESETS.get(cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"])
+    # Per-part sizing starts from the preset (or an explicit user override) as a
+    # floor, not from the already auto-raised global level: using the merged
+    # auto-size as the floor lets one small part refine every part and defeats
+    # per-surface sizing. Auto-size may still raise these (capped by
+    # max_surface_level). Captured before apply_plan_to_cfg overwrites mesh_params.
+    base_surface_level = list(
+        cfg.get("mesh_params", {}).get("surface_level", preset["surface_level"])
+    )
+    base_edge_level = int(cfg.get("mesh_params", {}).get("edge_level", preset["edge_level"]))
     plan = build_mesh_plan(
         cfg,
         combined_bounds,
@@ -190,10 +200,10 @@ def build_case(
         }
         per_surface = resolve_per_surface_levels(
             cfg.get("mesh_params", {}),
-            FIDELITY_PRESETS.get(cfg.get("fidelity", "standard"), FIDELITY_PRESETS["standard"]),
+            preset,
             float(cfg["mesh_params"]["base_cell_size"]),
-            list(cfg["mesh_params"]["surface_level"]),
-            int(cfg["mesh_params"]["edge_level"]),
+            base_surface_level,
+            base_edge_level,
             edge_stats_by_stem,
             extents_by_stem,
         )

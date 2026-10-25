@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import math
 import re
 import statistics
 from pathlib import Path
 from typing import Optional
 
-from rapidfoam.config import effective_config
 from rapidfoam.core import caseconfig
 from rapidfoam.core.axes import AXIS_MAP as AXIS_MAP
 from rapidfoam.core.axes import axis_index_sign as axis_index_sign
@@ -38,59 +36,33 @@ def load_axis_config(
     return axis_config_from_dict(cfg)
 
 
-def _load_case_configs(config_path: str | None, base: Path) -> list[dict]:
-    """Load every candidate case config, most authoritative first."""
-    candidates = []
-    if config_path:
-        candidates.append(Path(config_path))
-    candidates.append(base / "case_config.json")
-    candidates.append(Path("case_config.json"))
-
-    configs: list[dict] = []
-    seen: set[Path] = set()
-    for path in candidates:
-        try:
-            resolved = path.resolve()
-        except OSError:
-            continue
-        if resolved in seen or not path.is_file():
-            continue
-        seen.add(resolved)
-        try:
-            with open(path, encoding="utf-8") as f:
-                raw = json.load(f)
-            configs.append(effective_config(raw) if isinstance(raw, dict) else raw)
-        except Exception:
-            continue
-    return configs
-
-
 def is_symmetry_case(config_path: str | None = None, case_dir: str | Path | None = None) -> bool:
     """Check if case is configured with a symmetry boundary.
 
-    Delegates the config verdict to :func:`rapidfoam.core.caseconfig.has_symmetry`
-    (``domain_faces`` is authoritative; ``symmetry_plane`` only counts when no
-    face list exists). A config with no explicit face list still generates a
-    half model because the face assignment defaults the lateral-min face to the
+    Resolution goes through the shared :func:`caseconfig.read_case_config`
+    path, so the effective ``<case>/case_config.json`` snapshot wins and a raw
+    config's ``symmetry_plane`` cannot override a full-car snapshot. This also
+    keeps a case-scoped read from inheriting an unrelated cwd config.
+
+    ``domain_faces`` is authoritative; ``symmetry_plane`` only counts when no
+    face list exists. A config with no explicit face list still generates a half
+    model because the face assignment defaults the lateral-min face to the
     symmetry patch. The mesh boundary is the final authoritative fallback.
     """
     base = Path(case_dir) if case_dir else Path(".")
-    configs = _load_case_configs(config_path, base)
+    cfg = caseconfig.read_case_config(config_path=config_path, case_dir=case_dir)
 
-    explicit_faces_seen = False
-    for cfg in configs:
+    if cfg:
         faces = cfg.get("domain_faces")
         if isinstance(faces, dict) and faces:
-            explicit_faces_seen = True
-        if caseconfig.has_symmetry(cfg):
+            if caseconfig.has_symmetry(cfg):
+                return True
+        else:
+            # No explicit domain_faces: the generator derives a symmetry face,
+            # so the case is a half-model by default.
             return True
 
-    # No explicit domain_faces anywhere: the generator derives a symmetry face,
-    # so the case is a half-model by default.
-    if configs and not explicit_faces_seen:
-        return True
-
-    # Fallback: check constant/polyMesh/boundary
+    # Final fallback: the mesh boundary is the actual sim state.
     boundary_file = base / "constant" / "polyMesh" / "boundary"
     if boundary_file.exists():
         try:

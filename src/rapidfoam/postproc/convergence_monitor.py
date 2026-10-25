@@ -80,7 +80,8 @@ def main() -> None:
         description="Monitor OpenFOAM forces and stop solver on convergence.",
     )
     parser.add_argument("--config", "-c", default=None,
-                        help="Config JSON for axis info (default: case_config.json)")
+                        help="Config JSON for axis info (the case_config.json in the "
+                             "case directory takes precedence when both exist)")
     parser.add_argument("--interval", "-i", type=float, default=10,
                         help="Check interval in seconds (default: 10)")
     parser.add_argument("--min-iters", "-m", type=int, default=300,
